@@ -3,7 +3,7 @@
 clear
 
 # ==============================================================================
-# 🍓 DYNAMIC RASPBERRY PI SCRIPT INSTALLER (FULLY AUTOMATED)
+# 🍓 DYNAMIC RASPBERRY PI SCRIPT INSTALLER
 # ==============================================================================
 USER="technicdawn-stack"
 REPO="PiTweaks"
@@ -61,16 +61,8 @@ elif [ "$CHOICE" -ge 1 ] && [ "$CHOICE" -le "$NUM_SCRIPTS" ]; then
     curl -fsSL "$SCRIPT_URL" -o "$TEMP_EXEC"
     chmod +x "$TEMP_EXEC"
     
-    # 🧠 SMART AUTO-DETECTION:
-    # Check if the downloaded script contains a root restriction check (e.g., EUID -ne 0)
-    if grep -qE "EUID.*-ne 0|id -u.*-ne 0" "$TEMP_EXEC" && [ "$EUID" -ne 0 ]; then
-        echo "⚠️  This script requires administrator privileges."
-        echo "🔄 Automatically escalating to sudo..."
-        sudo bash "$TEMP_EXEC"
-    else
-        # Run it normally (either it doesn't need root, or user is already root)
-        "$TEMP_EXEC"
-    fi
+    # Run the script normally
+    "$TEMP_EXEC"
     
     rm -f "$TEMP_EXEC"
 else
