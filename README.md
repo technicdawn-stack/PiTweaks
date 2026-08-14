@@ -4,7 +4,7 @@ Pi Tweaks, commands ect
 
 Run this command in your terminal for a one line install:
 
-```bash 
+Preferably run beforehand to ensure sudo works:
 sudo -i
 
 ```bash
