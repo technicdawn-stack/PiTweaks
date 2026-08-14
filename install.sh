@@ -41,7 +41,7 @@ EXIT_NUM=$((NUM_SCRIPTS + 1))
 echo "  ${EXIT_NUM}) Exit"
 echo ""
 
-# Force read to wait for keyboard input from /dev/tty
+# Read keyboard input safely
 read -p "Select a script to run [1-${EXIT_NUM}]: " CHOICE </dev/tty
 
 # Validate input safely
@@ -59,8 +59,18 @@ elif [ "$CHOICE" -ge 1 ] && [ "$CHOICE" -le "$NUM_SCRIPTS" ]; then
     SCRIPT_URL="https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/${SELECTED_SCRIPT}"
     
     echo ""
-    echo "🚀 Running ${SELECTED_SCRIPT}..."
-    bash -c "$(curl -fsSL "$SCRIPT_URL")" </dev/tty
+    echo "🚀 Fetching ${SELECTED_SCRIPT}..."
+    
+    # Download the script to a temp location, make executable, and run cleanly
+    TEMP_EXEC="/tmp/runner_$SELECTED_SCRIPT"
+    curl -fsSL "$SCRIPT_URL" -o "$TEMP_EXEC"
+    chmod +x "$TEMP_EXEC"
+    
+    # Execute with full terminal control
+    "$TEMP_EXEC"
+    
+    # Clean up temp runner
+    rm -f "$TEMP_EXEC"
 else
     echo "❌ Invalid selection."
     exit 1
