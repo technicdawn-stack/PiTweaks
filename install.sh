@@ -7,8 +7,8 @@ clear
 # 🍓 RASPBERRY PI MODULAR INSTALLER
 # ==============================================================================
 # HOW TO ADD NEW SCRIPTS IN THE FUTURE:
-# 1. Add your script name to the OPTIONS array below.
-# 2. Add a matching case block inside the execute_choice() function.
+# 1. Add your script title to the OPTIONS array below.
+# 2. Add a matching case block inside the choice section.
 # ==============================================================================
 
 # --- MENU OPTIONS LIST ---
@@ -47,8 +47,8 @@ case "$CHOICE" in
     1)
         echo ""
         echo "🚀 Running Full Discord Monitoring Setup..."
-        # Runs your complete auto-installer script from your GitHub repo
-        bash -c "$(curl -fsSL https://raw.githubusercontent.com/YourUsername/YourRepo/main/full_discord_setup.sh)"
+        # Runs discord_monitor.sh from your GitHub repo
+        bash -c "$(curl -fsSL https://raw.githubusercontent.com/YourUsername/YourRepo/main/discord_monitor.sh)"
         ;;
 
     2)
@@ -70,13 +70,11 @@ case "$CHOICE" in
     3)
         echo ""
         echo "🛠️ Placeholder for Future Script #1..."
-        # Example: bash -c "$(curl -fsSL https://raw.githubusercontent.com/YourUsername/YourRepo/main/script3.sh)"
         ;;
 
     4)
         echo ""
         echo "🛠️ Placeholder for Future Script #2..."
-        # Example: bash -c "$(curl -fsSL https://raw.githubusercontent.com/YourUsername/YourRepo/main/script4.sh)"
         ;;
 
     "$EXIT_NUM")
