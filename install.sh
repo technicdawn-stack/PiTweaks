@@ -1,89 +1,60 @@
 #!/bin/bash
 
-# Clear screen for a clean UI
 clear
 
 # ==============================================================================
-# 🍓 RASPBERRY PI MODULAR INSTALLER
+# 🍓 DYNAMIC RASPBERRY PI SCRIPT INSTALLER
 # ==============================================================================
-# HOW TO ADD NEW SCRIPTS IN THE FUTURE:
-# 1. Add your script title to the OPTIONS array below.
-# 2. Add a matching case block inside the choice section.
-# ==============================================================================
+USER="technicdawn-stack"
+REPO="PiTweaks"
+BRANCH="main"
 
-# --- MENU OPTIONS LIST ---
-OPTIONS=(
-    "Full Discord Monitoring Setup (Script + Cron + Aliases)"
-    "Discord Monitor Script Only (No Cron / No Aliases)"
-    "Future Tool #1 (Placeholder)"
-    "Future Tool #2 (Placeholder)"
-)
-
-# ------------------------------------------------------------------------------
-# DISPLAY MENU (Dynamically Numbers Everything)
-# ------------------------------------------------------------------------------
 echo "=========================================="
-echo " 🍓 Raspberry Pi Modular Setup Menu"
+echo " 🍓 Raspberry Pi Script Installer"
 echo "=========================================="
+echo "🔍 Fetching available scripts from GitHub..."
 echo ""
 
-NUM_OPTIONS=${#OPTIONS[@]}
+# Fetch list of .sh files from GitHub API (excluding install.sh itself)
+API_URL="https://api.github.com/repos/${USER}/${REPO}/contents?ref=${BRANCH}"
+RAW_FILES=$(curl -s "$API_URL" | grep -o '"name": "[^"]*"' | cut -d'"' -f4 | grep '\.sh$' | grep -v 'install.sh')
 
-for i in "${!OPTIONS[@]}"; do
-    echo "  $((i+1))) ${OPTIONS[$i]}"
+# Convert fetched files into an array
+SCRIPTS=()
+while IFS= read -r line; do
+    [ -n "$line" ] && SCRIPTS+=("$line")
+done <<< "$RAW_FILES"
+
+NUM_SCRIPTS=${#SCRIPTS[@]}
+
+if [ "$NUM_SCRIPTS" -eq 0 ]; then
+    echo "❌ No available installer scripts found in repository."
+    exit 1
+fi
+
+# Display dynamic menu
+for i in "${!SCRIPTS[@]}"; do
+    echo "  $((i+1))) ${SCRIPTS[$i]}"
 done
 
-# Set Exit option dynamically as the last number
-EXIT_NUM=$((NUM_OPTIONS + 1))
+EXIT_NUM=$((NUM_SCRIPTS + 1))
 echo "  ${EXIT_NUM}) Exit"
 echo ""
 
-read -p "Enter your choice [1-${EXIT_NUM}]: " CHOICE
+read -p "Select a script to run [1-${EXIT_NUM}]: " CHOICE
 
-# ------------------------------------------------------------------------------
-# EXECUTE SELECTED CHOICE
-# ------------------------------------------------------------------------------
-case "$CHOICE" in
-    1)
-        echo ""
-        echo "🚀 Running Full Discord Monitoring Setup..."
-        # Runs discord_monitor.sh from your GitHub repo
-        bash -c "$(curl -fsSL https://raw.githubusercontent.com/YourUsername/YourRepo/main/discord_monitor.sh)"
-        ;;
-
-    2)
-        echo ""
-        echo "📡 Installing Discord Monitor script only..."
-        read -p "Enter Discord Webhook URL: " DISCORD_URL
-        if [ -z "$DISCORD_URL" ]; then
-            echo "❌ Error: Webhook URL cannot be empty."
-            exit 1
-        fi
-        
-        # Pulls only the monitoring script file into home directory
-        curl -fsSL https://raw.githubusercontent.com/YourUsername/YourRepo/main/temp_monitor.sh -o ~/temp_monitor.sh
-        sed -i "s|DISCORD_URL=.*|DISCORD_URL=\"$DISCORD_URL\"|" ~/temp_monitor.sh
-        chmod +x ~/temp_monitor.sh
-        echo "✅ Installed ~/temp_monitor.sh! (No cron or aliases were added)"
-        ;;
-
-    3)
-        echo ""
-        echo "🛠️ Placeholder for Future Script #1..."
-        ;;
-
-    4)
-        echo ""
-        echo "🛠️ Placeholder for Future Script #2..."
-        ;;
-
-    "$EXIT_NUM")
-        echo "Cancelled. Exiting menu."
-        exit 0
-        ;;
-
-    *)
-        echo "❌ Invalid selection."
-        exit 1
-        ;;
-esac
+# Handle user selection
+if [ "$CHOICE" -eq "$EXIT_NUM" ] 2>/dev/null; then
+    echo "Cancelled."
+    exit 0
+elif [ "$CHOICE" -ge 1 ] && [ "$CHOICE" -le "$NUM_SCRIPTS" ] 2>/dev/null; then
+    SELECTED_SCRIPT="${SCRIPTS[$((CHOICE-1))]}"
+    SCRIPT_URL="https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/${SELECTED_SCRIPT}"
+    
+    echo ""
+    echo "🚀 Running ${SELECTED_SCRIPT}..."
+    bash -c "$(curl -fsSL "$SCRIPT_URL")"
+else
+    echo "❌ Invalid selection."
+    exit 1
+fi
