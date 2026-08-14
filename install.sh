@@ -41,9 +41,10 @@ EXIT_NUM=$((NUM_SCRIPTS + 1))
 echo "  ${EXIT_NUM}) Exit"
 echo ""
 
-read -p "Select a script to run [1-${EXIT_NUM}]: " CHOICE
+# Force read to wait for keyboard input from /dev/tty
+read -p "Select a script to run [1-${EXIT_NUM}]: " CHOICE </dev/tty
 
-# Validate input safely (ensures input is numeric and non-empty)
+# Validate input safely
 if ! [[ "$CHOICE" =~ ^[0-9]+$ ]]; then
     echo "❌ Invalid selection. Please enter a number."
     exit 1
@@ -59,7 +60,7 @@ elif [ "$CHOICE" -ge 1 ] && [ "$CHOICE" -le "$NUM_SCRIPTS" ]; then
     
     echo ""
     echo "🚀 Running ${SELECTED_SCRIPT}..."
-    bash -c "$(curl -fsSL "$SCRIPT_URL")"
+    bash -c "$(curl -fsSL "$SCRIPT_URL")" </dev/tty
 else
     echo "❌ Invalid selection."
     exit 1
