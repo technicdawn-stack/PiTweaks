@@ -26,7 +26,7 @@ echo ""
 # Check if already installed (Repair/Upgrade mode)
 if [ -f "$INSTALL_DIR/bot.py" ]; then
     echo "⚠️  An existing Discord bot installation was found at:"
-    echo "   $INSTALL_DIR"
+    echo "    $INSTALL_DIR"
     echo ""
     read -p "Do you want to upgrade or reconfigure it? [y/N]: " REINSTALL_CHOICE </dev/tty
     echo ""
@@ -125,6 +125,8 @@ echo "📝 Generating bot script..."
 cat << EOF > "$INSTALL_DIR/bot.py"
 import discord
 import subprocess
+import datetime
+import shlex
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -160,61 +162,102 @@ async def cmd_temp_report(message, args):
     except Exception as e:
         await message.channel.send(f"❌ Error running command: \`{e}\`")
 
-async def cmd_test_cpu(message, args):
-    if not args.isdigit():
-        await message.channel.send("❌ Please provide a valid number (e.g., \`!test_cpu 99\`).")
+async def cmd_test(message, args):
+    parts = args.split(" ", 1)
+    if len(parts) < 2 or parts[0].lower() not in ["cpu", "ram", "temp"]:
+        await message.channel.send("❌ Usage: \`!test <cpu|ram|temp> <num>\` (e.g., \`!test cpu 99\`).")
         return
-    value = int(args)
-    await message.channel.send(f"⚡ Executing CPU test with value {value}...")
+    
+    test_type = parts[0].lower()
+    val_str = parts[1].strip()
+    if not val_str.isdigit():
+        await message.channel.send("❌ Please provide a valid numeric value.")
+        return
+        
+    value = int(val_str)
+    action_labels = {"cpu": "CPU test", "ram": "RAM test", "temp": "temp test"}
+    await message.channel.send(f"⚡ Executing {action_labels[test_type]} with value {value}...")
     
     try:
-        result = subprocess.run(f"stdbuf -oL bash ~/temp_monitor.sh test_cpu {value}", shell=True, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(f"stdbuf -oL bash ~/temp_monitor.sh test_{test_type} {value}", shell=True, capture_output=True, text=True, timeout=60)
         output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
         if len(output) > 1500:
             output = output[:1500] + "\n[Output truncated...]"
-        await message.channel.send(f"✅ \`test_cpu {value}\` finished.\n\`\`\`text\n{output}\n\`\`\`")
+        await message.channel.send(f"✅ \`test_{test_type} {value}\` finished.\n\`\`\`text\n{output}\n\`\`\`")
     except Exception as e:
         await message.channel.send(f"❌ Error executing terminal command: \`{e}\`")
 
-async def cmd_test_ram(message, args):
-    if not args.isdigit():
-        await message.channel.send("❌ Please provide a valid number (e.g., \`!test_ram 50\`).")
-        return
-    value = int(args)
-    await message.channel.send(f"🧠 Executing RAM test with value {value}...")
-    
+async def cmd_alert(message, args):
     try:
-        result = subprocess.run(f"stdbuf -oL bash ~/temp_monitor.sh test_ram {value}", shell=True, capture_output=True, text=True, timeout=60)
-        output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
-        if len(output) > 1500:
-            output = output[:1500] + "\n[Output truncated...]"
-        await message.channel.send(f"✅ \`test_ram {value}\` finished.\n\`\`\`text\n{output}\n\`\`\`")
-    except Exception as e:
-        await message.channel.send(f"❌ Error executing terminal command: \`{e}\`")
+        parts = shlex.split(args)
+    except Exception:
+        parts = args.split()
+        
+    if not parts:
+        await message.channel.send("❌ Usage examples:\n\`!alert reboot 5\`\n\`!alert 5 15 \"Custom maintenance notice\"\`")
+        return
 
-async def cmd_test_temp(message, args):
-    if not args.isdigit():
-        await message.channel.send("❌ Please provide a valid number (e.g., \`!test_temp 75\`).")
-        return
-    value = int(args)
-    await message.channel.send(f"🔥 Executing temp test with value {value}...")
+    now = datetime.datetime.now()
     
-    try:
-        result = subprocess.run(f"stdbuf -oL bash ~/temp_monitor.sh test_temp {value}", shell=True, capture_output=True, text=True, timeout=60)
-        output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
-        if len(output) > 1500:
-            output = output[:1500] + "\n[Output truncated...]"
-        await message.channel.send(f"✅ \`test_temp {value}\` finished.\n\`\`\`text\n{output}\n\`\`\`")
-    except Exception as e:
-        await message.channel.send(f"❌ Error executing terminal command: \`{e}\`")
+    # Preset Action Logic
+    if parts[0].lower() in ["reboot", "shutdown", "update", "interrupt"]:
+        action = parts[0].lower()
+        delay_mins = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 5
+        start_time = now + datetime.timedelta(minutes=delay_mins)
+        
+        if action in ["reboot", "shutdown"]:
+            title = f"PLANNED NETWORK DOWNTIME: {action.upper()}"
+            classification = "Necessary Downtime (Guaranteed Event)"
+            emoji = "🚨"
+            advice = "Please save your work accordingly!"
+        else:
+            title = f"POTENTIAL SERVICE INTERRUPTION: {action.upper()}"
+            classification = "Soft Event (Downtime Not Guaranteed)"
+            emoji = "⚠️"
+            advice = "Services may experience a brief blip."
+        
+        output_msg = (
+            f"{emoji} **{title}** {emoji}\n"
+            f"• **Action Type:** {action.capitalize()}\n"
+            f"• **Notice Given At:** {now.strftime('%H:%M')}\n"
+            f"• **Execution Time:** ~{start_time.strftime('%H:%M')} (In {delay_mins} mins)\n"
+            f"• **Event Classification:** {classification}\n\n"
+            f"*{advice}*"
+        )
+        await message.channel.send(output_msg)
+        
+    # Custom Timed Window Logic
+    elif parts[0].isdigit():
+        delay_mins = int(parts[0])
+        duration_mins = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 5
+        
+        custom_text_parts = parts[2:] if len(parts) > 2 and parts[1].isdigit() else parts[1:]
+        custom_text = " ".join(custom_text_parts).strip("\"'")
+        if not custom_text:
+            custom_text = "Scheduled maintenance notification."
+            
+        start_time = now + datetime.timedelta(minutes=delay_mins)
+        end_time = start_time + datetime.timedelta(minutes=duration_mins)
+        
+        output_msg = (
+            f"🚨 **PLANNED NETWORK NOTICE: CUSTOM EVENT** 🚨\n"
+            f"• **Custom Message:** {custom_text}\n"
+            f"• **Notice Given At:** {now.strftime('%H:%M')}\n"
+            f"• **Execution Time:** ~{start_time.strftime('%H:%M')} (In {delay_mins} mins)\n"
+            f"• **Expected Length:** {duration_mins} minute(s) (Expected back ~{end_time.strftime('%H:%M')})\n\n"
+            f"*Please save your work and log off if necessary.*"
+        )
+        await message.channel.send(output_msg)
+    else:
+        await message.channel.send("❌ Unknown alert command format. Use presets (\`reboot\`, \`shutdown\`, \`update\`, \`interrupt\`) or timed windows (\`!alert 5 15 \"text\"\`).")
 
 async def cmd_help(message, args):
     help_text = (
         "🤖 **Raspberry Pi Bot Commands:**\n"
         "• \`!temp_report\` - Run system temperature report.\n"
-        "• \`!test_cpu <num>\` - Run CPU test via temp_monitor.sh.\n"
-        "• \`!test_ram <num>\` - Run RAM test via temp_monitor.sh.\n"
-        "• \`!test_temp <num>\` - Run temperature threshold check.\n"
+        "• \`!test <cpu|ram|temp> <num>\` - Run hardware diagnostic tests.\n"
+        "• \`!alert <reboot|shutdown|update|interrupt> <mins>\` - Broadcast a preset alert.\n"
+        "• \`!alert <delay> <dur> \"text\"\` - Broadcast a custom timed alert.\n"
         "• \`!reboot\` - Safely restart the Raspberry Pi.\n"
         "• \`!shutdown\` - Safely shut down the Raspberry Pi.\n"
         "• \`!help\` - Display this command menu."
@@ -225,14 +268,20 @@ COMMANDS = {
     "reboot": cmd_reboot,
     "shutdown": cmd_shutdown,
     "temp_report": cmd_temp_report,
-    "test_cpu": cmd_test_cpu,
-    "test_ram": cmd_test_ram,
-    "test_temp": cmd_test_temp,
+    "test": cmd_test,
+    "alert": cmd_alert,
     "help": cmd_help
 }
 
 @client.event
 async def on_message(message):
+    if message.author == client.user:
+        return
+
+    # Restrict bot functionality exclusively to the 'alert' channel
+    if message.channel.name != "alert":
+        return
+
     if message.author.id != YOUR_DISCORD_USER_ID:
         return
 
