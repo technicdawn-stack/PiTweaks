@@ -6,6 +6,7 @@ clear
 # 🤖 Discord Bot Interactive Installer & Setup
 # ==============================================================================
 INSTALL_DIR="$HOME/PiTweaks/discord_bot"
+CONFIG_FILE="$INSTALL_DIR/config.env"
 SERVICE_NAME="pitweaks-discord-bot"
 
 echo "=========================================="
@@ -38,7 +39,6 @@ fi
 # ==============================================================================
 echo "🔍 Checking dependencies..."
 
-# Check Python3
 if ! command -v python3 &> /dev/null; then
     echo "📦 Python3 not found. Installing..."
     sudo apt update && sudo apt install -y python3
@@ -46,7 +46,6 @@ else
     echo "✅ Python3 is installed."
 fi
 
-# Check Pip3
 if ! command -v pip3 &> /dev/null; then
     echo "📦 Python3-pip not found. Installing..."
     sudo apt update && sudo apt install -y python3-pip
@@ -54,7 +53,6 @@ else
     echo "✅ Pip3 is installed."
 fi
 
-# Check/Install/Upgrade discord.py library
 echo "📦 Verifying python library (discord.py)..."
 python3 -c "import discord" &> /dev/null
 if [ $? -ne 0 ]; then
@@ -66,33 +64,59 @@ else
 fi
 
 echo ""
-echo "⚙️  Configuration Setup"
-echo "------------------------------------------"
 
-# Prompt for Discord Bot Token securely (hidden input)
-read -p "Enter your Discord Bot Token: " -s BOT_TOKEN
-echo ""
+# ==============================================================================
+# ⚙️ Configuration Setup (With Option to Reuse Old Values)
+# ==============================================================================
+USE_OLD_CONFIG=false
 
-# Prompt for Discord User ID
-read -p "Enter your Discord User ID (numeric): " USER_ID
-echo ""
+if [ -f "$CONFIG_FILE" ]; then
+    echo "📄 Existing configuration found."
+    read -p "Do you want to reuse your saved Bot Token and User ID? [Y/n]: " REUSE_CHOICE </dev/tty
+    REUSE_CHOICE=${REUSE_CHOICE:-Y} # Default to Yes if just pressed Enter
+    echo ""
+    
+    case "$REUSE_CHOICE" in
+        [yY]|[yY][eE][sS])
+            source "$CONFIG_FILE"
+            USE_OLD_CONFIG=true
+            echo "✅ Loaded saved configuration credentials."
+            ;;
+    esac
+fi
 
-# Validate user ID is numeric
-if ! [[ "$USER_ID" =~ ^[0-9]+$ ]]; then
-    echo "❌ Error: Discord User ID must be numbers only."
-    exit 1
+if [ "$USE_OLD_CONFIG" = false ]; then
+    echo "⚙️  New Configuration Setup"
+    echo "------------------------------------------"
+    
+    read -p "Enter your Discord Bot Token: " -s BOT_TOKEN
+    echo ""
+
+    read -p "Enter your Discord User ID (numeric): " USER_ID
+    echo ""
+
+    if ! [[ "$USER_ID" =~ ^[0-9]+$ ]]; then
+        echo "❌ Error: Discord User ID must be numbers only."
+        exit 1
+    fi
+
+    # Save credentials securely to config file for future updates
+    mkdir -p "$INSTALL_DIR"
+    cat << EOL > "$CONFIG_FILE"
+BOT_TOKEN="$BOT_TOKEN"
+USER_ID="$USER_ID"
+EOL
+    chmod 600 "$CONFIG_FILE"
 fi
 
 mkdir -p "$INSTALL_DIR"
 
 echo "📝 Generating bot script..."
 
-# Write the Python bot file directly with the user's variables injected
 cat << EOF > "$INSTALL_DIR/bot.py"
 import discord
 import subprocess
 
-# Enable intents so the bot can read messages in channels
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
@@ -100,45 +124,45 @@ client = discord.Client(intents=intents)
 YOUR_DISCORD_USER_ID = $USER_ID
 
 async def cmd_reboot(message, args):
-    """Reboots the Raspberry Pi."""
     await message.channel.send("🔄 Rebooting Raspberry Pi...")
     subprocess.run(['sudo', 'reboot'])
 
 async def cmd_shutdown(message, args):
-    """Shuts down the Raspberry Pi."""
     await message.channel.send("🛑 Shutting down Raspberry Pi...")
     subprocess.run(['sudo', 'shutdown', 'now'])
 
 async def cmd_temp_report(message, args):
-    """Reports current CPU temperature and clock speed."""
     temp = subprocess.getoutput("vcgencmd measure_temp")
     freq = subprocess.getoutput("vcgencmd measure_clock arm")
     await message.channel.send(f"📊 **Temperature Report:**\n🌡️ {temp}\n⚡ {freq}")
 
 async def cmd_test_cpu(message, args):
-    """Executes a CPU test command/script on the Pi terminal."""
     if not args.isdigit():
         await message.channel.send("❌ Please provide a valid number (e.g., \`!test_cpu 99\`).")
         return
     value = int(args)
-    await message.channel.send(f"⚡ Executing CPU test with value {value} on the Pi terminal...")
+    await message.channel.send(f"⚡ Executing CPU test with value {value} on Pi terminal...")
     
-    # Example terminal execution hook:
-    # subprocess.run(["python3", "/home/raspi3b/PiTweaks/your_script.py", str(value)])
-    
-    await message.channel.send(f"✅ \`test_cpu {value}\` terminal execution finished.")
+    try:
+        result = subprocess.run(["stress-ng", "--cpu", "1", "--timeout", f"{value}s"], capture_output=True, text=True, timeout=30)
+        await message.channel.send(f"✅ \`test_cpu {value}\` executed successfully.")
+    except Exception as e:
+        await message.channel.send(f"❌ Error executing terminal command: \`{e}\`")
 
 async def cmd_test_ram(message, args):
-    """Executes a RAM test command/script on the Pi terminal."""
     if not args.isdigit():
         await message.channel.send("❌ Please provide a valid number (e.g., \`!test_ram 50\`).")
         return
     value = int(args)
-    await message.channel.send(f"🧠 Executing RAM test with value {value} on the Pi terminal...")
-    await message.channel.send(f"✅ \`test_ram {value}\` terminal execution finished.")
+    await message.channel.send(f"🧠 Executing RAM test with value {value} on Pi terminal...")
+    
+    try:
+        result = subprocess.run(["stress-ng", "--vm", "1", "--vm-bytes", f"{value}M", "--timeout", "5s"], capture_output=True, text=True, timeout=30)
+        await message.channel.send(f"✅ \`test_ram {value}\` executed successfully.")
+    except Exception as e:
+        await message.channel.send(f"❌ Error executing terminal command: \`{e}\`")
 
 async def cmd_test_temp(message, args):
-    """Performs a temperature threshold check using the provided numeric value."""
     if not args.isdigit():
         await message.channel.send("❌ Please provide a valid number (e.g., \`!test_temp 75\`).")
         return
@@ -147,7 +171,6 @@ async def cmd_test_temp(message, args):
     await message.channel.send(f"🔥 Temp check (Target: {value}°C)\n📊 Current: {current_temp}")
 
 async def cmd_help(message, args):
-    """Lists all available bot commands."""
     help_text = (
         "🤖 **Raspberry Pi Bot Commands:**\n"
         "• \`!temp_report\` - Check current temperature and clock speed.\n"
@@ -172,7 +195,6 @@ COMMANDS = {
 
 @client.event
 async def on_message(message):
-    # Security: Only listen to your specific user ID
     if message.author.id != YOUR_DISCORD_USER_ID:
         return
 
@@ -234,9 +256,6 @@ echo ""
 echo "✅ Installation complete!"
 echo "📂 Bot installed to: $INSTALL_DIR/bot.py"
 
-# ==============================================================================
-# 🚀 Launch Bot Now
-# ==============================================================================
 if systemctl is-active --quiet $SERVICE_NAME.service; then
     echo "🚀 Bot is already running in the background via systemd!"
 else
