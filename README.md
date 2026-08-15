@@ -11,5 +11,6 @@ sudo -i
 bash <(curl -fsSL "https://raw.githubusercontent.com/technicdawn-stack/PiTweaks/main/install.sh")
 ```
 
+or this for sudo?
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/technicdawn-stack/PiTweaks/main/install.sh" | sudo bash
