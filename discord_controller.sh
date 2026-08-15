@@ -141,11 +141,14 @@ async def cmd_test_cpu(message, args):
         await message.channel.send("❌ Please provide a valid number (e.g., \`!test_cpu 99\`).")
         return
     value = int(args)
-    await message.channel.send(f"⚡ Executing CPU test with value {value} on Pi terminal...")
+    await message.channel.send(f"⚡ Executing global command \`test_cpu {value}\` on Pi...")
     
     try:
-        result = subprocess.run(["stress-ng", "--cpu", "1", "--timeout", f"{value}s"], capture_output=True, text=True, timeout=30)
-        await message.channel.send(f"✅ \`test_cpu {value}\` executed successfully.")
+        result = subprocess.run(f"test_cpu {value}", shell=True, capture_output=True, text=True, timeout=60)
+        output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
+        if len(output) > 1500:
+            output = output[:1500] + "\n[Output truncated...]"
+        await message.channel.send(f"✅ \`test_cpu {value}\` finished.\n\`\`\`bash\n{output}\n\`\`\`")
     except Exception as e:
         await message.channel.send(f"❌ Error executing terminal command: \`{e}\`")
 
@@ -154,11 +157,14 @@ async def cmd_test_ram(message, args):
         await message.channel.send("❌ Please provide a valid number (e.g., \`!test_ram 50\`).")
         return
     value = int(args)
-    await message.channel.send(f"🧠 Executing RAM test with value {value} on Pi terminal...")
+    await message.channel.send(f"🧠 Executing global command \`test_ram {value}\` on Pi...")
     
     try:
-        result = subprocess.run(["stress-ng", "--vm", "1", "--vm-bytes", f"{value}M", "--timeout", "5s"], capture_output=True, text=True, timeout=30)
-        await message.channel.send(f"✅ \`test_ram {value}\` executed successfully.")
+        result = subprocess.run(f"test_ram {value}", shell=True, capture_output=True, text=True, timeout=60)
+        output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
+        if len(output) > 1500:
+            output = output[:1500] + "\n[Output truncated...]"
+        await message.channel.send(f"✅ \`test_ram {value}\` finished.\n\`\`\`bash\n{output}\n\`\`\`")
     except Exception as e:
         await message.channel.send(f"❌ Error executing terminal command: \`{e}\`")
 
@@ -167,16 +173,24 @@ async def cmd_test_temp(message, args):
         await message.channel.send("❌ Please provide a valid number (e.g., \`!test_temp 75\`).")
         return
     value = int(args)
-    current_temp = subprocess.getoutput("vcgencmd measure_temp")
-    await message.channel.send(f"🔥 Temp check (Target: {value}°C)\n📊 Current: {current_temp}")
+    await message.channel.send(f"🔥 Executing global command \`test_temp {value}\` on Pi...")
+    
+    try:
+        result = subprocess.run(f"test_temp {value}", shell=True, capture_output=True, text=True, timeout=60)
+        output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
+        if len(output) > 1500:
+            output = output[:1500] + "\n[Output truncated...]"
+        await message.channel.send(f"✅ \`test_temp {value}\` finished.\n\`\`\`bash\n{output}\n\`\`\`")
+    except Exception as e:
+        await message.channel.send(f"❌ Error executing terminal command: \`{e}\`")
 
 async def cmd_help(message, args):
     help_text = (
         "🤖 **Raspberry Pi Bot Commands:**\n"
         "• \`!temp_report\` - Check current temperature and clock speed.\n"
-        "• \`!test_cpu <num>\` - Run CPU test command on Pi terminal.\n"
-        "• \`!test_ram <num>\` - Run RAM test command on Pi terminal.\n"
-        "• \`!test_temp <num>\` - Check temperature threshold.\n"
+        "• \`!test_cpu <num>\` - Run global CPU test command on Pi terminal.\n"
+        "• \`!test_ram <num>\` - Run global RAM test command on Pi terminal.\n"
+        "• \`!test_temp <num>\` - Run global temperature threshold command.\n"
         "• \`!reboot\` - Safely restart the Raspberry Pi.\n"
         "• \`!shutdown\` - Safely shut down the Raspberry Pi.\n"
         "• \`!help\` - Display this command menu."
@@ -244,7 +258,6 @@ EOL
 
         sudo systemctl daemon-reload
         sudo systemctl enable $SERVICE_NAME.service
-        sudo systemctl restart $SERVICE_NAME.service
         echo "✅ Auto-start enabled successfully!"
         ;;
     *)
@@ -252,13 +265,29 @@ EOL
         ;;
 esac
 
+# ==============================================================================
+# 🚀 Service Restart / Launch Prompt
+# ==============================================================================
 echo ""
-echo "✅ Installation complete!"
-echo "📂 Bot installed to: $INSTALL_DIR/bot.py"
+read -p "Do you want to restart/start the Discord bot service now? [Y/n]: " RESTART_SERVICE_CHOICE </dev/tty
+RESTART_SERVICE_CHOICE=${RESTART_SERVICE_CHOICE:-Y}
+echo ""
 
-if systemctl is-active --quiet $SERVICE_NAME.service; then
-    echo "🚀 Bot is already running in the background via systemd!"
-else
-    echo "🚀 Starting bot now..."
-    python3 "$INSTALL_DIR/bot.py"
-fi
+case "$RESTART_SERVICE_CHOICE" in
+    [yY]|[yY][eE][sS])
+        if systemctl list-unit-files | grep -q "$SERVICE_NAME.service"; then
+            sudo systemctl restart "$SERVICE_NAME.service"
+            echo "🚀 Discord bot service restarted successfully!"
+        else
+            echo "🚀 Starting bot manually..."
+            python3 "$INSTALL_DIR/bot.py" &
+        fi
+        ;;
+    *)
+        echo "ℹ️  Service restart skipped."
+        ;;
+esac
+
+echo ""
+echo "✅ Installation & update complete!"
+echo "📂 Bot installed to: $INSTALL_DIR/bot.py"
