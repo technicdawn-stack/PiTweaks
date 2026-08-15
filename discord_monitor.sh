@@ -17,6 +17,8 @@ fi
 INSTALL_DIR="$REAL_HOME/PiTweaks"
 BOT_DIR="$INSTALL_DIR/discord_bot"
 CONFIG_FILE="$BOT_DIR/config.env"
+MONITOR_SCRIPT="$REAL_HOME/temp_monitor.sh"
+BOT_SCRIPT="$BOT_DIR/bot.py"
 SERVICE_NAME="pitweaks-discord-bot"
 
 echo "=========================================="
@@ -24,7 +26,42 @@ echo " 🍓 PiTweaks All-in-One Setup & Installer"
 echo "=========================================="
 echo ""
 
-# 1. DEPENDENCY INSTALLATION
+# 1. INTELLIGENT AUTO-DETECTION OF EXISTING FILES
+MISSING_ITEMS=""
+PRESENT_ITEMS=""
+
+[ -f "$MONITOR_SCRIPT" ] && PRESENT_ITEMS="$PRESENT_ITEMS temp_monitor.sh" \vert{}\vert{} MISSING_ITEMS="$MISSING_ITEMS temp_monitor.sh"
+[ -f "$BOT_SCRIPT" ] && PRESENT_ITEMS="$PRESENT_ITEMS bot.py" \vert{}\vert{} MISSING_ITEMS="$MISSING_ITEMS bot.py"
+[ -f "$CONFIG_FILE" ] && PRESENT_ITEMS="$PRESENT_ITEMS config.env" \vert{}\vert{} MISSING_ITEMS="$MISSING_ITEMS config.env"
+
+if [ -n "$PRESENT_ITEMS" ]; then
+    echo "🔍 **Status Check:** Found existing components:$PRESENT_ITEMS"
+    if [ -n "$MISSING_ITEMS" ]; then
+        echo "⚠️  **Missing components:**$MISSING_ITEMS"
+    fi
+    echo ""
+    read -p "Do you want to repair/update existing scripts or perform a clean reinstall? [U]pdate/Repair / [F]resh Install / [Q]uit: " INSTALL_CHOICE </dev/tty
+    echo ""
+    case "$INSTALL_CHOICE" in
+        [qQ]* )
+            echo "❌ Installation cancelled by user."
+            exit 0
+            ;;
+        [fF]* )
+            echo "🔄 Performing fresh installation (overwriting everything)..."
+            echo ""
+            ;;
+        * )
+            echo "⚙️ Proceeding with smart update/repair mode..."
+            echo ""
+            ;;
+    esac
+else
+    echo "🆕 No existing installation detected. Starting fresh setup..."
+    echo ""
+fi
+
+# 2. DEPENDENCY INSTALLATION
 echo "📦 Installing required system dependencies (jq, python3)..."
 sudo apt-get update -qq && sudo apt-get install -y jq python3 python3-pip -qq
 
@@ -33,10 +70,9 @@ python3 -c "import discord" &> /dev/null || pip3 install discord.py --break-syst
 
 echo ""
 
-# 2. CONFIGURATION SETUP
+# 3. CONFIGURATION SETUP
 USE_OLD_CONFIG=false
 if [ -f "$CONFIG_FILE" ]; then
-    echo "📄 Existing configuration found at: $CONFIG_FILE"
     read -p "Do you want to reuse your saved Bot Token and User ID? [Y/n]: " REUSE_CHOICE </dev/tty
     REUSE_CHOICE=${REUSE_CHOICE:-Y}
     echo ""
@@ -74,10 +110,10 @@ fi
 mkdir -p "$BOT_DIR"
 
 # ==============================================================================
-# 3. WRITE THE MONITORING SCRIPT (~/temp_monitor.sh)
+# 4. WRITE THE MONITORING SCRIPT (~/temp_monitor.sh)
 # ==============================================================================
 echo "📝 Writing ~/temp_monitor.sh..."
-cat << 'SCRIPT' > "$REAL_HOME/temp_monitor.sh"
+cat << 'SCRIPT' > "$MONITOR_SCRIPT"
 #!/bin/bash
 
 # --- CONFIGURATION ---
@@ -161,14 +197,14 @@ elif [ "\$1" = "test_temp" ] && [ -n "\$2" ]; then
 fi
 SCRIPT
 
-chmod +x "$REAL_HOME/temp_monitor.sh"
-chown "$CURRENT_USER:$CURRENT_USER" "$REAL_HOME/temp_monitor.sh"
+chmod +x "$MONITOR_SCRIPT"
+chown "$CURRENT_USER:$CURRENT_USER" "$MONITOR_SCRIPT"
 
 # ==============================================================================
-# 4. WRITE THE DISCORD BOT SCRIPT ($BOT_DIR/bot.py)
+# 5. WRITE THE DISCORD BOT SCRIPT ($BOT_DIR/bot.py)
 # ==============================================================================
 echo "📝 Writing Discord bot script..."
-cat << 'EOF' > "$BOT_DIR/bot.py"
+cat << 'EOF' > "$BOT_SCRIPT"
 import discord
 import subprocess
 import datetime
@@ -357,10 +393,10 @@ async def on_message(message):
 client.run(config.get("BOT_TOKEN"))
 EOF
 
-chown "$CURRENT_USER:$CURRENT_USER" "$BOT_DIR/bot.py"
+chown "$CURRENT_USER:$CURRENT_USER" "$BOT_SCRIPT"
 
 # ==============================================================================
-# 5. SHORTCUTS, CRON & SYSTEMD SERVICE
+# 6. SHORTCUTS, CRON & SYSTEMD SERVICE
 # ==============================================================================
 echo "⚡ Setting up terminal aliases in ~/.bashrc..."
 grep -qF "alias temp_report" "$REAL_HOME/.bashrc" || echo "alias temp_report='~/temp_monitor.sh temp_report'" >> "$REAL_HOME/.bashrc"
@@ -380,7 +416,7 @@ After=network.target
 [Service]
 Type=simple
 User=$CURRENT_USER
-ExecStart=/usr/bin/python3 $BOT_DIR/bot.py
+ExecStart=/usr/bin/python3 $BOT_SCRIPT
 Restart=always
 RestartSec=10
 
