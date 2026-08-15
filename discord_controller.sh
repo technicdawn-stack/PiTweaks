@@ -6,6 +6,7 @@ clear
 # 🤖 Discord Bot Interactive Installer & Setup
 # ==============================================================================
 INSTALL_DIR="$HOME/PiTweaks/discord_bot"
+SERVICE_NAME="pitweaks-discord-bot"
 
 echo "=========================================="
 echo " 🤖 Discord Bot Setup & Installer"
@@ -32,15 +33,37 @@ if [ -f "$INSTALL_DIR/bot.py" ]; then
     esac
 fi
 
-# Check for python3 and pip
+# ==============================================================================
+# 📦 Dependency Checks & Auto-Install / Upgrade
+# ==============================================================================
+echo "🔍 Checking dependencies..."
+
+# Check Python3
 if ! command -v python3 &> /dev/null; then
-    echo "❌ Python3 is not installed. Installing..."
-    sudo apt update && sudo apt install -y python3 python3-pip
+    echo "📦 Python3 not found. Installing..."
+    sudo apt update && sudo apt install -y python3
+else
+    echo "✅ Python3 is installed."
 fi
 
-# Install discord.py dependency safely
-echo "📦 Installing required Python libraries (discord.py)..."
-pip3 install discord.py --break-system-packages &> /dev/null || pip3 install discord.py
+# Check Pip3
+if ! command -v pip3 &> /dev/null; then
+    echo "📦 Python3-pip not found. Installing..."
+    sudo apt update && sudo apt install -y python3-pip
+else
+    echo "✅ Pip3 is installed."
+fi
+
+# Check/Install/Upgrade discord.py library
+echo "📦 Verifying python library (discord.py)..."
+python3 -c "import discord" &> /dev/null
+if [ $? -ne 0 ]; then
+    echo "📦 Installing discord.py..."
+    pip3 install discord.py --break-system-packages &> /dev/null || pip3 install discord.py
+else
+    echo "🔄 Checking for discord.py updates..."
+    pip3 install --upgrade discord.py --break-system-packages &> /dev/null || pip3 install --upgrade discord.py
+fi
 
 echo ""
 echo "⚙️  Configuration Setup"
@@ -100,7 +123,7 @@ async def cmd_test_cpu(message, args):
     value = int(args)
     await message.channel.send(f"⚡ Executing CPU test with value {value} on the Pi terminal...")
     
-    # Example terminal execution hook (customize to your monitor scripts if needed):
+    # Example terminal execution hook:
     # subprocess.run(["python3", "/home/raspi3b/PiTweaks/your_script.py", str(value)])
     
     await message.channel.send(f"✅ \`test_cpu {value}\` terminal execution finished.")
@@ -169,8 +192,54 @@ async def on_message(message):
 client.run('$BOT_TOKEN')
 EOF
 
+# ==============================================================================
+# 🔄 Auto-Start on Reboot Configuration (Systemd Service)
+# ==============================================================================
+echo ""
+read -p "Do you want the bot to automatically start on system reboot? [y/N]: " AUTOSTART_CHOICE </dev/tty
+echo ""
+
+case "$AUTOSTART_CHOICE" in
+    [yY]|[yY][eE][sS])
+        echo "⚙️  Setting up background systemd service..."
+        CURRENT_USER=$(whoami)
+        
+        sudo bash -c "cat > /etc/systemd/system/$SERVICE_NAME.service" << EOL
+[Unit]
+Description=PiTweaks Discord Bot
+After=network.target
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+ExecStart=/usr/bin/python3 $INSTALL_DIR/bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOL
+
+        sudo systemctl daemon-reload
+        sudo systemctl enable $SERVICE_NAME.service
+        sudo systemctl restart $SERVICE_NAME.service
+        echo "✅ Auto-start enabled successfully!"
+        ;;
+    *)
+        echo "ℹ️  Skipped auto-start configuration."
+        ;;
+esac
+
 echo ""
 echo "✅ Installation complete!"
 echo "📂 Bot installed to: $INSTALL_DIR/bot.py"
-echo "🚀 To run your bot manually, use:"
-echo "   python3 $INSTALL_DIR/bot.py"
+
+# ==============================================================================
+# 🚀 Launch Bot Now
+# ==============================================================================
+if systemctl is-active --quiet $SERVICE_NAME.service; then
+    echo "🚀 Bot is already running in the background via systemd!"
+else
+    echo "🚀 Starting bot now..."
+    python3 "$INSTALL_DIR/bot.py"
+fi
