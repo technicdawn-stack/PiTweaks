@@ -152,7 +152,7 @@ async def cmd_shutdown(message, args):
 async def cmd_temp_report(message, args):
     await message.channel.send("📊 Generating system report...")
     try:
-        result = subprocess.run("bash ~/temp_monitor.sh", shell=True, capture_output=True, text=True, timeout=30)
+        result = subprocess.run("bash ~/temp_monitor.sh temp_report", shell=True, capture_output=True, text=True, timeout=30)
         output = result.stdout.strip() or result.stderr.strip() or "Report generated with no output."
         if len(output) > 1900:
             output = output[:1900] + "\n[Output truncated...]"
