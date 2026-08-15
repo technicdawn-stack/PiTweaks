@@ -29,12 +29,12 @@ echo " 3) Turn Swap OFF"
 echo " 4) Exit"
 echo ""
 
-read -p "Select an option [1-4]: " choice
+read -p "Select an option [1-4]: " choice </dev/tty
 
 case $choice in
     1)
         echo ""
-        read -p "Enter desired swap size in megabytes (e.g., 1024 for 1GB, 2048 for 2GB): " NEW_SIZE
+        read -p "Enter desired swap size in megabytes (e.g., 1024 for 1GB, 2048 for 2GB): " NEW_SIZE </dev/tty
         
         if ! [[ "$NEW_SIZE" =~ ^[0-9]+$ ]]; then
             echo "❌ Invalid number. Exiting."
