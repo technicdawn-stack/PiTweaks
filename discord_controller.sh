@@ -132,6 +132,15 @@ client = discord.Client(intents=intents)
 
 YOUR_DISCORD_USER_ID = $USER_ID
 
+@client.event
+async def on_ready():
+    print(f'Logged in as {client.user.name}')
+    try:
+        user = await client.fetch_user(YOUR_DISCORD_USER_ID)
+        await user.send("🚀 **Raspberry Pi Booted Successfully!**\nSystem control bot is online and ready.")
+    except Exception as e:
+        print(f"Could not send boot DM: {e}")
+
 async def cmd_reboot(message, args):
     await message.channel.send("🔄 Rebooting Raspberry Pi...")
     subprocess.run(['sudo', 'reboot'])
@@ -143,7 +152,7 @@ async def cmd_shutdown(message, args):
 async def cmd_temp_report(message, args):
     await message.channel.send("📊 Generating system report...")
     try:
-        result = subprocess.run("bash -l -c 'temp_report'", shell=True, capture_output=True, text=True, timeout=30)
+        result = subprocess.run("bash ~/temp_monitor.sh", shell=True, capture_output=True, text=True, timeout=30)
         output = result.stdout.strip() or result.stderr.strip() or "Report generated with no output."
         if len(output) > 1900:
             output = output[:1900] + "\n[Output truncated...]"
@@ -156,10 +165,10 @@ async def cmd_test_cpu(message, args):
         await message.channel.send("❌ Please provide a valid number (e.g., \`!test_cpu 99\`).")
         return
     value = int(args)
-    await message.channel.send(f"⚡ Executing global command \`test_cpu {value}\`...")
+    await message.channel.send(f"⚡ Executing CPU test with value {value}...")
     
     try:
-        result = subprocess.run(f"bash -l -c 'test_cpu {value}'", shell=True, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(f"bash ~/temp_monitor.sh test_cpu {value}", shell=True, capture_output=True, text=True, timeout=60)
         output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
         if len(output) > 1500:
             output = output[:1500] + "\n[Output truncated...]"
@@ -172,10 +181,10 @@ async def cmd_test_ram(message, args):
         await message.channel.send("❌ Please provide a valid number (e.g., \`!test_ram 50\`).")
         return
     value = int(args)
-    await message.channel.send(f"🧠 Executing global command \`test_ram {value}\`...")
+    await message.channel.send(f"🧠 Executing RAM test with value {value}...")
     
     try:
-        result = subprocess.run(f"bash -l -c 'test_ram {value}'", shell=True, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(f"bash ~/temp_monitor.sh test_ram {value}", shell=True, capture_output=True, text=True, timeout=60)
         output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
         if len(output) > 1500:
             output = output[:1500] + "\n[Output truncated...]"
@@ -188,10 +197,10 @@ async def cmd_test_temp(message, args):
         await message.channel.send("❌ Please provide a valid number (e.g., \`!test_temp 75\`).")
         return
     value = int(args)
-    await message.channel.send(f"🔥 Executing global command \`test_temp {value}\`...")
+    await message.channel.send(f"🔥 Executing temp test with value {value}...")
     
     try:
-        result = subprocess.run(f"bash -l -c 'test_temp {value}'", shell=True, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(f"bash ~/temp_monitor.sh test_temp {value}", shell=True, capture_output=True, text=True, timeout=60)
         output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
         if len(output) > 1500:
             output = output[:1500] + "\n[Output truncated...]"
@@ -202,10 +211,10 @@ async def cmd_test_temp(message, args):
 async def cmd_help(message, args):
     help_text = (
         "🤖 **Raspberry Pi Bot Commands:**\n"
-        "• \`!temp_report\` - Run global temperature report command.\n"
-        "• \`!test_cpu <num>\` - Run global CPU test command on Pi.\n"
-        "• \`!test_ram <num>\` - Run global RAM test command on Pi.\n"
-        "• \`!test_temp <num>\` - Run global temperature threshold command.\n"
+        "• \`!temp_report\` - Run system temperature report.\n"
+        "• \`!test_cpu <num>\` - Run CPU test via temp_monitor.sh.\n"
+        "• \`!test_ram <num>\` - Run RAM test via temp_monitor.sh.\n"
+        "• \`!test_temp <num>\` - Run temperature threshold check.\n"
         "• \`!reboot\` - Safely restart the Raspberry Pi.\n"
         "• \`!shutdown\` - Safely shut down the Raspberry Pi.\n"
         "• \`!help\` - Display this command menu."
