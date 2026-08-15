@@ -7,5 +7,9 @@ Run this command in your terminal for a one line install:
 Preferably run beforehand to ensure sudo works:
 sudo -i
 
+```
+bash <(curl -fsSL "https://raw.githubusercontent.com/technicdawn-stack/PiTweaks/main/install.sh")
+```
+
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/technicdawn-stack/PiTweaks/main/install.sh" | sudo bash
