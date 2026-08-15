@@ -293,14 +293,19 @@ async def cmd_alert(message, args):
         parts = args.split()
         
     if not parts:
-        await message.channel.send("❌ Usage examples:\n`!alert reboot 5`\n`!alert 5 15 \"Custom maintenance notice\"`")
+        await message.channel.send("❌ Usage examples:\n`!alert reboot 5` (notice only)\n`!alert reboot 5 10` (notice + duration)\n`!alert 5 15 \"Custom notice\"`")
         return
 
     now = datetime.datetime.now()
     if parts[0].lower() in ["reboot", "shutdown", "update", "interrupt"]:
         action = parts[0].lower()
         delay_mins = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 5
+        
+        has_duration = len(parts) > 2 and parts[2].isdigit()
+        duration_mins = int(parts[2]) if has_duration else 5
+        
         start_time = now + datetime.timedelta(minutes=delay_mins)
+        end_time = start_time + datetime.timedelta(minutes=duration_mins)
         
         if action in ["reboot", "shutdown"]:
             title = f"PLANNED NETWORK DOWNTIME: {action.upper()}"
@@ -318,6 +323,12 @@ async def cmd_alert(message, args):
             f"• **Action Type:** {action.capitalize()}\n"
             f"• **Notice Given At:** {now.strftime('%H:%M')}\n"
             f"• **Execution Time:** ~{start_time.strftime('%H:%M')} (In {delay_mins} mins)\n"
+        )
+        
+        if has_duration:
+            output_msg += f"• **Expected Length:** {duration_mins} minute(s) (Expected back ~{end_time.strftime('%H:%M')})\n"
+            
+        output_msg += (
             f"• **Event Classification:** {classification}\n\n"
             f"*{advice}*"
         )
@@ -352,10 +363,10 @@ async def cmd_help(message, args):
         "🤖 **Raspberry Pi Bot Commands:**\n"
         "• `!temp_report` - Run system temperature report.\n"
         "• `!test <cpu|ram|temp> <num>` - Run hardware diagnostic tests.\n"
-        "• `!alert reboot <mins>` - Broadcast a preset reboot alert.\n"
-        "• `!alert shutdown <mins>` - Broadcast a preset shutdown alert.\n"
-        "• `!alert update <mins>` - Broadcast a preset update alert.\n"
-        "• `!alert interrupt <mins>` - Broadcast a preset service interruption alert.\n"
+        "• `!alert reboot <delay> [dur]` - Broadcast preset reboot alert (duration optional).\n"
+        "• `!alert shutdown <delay> [dur]` - Broadcast preset shutdown alert (duration optional).\n"
+        "• `!alert update <delay> [dur]` - Broadcast preset update alert (duration optional).\n"
+        "• `!alert interrupt <delay> [dur]` - Broadcast preset interruption alert (duration optional).\n"
         "• `!alert <delay> <dur> \"text\"` - Broadcast a custom timed alert.\n"
         "• `!reboot` - Safely restart the Raspberry Pi.\n"
         "• `!shutdown` - Safely shut down the Raspberry Pi.\n"
