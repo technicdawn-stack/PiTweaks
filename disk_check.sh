@@ -55,8 +55,8 @@ else
     echo -e "• Filesystem Status : ${GREEN}Healthy (Read/Write mode normal)${NC}"
 fi
 
-# Scan kernel ring buffer (dmesg) for hardware or I/O errors
-SD_ERRORS=$(dmesg | grep -iE 'mmc0|sdhci|I/O error|EXT4-fs error' | tail -n 3)
+# Scan kernel ring buffer (dmesg) for actual hardware or I/O errors (excluding normal boot info)
+SD_ERRORS=$(dmesg | grep -iE 'I/O error|EXT4-fs error|mmc0.*error|sdhci.*error|timed out|crc error' | tail -n 3)
 
 if [ -n "$SD_ERRORS" ]; then
     echo -e "• Hardware Errors   : ${RED}Found potential SD card I/O issues!${NC}"
