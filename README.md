@@ -8,4 +8,4 @@ Preferably run beforehand to ensure sudo works:
 sudo -i
 
 ```bash
-bash <(curl -fsSL "https://raw.githubusercontent.com/technicdawn-stack/PiTweaks/main/install.sh")
+curl -fsSL "https://raw.githubusercontent.com/technicdawn-stack/PiTweaks/main/install.sh" | sudo bash
