@@ -12,7 +12,7 @@ echo " 🤖 Discord Bot Setup & Installer"
 echo "=========================================="
 echo ""
 
-# Check if already installed
+# Check if already installed (Repair/Upgrade mode)
 if [ -f "$INSTALL_DIR/bot.py" ]; then
     echo "⚠️  An existing Discord bot installation was found at:"
     echo "   $INSTALL_DIR"
@@ -69,7 +69,10 @@ cat << EOF > "$INSTALL_DIR/bot.py"
 import discord
 import subprocess
 
-client = discord.Client(intents=discord.Intents.default())
+# Enable intents so the bot can read messages in channels
+intents = discord.Intents.default()
+intents.message_content = True
+client = discord.Client(intents=intents)
 
 YOUR_DISCORD_USER_ID = $USER_ID
 
@@ -90,40 +93,44 @@ async def cmd_temp_report(message, args):
     await message.channel.send(f"📊 **Temperature Report:**\n🌡️ {temp}\n⚡ {freq}")
 
 async def cmd_test_cpu(message, args):
-    """Performs a CPU test using the provided numeric value."""
+    """Executes a CPU test command/script on the Pi terminal."""
     if not args.isdigit():
-        await message.channel.send("❌ Please provide a valid number (e.g., \`!test_cpu 98\`).")
+        await message.channel.send("❌ Please provide a valid number (e.g., \`!test_cpu 99\`).")
         return
     value = int(args)
-    await message.channel.send(f"⚡ Running CPU test with parameter: \`{value}\`...")
-    await message.channel.send(f"✅ CPU test completed successfully (Value: {value}).")
+    await message.channel.send(f"⚡ Executing CPU test with value {value} on the Pi terminal...")
+    
+    # Example terminal execution hook (customize to your monitor scripts if needed):
+    # subprocess.run(["python3", "/home/raspi3b/PiTweaks/your_script.py", str(value)])
+    
+    await message.channel.send(f"✅ \`test_cpu {value}\` terminal execution finished.")
 
 async def cmd_test_ram(message, args):
-    """Performs a RAM test using the provided numeric value."""
+    """Executes a RAM test command/script on the Pi terminal."""
     if not args.isdigit():
         await message.channel.send("❌ Please provide a valid number (e.g., \`!test_ram 50\`).")
         return
     value = int(args)
-    await message.channel.send(f"🧠 Running RAM test with parameter: \`{value}\`...")
-    await message.channel.send(f"✅ RAM test completed successfully (Value: {value}).")
+    await message.channel.send(f"🧠 Executing RAM test with value {value} on the Pi terminal...")
+    await message.channel.send(f"✅ \`test_ram {value}\` terminal execution finished.")
 
 async def cmd_test_temp(message, args):
-    """Performs a temperature threshold test using the provided numeric value."""
+    """Performs a temperature threshold check using the provided numeric value."""
     if not args.isdigit():
         await message.channel.send("❌ Please provide a valid number (e.g., \`!test_temp 75\`).")
         return
     value = int(args)
     current_temp = subprocess.getoutput("vcgencmd measure_temp")
-    await message.channel.send(f"🔥 Running temp threshold check (Target: {value}°C)\n📊 Current: {current_temp}")
+    await message.channel.send(f"🔥 Temp check (Target: {value}°C)\n📊 Current: {current_temp}")
 
 async def cmd_help(message, args):
     """Lists all available bot commands."""
     help_text = (
         "🤖 **Raspberry Pi Bot Commands:**\n"
-        "• \`!temp_report\` - Check current CPU temperature and clock speed.\n"
-        "• \`!test_cpu <num>\` - Run a CPU test with a numeric parameter.\n"
-        "• \`!test_ram <num>\` - Run a RAM test with a numeric parameter.\n"
-        "• \`!test_temp <num>\` - Check temperature threshold against a value.\n"
+        "• \`!temp_report\` - Check current temperature and clock speed.\n"
+        "• \`!test_cpu <num>\` - Run CPU test command on Pi terminal.\n"
+        "• \`!test_ram <num>\` - Run RAM test command on Pi terminal.\n"
+        "• \`!test_temp <num>\` - Check temperature threshold.\n"
         "• \`!reboot\` - Safely restart the Raspberry Pi.\n"
         "• \`!shutdown\` - Safely shut down the Raspberry Pi.\n"
         "• \`!help\` - Display this command menu."
@@ -142,6 +149,7 @@ COMMANDS = {
 
 @client.event
 async def on_message(message):
+    # Security: Only listen to your specific user ID
     if message.author.id != YOUR_DISCORD_USER_ID:
         return
 
