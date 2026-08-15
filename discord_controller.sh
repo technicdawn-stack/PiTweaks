@@ -5,7 +5,16 @@ clear
 # ==============================================================================
 # 🤖 Discord Bot Interactive Installer & Setup
 # ==============================================================================
-INSTALL_DIR="$HOME/PiTweaks/discord_bot"
+# Automatically resolve the correct user home directory (even if run with sudo)
+if [ -n "$SUDO_USER" ]; then
+    REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+    CURRENT_USER="$SUDO_USER"
+else
+    REAL_HOME="$HOME"
+    CURRENT_USER="$(whoami)"
+fi
+
+INSTALL_DIR="$REAL_HOME/PiTweaks/discord_bot"
 CONFIG_FILE="$INSTALL_DIR/config.env"
 SERVICE_NAME="pitweaks-discord-bot"
 
@@ -71,9 +80,9 @@ echo ""
 USE_OLD_CONFIG=false
 
 if [ -f "$CONFIG_FILE" ]; then
-    echo "📄 Existing configuration found."
+    echo "📄 Existing configuration found at: $CONFIG_FILE"
     read -p "Do you want to reuse your saved Bot Token and User ID? [Y/n]: " REUSE_CHOICE </dev/tty
-    REUSE_CHOICE=${REUSE_CHOICE:-Y} # Default to Yes if just pressed Enter
+    REUSE_CHOICE=${REUSE_CHOICE:-Y}
     echo ""
     
     case "$REUSE_CHOICE" in
@@ -100,12 +109,12 @@ if [ "$USE_OLD_CONFIG" = false ]; then
         exit 1
     fi
 
-    # Save credentials securely to config file for future updates
     mkdir -p "$INSTALL_DIR"
     cat << EOL > "$CONFIG_FILE"
 BOT_TOKEN="$BOT_TOKEN"
 USER_ID="$USER_ID"
 EOL
+    chown "$CURRENT_USER:$CURRENT_USER" "$CONFIG_FILE"
     chmod 600 "$CONFIG_FILE"
 fi
 
@@ -132,23 +141,29 @@ async def cmd_shutdown(message, args):
     subprocess.run(['sudo', 'shutdown', 'now'])
 
 async def cmd_temp_report(message, args):
-    temp = subprocess.getoutput("vcgencmd measure_temp")
-    freq = subprocess.getoutput("vcgencmd measure_clock arm")
-    await message.channel.send(f"📊 **Temperature Report:**\n🌡️ {temp}\n⚡ {freq}")
+    await message.channel.send("📊 Generating system report...")
+    try:
+        result = subprocess.run("bash -l -c 'temp_report'", shell=True, capture_output=True, text=True, timeout=30)
+        output = result.stdout.strip() or result.stderr.strip() or "Report generated with no output."
+        if len(output) > 1900:
+            output = output[:1900] + "\n[Output truncated...]"
+        await message.channel.send(f"\`\`\`text\n{output}\n\`\`\`")
+    except Exception as e:
+        await message.channel.send(f"❌ Error running command: \`{e}\`")
 
 async def cmd_test_cpu(message, args):
     if not args.isdigit():
         await message.channel.send("❌ Please provide a valid number (e.g., \`!test_cpu 99\`).")
         return
     value = int(args)
-    await message.channel.send(f"⚡ Executing global command \`test_cpu {value}\` on Pi...")
+    await message.channel.send(f"⚡ Executing global command \`test_cpu {value}\`...")
     
     try:
-        result = subprocess.run(f"test_cpu {value}", shell=True, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(f"bash -l -c 'test_cpu {value}'", shell=True, capture_output=True, text=True, timeout=60)
         output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
         if len(output) > 1500:
             output = output[:1500] + "\n[Output truncated...]"
-        await message.channel.send(f"✅ \`test_cpu {value}\` finished.\n\`\`\`bash\n{output}\n\`\`\`")
+        await message.channel.send(f"✅ \`test_cpu {value}\` finished.\n\`\`\`text\n{output}\n\`\`\`")
     except Exception as e:
         await message.channel.send(f"❌ Error executing terminal command: \`{e}\`")
 
@@ -157,14 +172,14 @@ async def cmd_test_ram(message, args):
         await message.channel.send("❌ Please provide a valid number (e.g., \`!test_ram 50\`).")
         return
     value = int(args)
-    await message.channel.send(f"🧠 Executing global command \`test_ram {value}\` on Pi...")
+    await message.channel.send(f"🧠 Executing global command \`test_ram {value}\`...")
     
     try:
-        result = subprocess.run(f"test_ram {value}", shell=True, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(f"bash -l -c 'test_ram {value}'", shell=True, capture_output=True, text=True, timeout=60)
         output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
         if len(output) > 1500:
             output = output[:1500] + "\n[Output truncated...]"
-        await message.channel.send(f"✅ \`test_ram {value}\` finished.\n\`\`\`bash\n{output}\n\`\`\`")
+        await message.channel.send(f"✅ \`test_ram {value}\` finished.\n\`\`\`text\n{output}\n\`\`\`")
     except Exception as e:
         await message.channel.send(f"❌ Error executing terminal command: \`{e}\`")
 
@@ -173,23 +188,23 @@ async def cmd_test_temp(message, args):
         await message.channel.send("❌ Please provide a valid number (e.g., \`!test_temp 75\`).")
         return
     value = int(args)
-    await message.channel.send(f"🔥 Executing global command \`test_temp {value}\` on Pi...")
+    await message.channel.send(f"🔥 Executing global command \`test_temp {value}\`...")
     
     try:
-        result = subprocess.run(f"test_temp {value}", shell=True, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(f"bash -l -c 'test_temp {value}'", shell=True, capture_output=True, text=True, timeout=60)
         output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
         if len(output) > 1500:
             output = output[:1500] + "\n[Output truncated...]"
-        await message.channel.send(f"✅ \`test_temp {value}\` finished.\n\`\`\`bash\n{output}\n\`\`\`")
+        await message.channel.send(f"✅ \`test_temp {value}\` finished.\n\`\`\`text\n{output}\n\`\`\`")
     except Exception as e:
         await message.channel.send(f"❌ Error executing terminal command: \`{e}\`")
 
 async def cmd_help(message, args):
     help_text = (
         "🤖 **Raspberry Pi Bot Commands:**\n"
-        "• \`!temp_report\` - Check current temperature and clock speed.\n"
-        "• \`!test_cpu <num>\` - Run global CPU test command on Pi terminal.\n"
-        "• \`!test_ram <num>\` - Run global RAM test command on Pi terminal.\n"
+        "• \`!temp_report\` - Run global temperature report command.\n"
+        "• \`!test_cpu <num>\` - Run global CPU test command on Pi.\n"
+        "• \`!test_ram <num>\` - Run global RAM test command on Pi.\n"
         "• \`!test_temp <num>\` - Run global temperature threshold command.\n"
         "• \`!reboot\` - Safely restart the Raspberry Pi.\n"
         "• \`!shutdown\` - Safely shut down the Raspberry Pi.\n"
@@ -228,6 +243,8 @@ async def on_message(message):
 client.run('$BOT_TOKEN')
 EOF
 
+chown "$CURRENT_USER:$CURRENT_USER" "$INSTALL_DIR/bot.py"
+
 # ==============================================================================
 # 🔄 Auto-Start on Reboot Configuration (Systemd Service)
 # ==============================================================================
@@ -238,7 +255,6 @@ echo ""
 case "$AUTOSTART_CHOICE" in
     [yY]|[yY][eE][sS])
         echo "⚙️  Setting up background systemd service..."
-        CURRENT_USER=$(whoami)
         
         sudo bash -c "cat > /etc/systemd/system/$SERVICE_NAME.service" << EOL
 [Unit]
