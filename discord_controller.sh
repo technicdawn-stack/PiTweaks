@@ -152,7 +152,7 @@ async def cmd_shutdown(message, args):
 async def cmd_temp_report(message, args):
     await message.channel.send("📊 Generating system report...")
     try:
-        result = subprocess.run("bash ~/temp_monitor.sh temp_report", shell=True, capture_output=True, text=True, timeout=30)
+        result = subprocess.run("stdbuf -oL bash ~/temp_monitor.sh temp_report", shell=True, capture_output=True, text=True, timeout=30)
         output = result.stdout.strip() or result.stderr.strip() or "Report generated with no output."
         if len(output) > 1900:
             output = output[:1900] + "\n[Output truncated...]"
@@ -168,7 +168,7 @@ async def cmd_test_cpu(message, args):
     await message.channel.send(f"⚡ Executing CPU test with value {value}...")
     
     try:
-        result = subprocess.run(f"bash ~/temp_monitor.sh test_cpu {value}", shell=True, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(f"stdbuf -oL bash ~/temp_monitor.sh test_cpu {value}", shell=True, capture_output=True, text=True, timeout=60)
         output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
         if len(output) > 1500:
             output = output[:1500] + "\n[Output truncated...]"
@@ -184,7 +184,7 @@ async def cmd_test_ram(message, args):
     await message.channel.send(f"🧠 Executing RAM test with value {value}...")
     
     try:
-        result = subprocess.run(f"bash ~/temp_monitor.sh test_ram {value}", shell=True, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(f"stdbuf -oL bash ~/temp_monitor.sh test_ram {value}", shell=True, capture_output=True, text=True, timeout=60)
         output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
         if len(output) > 1500:
             output = output[:1500] + "\n[Output truncated...]"
@@ -200,7 +200,7 @@ async def cmd_test_temp(message, args):
     await message.channel.send(f"🔥 Executing temp test with value {value}...")
     
     try:
-        result = subprocess.run(f"bash ~/temp_monitor.sh test_temp {value}", shell=True, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(f"stdbuf -oL bash ~/temp_monitor.sh test_temp {value}", shell=True, capture_output=True, text=True, timeout=60)
         output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
         if len(output) > 1500:
             output = output[:1500] + "\n[Output truncated...]"
