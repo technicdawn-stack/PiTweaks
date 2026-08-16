@@ -293,16 +293,18 @@ async def cmd_alert(message, args):
         parts = args.split()
         
     if not parts:
-        await message.channel.send("❌ Usage examples:\n`!alert reboot 5` (notice only)\n`!alert reboot 5 10` (notice + duration)\n`!alert 5 15 \"Custom notice\"`")
+        await message.channel.send("❌ Usage examples:\n`!alert reboot 5` (notice only)\n`!alert reboot 5 10` (notice + duration)\n`!alert 5 \"Custom notice\"` (notice only)\n`!alert 5 15 \"Custom notice\"` (notice + duration)")
         return
 
     now = datetime.datetime.now()
+    
+    # --- CASE 1: Preset Actions (reboot, shutdown, update, interrupt) ---
     if parts[0].lower() in ["reboot", "shutdown", "update", "interrupt"]:
         action = parts[0].lower()
         delay_mins = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 5
         
         has_duration = len(parts) > 2 and parts[2].isdigit()
-        duration_mins = int(parts[2]) if has_duration else 5
+        duration_mins = int(parts[2]) if has_duration else 0
         
         start_time = now + datetime.timedelta(minutes=delay_mins)
         end_time = start_time + datetime.timedelta(minutes=duration_mins)
@@ -334,10 +336,19 @@ async def cmd_alert(message, args):
         )
         await target_chan.send(output_msg)
         
+    # --- CASE 2: Custom Alerts starting with a number ---
     elif parts[0].isdigit():
         delay_mins = int(parts[0])
-        duration_mins = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 5
-        custom_text_parts = parts[2:] if len(parts) > 2 and parts[1].isdigit() else parts[1:]
+        
+        has_duration = len(parts) > 1 and parts[1].isdigit()
+        
+        if has_duration:
+            duration_mins = int(parts[1])
+            custom_text_parts = parts[2:]
+        else:
+            duration_mins = 0
+            custom_text_parts = parts[1:]
+            
         custom_text = " ".join(custom_text_parts).strip("\"'")
         if not custom_text:
             custom_text = "Scheduled maintenance notification."
@@ -350,9 +361,15 @@ async def cmd_alert(message, args):
             f"• **Custom Message:** {custom_text}\n"
             f"• **Notice Given At:** {now.strftime('%H:%M')}\n"
             f"• **Execution Time:** ~{start_time.strftime('%H:%M')} (In {delay_mins} mins)\n"
-            f"• **Expected Length:** {duration_mins} minute(s) (Expected back ~{end_time.strftime('%H:%M')})\n\n"
-            f"*Please save your work and log off if necessary.*"
         )
+        
+        if has_duration:
+            output_msg += f"• **Expected Length:** {duration_mins} minute(s) (Expected back ~{end_time.strftime('%H:%M')})\n"
+        else:
+            output_msg += f"• **Expected Length:** Unknown / Not Specified\n"
+            
+        output_msg += f"\n*Please save your work and log off if necessary.*"
+        
         await target_chan.send(output_msg)
     else:
         await message.channel.send("❌ Unknown alert command format.")
@@ -367,7 +384,7 @@ async def cmd_help(message, args):
         "• `!alert shutdown <delay> [dur]` - Broadcast preset shutdown alert (duration optional).\n"
         "• `!alert update <delay> [dur]` - Broadcast preset update alert (duration optional).\n"
         "• `!alert interrupt <delay> [dur]` - Broadcast preset interruption alert (duration optional).\n"
-        "• `!alert <delay> <dur> \"text\"` - Broadcast a custom timed alert.\n"
+        "• `!alert <delay> [dur] \"text\"` - Broadcast a custom timed alert (duration optional).\n"
         "• `!reboot` - Safely restart the Raspberry Pi.\n"
         "• `!shutdown` - Safely shut down the Raspberry Pi.\n"
         "• `!help` - Display this command menu."
