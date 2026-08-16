@@ -30,9 +30,9 @@ echo ""
 MISSING_ITEMS=""
 PRESENT_ITEMS=""
 
-[ -f "$MONITOR_SCRIPT" ] && PRESENT_ITEMS="$PRESENT_ITEMS temp_monitor.sh" \vert{}\vert{} MISSING_ITEMS="$MISSING_ITEMS temp_monitor.sh"
-[ -f "$BOT_SCRIPT" ] && PRESENT_ITEMS="$PRESENT_ITEMS bot.py" \vert{}\vert{} MISSING_ITEMS="$MISSING_ITEMS bot.py"
-[ -f "$CONFIG_FILE" ] && PRESENT_ITEMS="$PRESENT_ITEMS config.env" \vert{}\vert{} MISSING_ITEMS="$MISSING_ITEMS config.env"
+[ -f "$MONITOR_SCRIPT" ] && PRESENT_ITEMS="$PRESENT_ITEMS temp_monitor.sh" || MISSING_ITEMS="$MISSING_ITEMS temp_monitor.sh"
+[ -f "$BOT_SCRIPT" ] && PRESENT_ITEMS="$PRESENT_ITEMS bot.py" || MISSING_ITEMS="$MISSING_ITEMS bot.py"
+[ -f "$CONFIG_FILE" ] && PRESENT_ITEMS="$PRESENT_ITEMS config.env" || MISSING_ITEMS="$MISSING_ITEMS config.env"
 
 if [ -n "$PRESENT_ITEMS" ]; then
     echo "🔍 **Status Check:** Found existing components:$PRESENT_ITEMS"
@@ -99,7 +99,7 @@ if [ "$USE_OLD_CONFIG" = false ]; then
     fi
 
     mkdir -p "$BOT_DIR"
-    cat << EOL > "$CONFIG_FILE"
+    cat << EOL> "$CONFIG_FILE"
 BOT_TOKEN="$BOT_TOKEN"
 USER_ID="$USER_ID"
 EOL
@@ -148,10 +148,11 @@ if [ "$1" = "temp_report" ]; then
     TOP_PROCS=$(get_top_cpu)
     MSG="${DIVIDER}
 🟨 📝 **System Report**:
-• **Temp:** ${RAW_TEMP}°C | **CPU:** ${CPU_USAGE}\% \vert{} **RAM:**${RAM_PERC}% (${RAM_USED}MB / ${RAM_TOTAL}MB)
+• **Temp:** ${RAW_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${RAM_PERC}% (${RAM_USED}MB / ${RAM_TOTAL}MB)
 
 **Top Processes (CPU):**
-${TOP_PROCS}${DIVIDER}"
+${TOP_PROCS}
+${DIVIDER}"
     echo "$MSG"
     exit 0
 
@@ -160,10 +161,11 @@ elif [ "$1" = "test_cpu" ] && [ -n "$2" ]; then
     TOP_PROCS=$(get_top_cpu)
     MSG="${DIVIDER}
 🟦 ⚡ **HIGH CPU ALERT (TEST SIMULATION)**: Load sustained at ${SIM_CPU}% for 3 mins!
-• **Temp:** ${RAW_TEMP}°C | **CPU:** ${SIM_CPU}\% \vert{} **RAM:**${RAM_PERC}%
+• **Temp:** ${RAW_TEMP}°C | **CPU:** ${SIM_CPU}% | **RAM:** ${RAM_PERC}%
 
 **Top CPU Processes:**
-${TOP_PROCS}${DIVIDER}"
+${TOP_PROCS}
+${DIVIDER}"
     echo "$MSG"
     exit 0
 
@@ -172,10 +174,11 @@ elif [ "$1" = "test_ram" ] && [ -n "$2" ]; then
     TOP_PROCS=$(get_top_ram)
     MSG="${DIVIDER}
 🟦 📊 **HIGH RAM ALERT (TEST SIMULATION)**: Usage sustained at ${SIM_RAM}% for 3 mins!
-• **Temp:** ${RAW_TEMP}°C | **CPU:** ${CPU_USAGE}\% \vert{} **RAM:**${SIM_RAM}%
+• **Temp:** ${RAW_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${SIM_RAM}%
 
 **Top RAM Processes:**
-${TOP_PROCS}${DIVIDER}"
+${TOP_PROCS}
+${DIVIDER}"
     echo "$MSG"
     exit 0
 
@@ -184,10 +187,11 @@ elif [ "$1" = "test_temp" ] && [ -n "$2" ]; then
     TOP_PROCS=$(get_top_cpu)
     MSG="${DIVIDER}
 🟦 🌡️ **TEMP WARNING (TEST SIMULATION)**: CPU reached ${SIM_TEMP}°C!
-• **Temp:** ${SIM_TEMP}°C | **CPU:** ${CPU_USAGE}\% \vert{} **RAM:**${RAM_PERC}%
+• **Temp:** ${SIM_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${RAM_PERC}%
 
 **Top CPU Processes:**
-${TOP_PROCS}${DIVIDER}"
+${TOP_PROCS}
+${DIVIDER}"
     echo "$MSG"
     exit 0
 fi
@@ -251,21 +255,15 @@ async def cmd_temp_report(message, args):
         output = result.stdout.strip() or result.stderr.strip() or "Report generated with no output."
         if len(output) > 1900:
             output = output[:1900] + "\n[Output truncated...]"
-        await target_chan.send(f"```text\n{output}\n```")
+        await target_chan.send(output)
     except Exception as e:
         await target_chan.send(f"❌ Error running command: `{e}`")
 
-async def cmd_test(message, args):
+async def run_test_command(message, test_type, args):
     target_chan = get_target_channel(message.guild, "raspi3b") or message.channel
-    parts = args.split(" ", 1)
-    if len(parts) < 2 or parts[0].lower() not in ["cpu", "ram", "temp"]:
-        await target_chan.send("❌ Usage: `!test <cpu|ram|temp> <num>` (e.g., `!test cpu 99`).")
-        return
-    
-    test_type = parts[0].lower()
-    val_str = parts[1].strip()
+    val_str = args.strip()
     if not val_str.isdigit():
-        await target_chan.send("❌ Please provide a valid numeric value.")
+        await target_chan.send(f"❌ Please provide a valid numeric value (e.g., `!test_{test_type} 99`).")
         return
         
     value = int(val_str)
@@ -277,9 +275,19 @@ async def cmd_test(message, args):
         output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
         if len(output) > 1500:
             output = output[:1500] + "\n[Output truncated...]"
-        await target_chan.send(f"✅ `test_{test_type} {value}` finished.\n```text\n{output}\n```")
+        await target_chan.send(output)
+        await message.channel.send(f"✅ `test_{test_type} {value}` finished.")
     except Exception as e:
         await target_chan.send(f"❌ Error executing terminal command: `{e}`")
+
+async def cmd_test_cpu(message, args):
+    await run_test_command(message, "cpu", args)
+
+async def cmd_test_ram(message, args):
+    await run_test_command(message, "ram", args)
+
+async def cmd_test_temp(message, args):
+    await run_test_command(message, "temp", args)
 
 async def cmd_alert(message, args):
     target_chan = get_target_channel(message.guild, "alert") or message.channel
@@ -375,7 +383,9 @@ async def cmd_help(message, args):
     help_text = (
         "🤖 **Raspberry Pi Bot Commands:**\n"
         "• `!temp_report` - Run system temperature report.\n"
-        "• `!test <cpu|ram|temp> <num>` - Run hardware diagnostic tests.\n"
+        "• `!test_cpu <num>` - Run CPU diagnostic test.\n"
+        "• `!test_ram <num>` - Run RAM diagnostic test.\n"
+        "• `!test_temp <num>` - Run temperature diagnostic test.\n"
         "• `!alert reboot <delay> [dur]` - Broadcast preset reboot alert (duration optional).\n"
         "• `!alert shutdown <delay> [dur]` - Broadcast preset shutdown alert (duration optional).\n"
         "• `!alert update <delay> [dur]` - Broadcast preset update alert (duration optional).\n"
@@ -391,7 +401,9 @@ COMMANDS = {
     "reboot": cmd_reboot,
     "shutdown": cmd_shutdown,
     "temp_report": cmd_temp_report,
-    "test": cmd_test,
+    "test_cpu": cmd_test_cpu,
+    "test_ram": cmd_test_ram,
+    "test_temp": cmd_test_temp,
     "alert": cmd_alert,
     "help": cmd_help
 }
