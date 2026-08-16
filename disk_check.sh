@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# 🗄️ PiTweaks Advanced Disk & SD Card Health Monitor
+# 🗄️ PiTweaks Advanced Disk & SD Card Health Monitor & Cleaner
 # ==============================================================================
 
 # Colors for output readability
@@ -55,7 +55,7 @@ else
     echo -e "• Filesystem Status : ${GREEN}Healthy (Read/Write mode normal)${NC}"
 fi
 
-# Scan kernel ring buffer (dmesg) for actual hardware or I/O errors (excluding normal boot info)
+# Scan kernel ring buffer (dmesg) for actual hardware or I/O errors
 SD_ERRORS=$(dmesg | grep -iE 'I/O error|EXT4-fs error|mmc0.*error|sdhci.*error|timed out|crc error' | tail -n 3)
 
 if [ -n "$SD_ERRORS" ]; then
@@ -67,21 +67,40 @@ else
 fi
 echo ""
 
-# 3. Optional cleanup prompt if storage is filling up
-if [ "$USE_PERCENT" -ge 70 ]; then
-    echo "------------------------------------------"
-    read -p "Storage usage is high. Do you want to clean apt cache and old logs? [y/N]: " CLEAN_CHOICE </dev/tty
-    case "$CLEAN_CHOICE" in
-        [yY]|[yY][eE][sS])
-            echo "🧹 Cleaning package cache..."
-            sudo apt clean
-            echo "🧹 Vacuuming system journal logs..."
-            sudo journalctl --vacuum-time=3d
-            echo "✅ Cleanup completed!"
-            ;;
-        *)
-            echo "ℹ️  Cleanup skipped."
-            ;;
-    esac
-fi
+# 3. Independent Cleanup Options
+echo "------------------------------------------"
+echo " 🧹 System Cleanup Options"
+echo "------------------------------------------"
+
+# APT Cache Cleanup Prompt
+read -p "Do you want to clean the APT package cache? [y/N]: " APT_CHOICE </dev/tty
+case "$APT_CHOICE" in
+    [yY]|[yY][eE][sS])
+        echo "🧹 Cleaning package cache..."
+        sudo apt clean
+        echo "✅ APT cache cleaned successfully!"
+        ;;
+    *)
+        echo "ℹ️  APT cache cleanup skipped."
+        ;;
+esac
+
 echo ""
+
+# System Logs Cleanup Prompt
+read -p "Do you want to vacuum old system journal logs (older than 3 days)? [y/N]: " LOG_CHOICE </dev/tty
+case "$LOG_CHOICE" in
+    [yY]|[yY][eE][sS])
+        echo "🧹 Vacuuming system journal logs..."
+        sudo journalctl --vacuum-time=3d
+        echo "✅ Journal logs cleaned successfully!"
+        ;;
+    *)
+        echo "ℹ️  Journal logs cleanup skipped."
+        ;;
+esac
+
+echo ""
+echo "=========================================="
+echo "✨ Maintenance complete!"
+echo "=========================================="
