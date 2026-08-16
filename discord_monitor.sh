@@ -99,7 +99,7 @@ if [ "$USE_OLD_CONFIG" = false ]; then
     fi
 
     mkdir -p "$BOT_DIR"
-    cat << EOL> "$CONFIG_FILE"
+    cat << EOL > "$CONFIG_FILE"
 BOT_TOKEN="$BOT_TOKEN"
 USER_ID="$USER_ID"
 EOL
