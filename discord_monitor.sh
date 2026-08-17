@@ -289,6 +289,21 @@ async def cmd_test_ram(message, args):
 async def cmd_test_temp(message, args):
     await run_test_command(message, "temp", args)
 
+async def cmd_test_security(message, args):
+    target_chan = get_target_channel(message.guild, "alert") or message.channel
+    await target_chan.send("🛡️ **Running Security Watchdog Test Simulations...**")
+    
+    simulated_alerts = [
+        "🚨 **SECURITY ALERT: Failed SSH Login (TEST)**\n• **User:** root\n• **Source IP:** 203.0.113.42\n• **Origin:** Test City, Testland (Test ISP)\n• **Time:** [Simulated]",
+        "⚠️ **SECURITY AUDIT: Sudo Command Executed (TEST)**\n• **User:** raspi3b\n• **Command:** `sudo apt-get upgrade`\n• **Time:** [Simulated]",
+        "🛡️ **FIREWALL BLOCK: External Probe Detected (TEST)**\n• **Blocked IP:** 198.51.100.14\n• **Target Port:** 22\n• **Time:** [Simulated]",
+        "🌐 **WEB ADMIN NOTICE: Pi-Hole Dashboard Activity (TEST)**\n• **Source IP:** 192.168.1.50\n• **Action:** Admin Panel Authentication / Request\n• **Time:** [Simulated]",
+        "📈 **TRAFFIC SPIKE WARNING (TEST)**\n• **Interface:** eth0\n• **Usage Rate:** ~150 MB/min (Threshold: 100 MB/min)\n• **Time:** [Simulated]"
+    ]
+    for alert in simulated_alerts:
+        await target_chan.send(alert)
+    await message.channel.send("✅ `!test_security` test suite finished successfully.")
+
 async def cmd_alert(message, args):
     target_chan = get_target_channel(message.guild, "alert") or message.channel
     try:
@@ -386,6 +401,7 @@ async def cmd_help(message, args):
         "• `!test_cpu <num>` - Run CPU diagnostic test.\n"
         "• `!test_ram <num>` - Run RAM diagnostic test.\n"
         "• `!test_temp <num>` - Run temperature diagnostic test.\n"
+        "• `!test_security` - Run simulated test suite for security watchdog.\n"
         "• `!alert reboot <delay> [dur]` - Broadcast preset reboot alert (duration optional).\n"
         "• `!alert shutdown <delay> [dur]` - Broadcast preset shutdown alert (duration optional).\n"
         "• `!alert update <delay> [dur]` - Broadcast preset update alert (duration optional).\n"
@@ -404,6 +420,7 @@ COMMANDS = {
     "test_cpu": cmd_test_cpu,
     "test_ram": cmd_test_ram,
     "test_temp": cmd_test_temp,
+    "test_security": cmd_test_security,
     "alert": cmd_alert,
     "help": cmd_help
 }
