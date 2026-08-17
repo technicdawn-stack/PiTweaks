@@ -143,13 +143,13 @@ if [[ "${TRACK_SSH^^}" =~ ^Y ]]; then
                     SRC_IP=$(echo "$line" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | tail -n 1)
                     USER_ATTEMPT=$(echo "$line" | awk '{for(i=1;i<=NF;i++) if($i=="for") print $(i+1)}')
                     GEO=$(get_geo_info "$SRC_IP")
-                    MSG="🚨 **SECURITY ALERT: Failed SSH Login**\n• **User:** ${USER_ATTEMPT:-Unknown}\n• **Source IP:** ${SRC_IP:-Unknown}\n$GEO\n• **Time:** $(date '+%Y-%m-%d %H:%M:%S')"
+                    MSG=$'[ALERT]🚨 **SECURITY ALERT: Failed SSH Login**\n• **User:** '"${USER_ATTEMPT:-Unknown}"$'\n• **Source IP:** '"${SRC_IP:-Unknown}"$'\n'"$GEO"$'\n• **Time:** '"$(date '+%Y-%m-%d %H:%M:%S')"
                     echo "$MSG" >> "$DISCORD_ALERT_CHAN"
                 elif echo "$line" | grep -q "Accepted publickey" || echo "$line" | grep -q "Accepted password"; then
                     SRC_IP=$(echo "$line" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | tail -n 1)
                     USER_ATTEMPT=$(echo "$line" | awk '{for(i=1;i<=NF;i++) if($i=="for") print $(i+1)}')
                     GEO=$(get_geo_info "$SRC_IP")
-                    MSG="🔓 **SECURITY NOTICE: Successful SSH Login**\n• **User:** ${USER_ATTEMPT:-Unknown}\n• **Source IP:** ${SRC_IP:-Unknown}\n$GEO\n• **Time:** $(date '+%Y-%m-%d %H:%M:%S')"
+                    MSG=$'[NOTICE]🔓 **SECURITY NOTICE: Successful SSH Login**\n• **User:** '"${USER_ATTEMPT:-Unknown}"$'\n• **Source IP:** '"${SRC_IP:-Unknown}"$'\n'"$GEO"$'\n• **Time:** '"$(date '+%Y-%m-%d %H:%M:%S')"
                     echo "$MSG" >> "$DISCORD_ALERT_CHAN"
                 fi
             done <<< "$NEW_LOGS"
@@ -172,7 +172,7 @@ if [[ "${TRACK_SUDO^^}" =~ ^Y ]]; then
                 if echo "$line" | grep -q "COMMAND="; then
                     USER_SUDO=$(echo "$line" | grep -oP '(?<=USER=)[^ ]+' | head -n 1)
                     CMD_RUN=$(echo "$line" | grep -oP '(?<=COMMAND=).*')
-                    MSG="⚠️ **SECURITY AUDIT: Sudo Command Executed**\n• **User:** ${USER_SUDO:-Unknown}\n• **Command:** \`${CMD_RUN:-Unknown}\`\n• **Time:** $(date '+%Y-%m-%d %H:%M:%S')"
+                    MSG=$'[AUDIT]⚠️ **SECURITY AUDIT: Sudo Command Executed**\n• **User:** '"${USER_SUDO:-Unknown}"$'\n• **Command:** `'"${CMD_RUN:-Unknown}"$'`\n• **Time:** '"$(date '+%Y-%m-%d %H:%M:%S')"
                     echo "$MSG" >> "$DISCORD_ALERT_CHAN"
                 fi
             done <<< "$NEW_LOGS"
@@ -195,7 +195,7 @@ if [[ "${TRACK_UFW^^}" =~ ^Y ]]; then
                 if echo "$line" | grep -q "BLOCK"; then
                     SRC_IP=$(echo "$line" | grep -oP '(?<=SRC=)[^ ]+' | head -n 1)
                     DST_PORT=$(echo "$line" | grep -oP '(?<=DPT=)[^ ]+' | head -n 1)
-                    MSG="🛡️ **FIREWALL BLOCK: External Probe Detected**\n• **Blocked IP:** ${SRC_IP:-Unknown}\n• **Target Port:** ${DST_PORT:-Unknown}\n• **Time:** $(date '+%Y-%m-%d %H:%M:%S')"
+                    MSG=$'[FIREWALL]🛡️ **FIREWALL BLOCK: External Probe Detected**\n• **Blocked IP:** '"${SRC_IP:-Unknown}"$'\n• **Target Port:** '"${DST_PORT:-Unknown}"$'\n• **Time:** '"$(date '+%Y-%m-%d %H:%M:%S')"
                     echo "$MSG" >> "$DISCORD_ALERT_CHAN"
                 fi
             done <<< "$NEW_LOGS"
@@ -217,7 +217,7 @@ if [[ "${TRACK_PIHOLE^^}" =~ ^Y ]]; then
             while IFS=read -r line; do
                 if echo "$line" | grep -q "POST /admin" || echo "$line" | grep -q "login"; then
                     SRC_IP=$(echo "$line" | awk '{print $1}')
-                    MSG="🌐 **WEB ADMIN NOTICE: Pi-Hole Dashboard Activity**\n• **Source IP:** ${SRC_IP:-Unknown}\n• **Action:** Admin Panel Authentication / Request\n• **Time:** $(date '+%Y-%m-%d %H:%M:%S')"
+                    MSG=$'[WEB]🌐 **WEB ADMIN NOTICE: Pi-Hole Dashboard Activity**\n• **Source IP:** '"${SRC_IP:-Unknown}"$'\n• **Action:** Admin Panel Authentication / Request\n• **Time:** '"$(date '+%Y-%m-%d %H:%M:%S')"
                     echo "$MSG" >> "$DISCORD_ALERT_CHAN"
                 fi
             done <<< "$NEW_LOGS"
@@ -242,7 +242,7 @@ if [[ "${TRACK_BANDWIDTH^^}" =~ ^Y ]]; then
                 MB_PER_MIN=$(( BYTES_PER_SEC * 60 / 1024 / 1024 ))
                 THRESHOLD=${BANDWIDTH_THRESHOLD_MB:-100}
                 if [ "$MB_PER_MIN" -gt "$THRESHOLD" ]; then
-                    MSG="📈 **TRAFFIC SPIKE WARNING**\n• **Interface:** $DEFAULT_IFACE\n• **Usage Rate:** ~${MB_PER_MIN} MB/min (Threshold: ${THRESHOLD} MB/min)\n• **Time:** $(date '+%Y-%m-%d %H:%M:%S')"
+                    MSG=$'[BANDWIDTH]📈 **TRAFFIC SPIKE WARNING**\n• **Interface:** '"$DEFAULT_IFACE"$'\n• **Usage Rate:** ~'"${MB_PER_MIN}"$' MB/min (Threshold: '"${THRESHOLD}"$' MB/min)\n• **Time:** '"$(date '+%Y-%m-%d %H:%M:%S')"
                     echo "$MSG" >> "$DISCORD_ALERT_CHAN"
                 fi
             fi
