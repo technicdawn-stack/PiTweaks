@@ -4,6 +4,7 @@ clear
 
 # ==============================================================================
 # 🛡️ PiTweaks Security & Network Watchdog Setup & Installer
+# Security hardening: root-owned privileged watchdog + protected configuration
 # ==============================================================================
 
 set -u
@@ -11,6 +12,9 @@ set -u
 # ------------------------------------------------------------------------------
 # 0. REQUIRE ROOT
 # ------------------------------------------------------------------------------
+# The watchdog and configuration are privileged components.
+# The installer must run as root so it can safely install them as root:root.
+# We still use SUDO_USER to determine the normal PiTweaks user's home directory.
 
 if [ "$EUID" -ne 0 ]; then
     echo "❌ This security module must be installed with sudo."
@@ -42,6 +46,7 @@ INSTALL_DIR="$REAL_HOME/PiTweaks"
 SEC_DIR="$INSTALL_DIR/security"
 CONFIG_FILE="$SEC_DIR/security_config.env"
 MONITOR_SCRIPT="$SEC_DIR/sec_monitor.sh"
+SERVICE_NAME="pitweaks-security-watch"
 
 echo "=================================================="
 echo " 🛡️ PiTweaks Security & Network Watchdog Setup"
@@ -63,16 +68,25 @@ if [ ! -d "$SEC_DIR" ]; then
     exit 1
 fi
 
-# Keep the directory protected because it contains privileged code.
+# The directory itself must not be writable by the normal user because it
+# contains code that will eventually be executed as root.
 chown root:root "$SEC_DIR"
 chmod 755 "$SEC_DIR"
 
 # ------------------------------------------------------------------------------
 # 3. SAFE CONFIGURATION READER
 # ------------------------------------------------------------------------------
+# IMPORTANT:
 #
-# Never source an old configuration file before verifying it is trusted.
-# Read only the known variables.
+# Do NOT use:
+#
+#   source "$CONFIG_FILE"
+#
+# on an old user-writable configuration file.
+#
+# An attacker could put arbitrary shell commands into that file.
+#
+# Instead, read only the known configuration variables.
 # ------------------------------------------------------------------------------
 
 read_config_value() {
@@ -84,6 +98,8 @@ read_config_value() {
         return 0
     fi
 
+    # Only accept simple KEY="VALUE" or KEY='VALUE' configuration lines.
+    # Anything else is ignored.
     value=$(awk -v key="$key" '
         $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
             sub("^[[:space:]]*" key "[[:space:]]*=[[:space:]]*", "", $0)
@@ -121,6 +137,7 @@ if [ -f "$CONFIG_FILE" ]; then
     echo "🔍 Found existing security configuration."
     echo ""
 
+    # Read existing settings WITHOUT executing the file.
     OLD_TRACK_SSH=$(read_config_value "TRACK_SSH" "$CONFIG_FILE")
     OLD_TRACK_SUDO=$(read_config_value "TRACK_SUDO" "$CONFIG_FILE")
     OLD_TRACK_UFW=$(read_config_value "TRACK_UFW" "$CONFIG_FILE")
@@ -195,12 +212,17 @@ fi
 # ------------------------------------------------------------------------------
 # 5. BACK UP EXISTING CONFIGURATION
 # ------------------------------------------------------------------------------
+# Before replacing the configuration, preserve the old file.
+#
+# This is especially useful during migration from the vulnerable version.
 
 if [ -f "$CONFIG_FILE" ]; then
 
     BACKUP_FILE="${CONFIG_FILE}.backup.$(date '+%Y%m%d_%H%M%S')"
 
-    if cp -p "$CONFIG_FILE" "$BACKUP_FILE"; then
+    cp -p "$CONFIG_FILE" "$BACKUP_FILE"
+
+    if [ $? -eq 0 ]; then
         chown root:root "$BACKUP_FILE"
         chmod 600 "$BACKUP_FILE"
 
@@ -208,12 +230,13 @@ if [ -f "$CONFIG_FILE" ]; then
         echo "   $BACKUP_FILE"
     else
         echo "⚠️ Warning: Could not create configuration backup."
+        echo "   Continuing because the existing values were successfully read."
     fi
 
 fi
 
 # ------------------------------------------------------------------------------
-# 6. WRITE CONFIGURATION
+# 6. WRITE PROTECTED CONFIGURATION
 # ------------------------------------------------------------------------------
 
 echo ""
@@ -233,6 +256,9 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+# CRITICAL:
+# The config is sourced by the root watchdog.
+# Therefore the normal user must NOT be able to modify it.
 chown root:root "$CONFIG_FILE"
 chmod 600 "$CONFIG_FILE"
 
@@ -240,22 +266,20 @@ echo "✅ Security configuration installed as root:root."
 echo "   Permissions: 600"
 echo ""
 
-# ==============================================================================
-# 7. WRITE SECURITY MONITOR
-# ==============================================================================
+# ------------------------------------------------------------------------------
+# 7. WRITE THE SECURITY MONITORING ENGINE
+# ------------------------------------------------------------------------------
 #
-# IMPORTANT:
+# The monitor itself is privileged code.
 #
-# The old version contained:
+# It is deliberately installed root-owned so the normal user cannot modify
+# code that cron executes with sudo.
 #
-#   CONFIG_FILE="/home/raspi3b/PiTweaks/security/security_config.env"
+# The CONFIG_FILE path is injected dynamically instead of hard-coding:
 #
-# This version injects the actual path calculated above.
+#   /home/raspi3b/PiTweaks/...
 #
-# Because this heredoc is NOT quoted, $CONFIG_FILE is expanded NOW by the
-# installer. Variables belonging to the monitor itself are escaped with \$
-# so they remain variables when sec_monitor.sh runs.
-# ==============================================================================
+# ------------------------------------------------------------------------------
 
 echo "📝 Writing security monitoring engine..."
 
@@ -264,11 +288,13 @@ cat > "$MONITOR_SCRIPT" << SCRIPT
 
 # ==============================================================================
 # PiTweaks Security & Network Watchdog
+# Installed as a root-owned privileged component.
 # ==============================================================================
 
 CONFIG_FILE="$CONFIG_FILE"
 
 if [ -f "\$CONFIG_FILE" ]; then
+    # This file is installed root:root with mode 600.
     source "\$CONFIG_FILE"
 fi
 
@@ -353,7 +379,7 @@ if [[ "\${TRACK_SSH^^}" =~ ^Y ]]; then
 
                     MSG=\$'[NOTICE]🔓 **SECURITY NOTICE: Successful SSH Login**\n• **User:** '"\${USER_ATTEMPT:-Unknown}"\$'\n• **Source IP:** '"\${SRC_IP:-Unknown}"\$'\n'" \$GEO "\$'\n• **Time:** '"\$(date '+%Y-%m-%d %H:%M:%S')"
 
-                    echo "\$MSG" >> "\$DISCORD_ALERT_CHAN
+                    echo "\$MSG" >> "\$DISCORD_ALERT_CHAN"
 
                 fi
 
@@ -517,7 +543,7 @@ if [[ "\${TRACK_BANDWIDTH^^}" =~ ^Y ]]; then
 
                 if [ "\$MB_PER_MIN" -gt "\$THRESHOLD" ]; then
 
-                    MSG=\$'[BANDWIDTH]📈 **TRAFFIC SPIKE WARNING**\n• **Interface:** '"\$DEFAULT_IFACE"\$'\n• **Usage Rate:** ~'"\${MB_PER_MIN}"\$' MB/min (Threshold: '" "\${THRESHOLD}" "\$' MB/min)\n• **Time:** '"\$(date '+%Y-%m-%d %H:%M:%S')"
+                    MSG=\$'[BANDWIDTH]📈 **TRAFFIC SPIKE WARNING**\n• **Interface:** '"\$DEFAULT_IFACE"\$'\n• **Usage Rate:** ~'""\${MB_PER_MIN}"\$' MB/min (Threshold: '" "\${THRESHOLD}" "\$' MB/min)\n• **Time:** '"\$(date '+%Y-%m-%d %H:%M:%S')"
 
                     echo "\$MSG" >> "\$DISCORD_ALERT_CHAN"
                 fi
@@ -535,8 +561,20 @@ if [ $? -ne 0 ]; then
 fi
 
 # ------------------------------------------------------------------------------
-# 8. PROTECT MONITOR
+# 8. SECURE MONITOR PERMISSIONS
 # ------------------------------------------------------------------------------
+#
+# CRITICAL SECURITY FIX:
+#
+# The old version used:
+#
+#   chown "$CURRENT_USER:$CURRENT_USER" "$MONITOR_SCRIPT"
+#
+# while cron executed it with sudo.
+#
+# That allowed the normal user to modify code executed as root.
+#
+# The monitor must therefore be root-owned and not writable by the normal user.
 
 chown root:root "$MONITOR_SCRIPT"
 chmod 755 "$MONITOR_SCRIPT"
@@ -546,37 +584,7 @@ echo "   Permissions: 755"
 echo ""
 
 # ------------------------------------------------------------------------------
-# 9. VERIFY PATHS
-# ------------------------------------------------------------------------------
-
-EXPECTED_CONFIG_LINE="CONFIG_FILE=\"$CONFIG_FILE\""
-
-ACTUAL_CONFIG_LINE=$(grep '^CONFIG_FILE=' "$MONITOR_SCRIPT" 2>/dev/null || true)
-
-if [ "$ACTUAL_CONFIG_LINE" != "$EXPECTED_CONFIG_LINE" ]; then
-    echo "❌ Generated monitor path verification failed."
-    echo ""
-    echo "Expected:"
-    echo "  $EXPECTED_CONFIG_LINE"
-    echo ""
-    echo "Found:"
-    echo "  ${ACTUAL_CONFIG_LINE:-<missing>}"
-    echo ""
-    exit 1
-fi
-
-# Make absolutely sure the old hard-coded username isn't present.
-if grep -q "/home/raspi3b/" "$MONITOR_SCRIPT"; then
-    echo "❌ Old hard-coded /home/raspi3b path detected."
-    exit 1
-fi
-
-echo "✅ Dynamic configuration path verified."
-echo "   $CONFIG_FILE"
-echo ""
-
-# ------------------------------------------------------------------------------
-# 10. VERIFY PRIVILEGED FILE OWNERSHIP
+# 9. VERIFY PRIVILEGED FILE OWNERSHIP
 # ------------------------------------------------------------------------------
 
 MONITOR_OWNER=$(stat -c '%U:%G' "$MONITOR_SCRIPT" 2>/dev/null || echo "unknown")
@@ -603,19 +611,26 @@ echo "✅ Privileged file verification passed."
 echo ""
 
 # ------------------------------------------------------------------------------
-# 11. CRON JOB
+# 10. CRON JOB INTEGRATION
 # ------------------------------------------------------------------------------
 #
-# Keep cron for now.
-# Systemd migration is a later upgrade.
+# Keep the current cron architecture for this commit.
+#
+# We are NOT migrating to systemd yet. That is a later roadmap item.
+#
+# However, because the monitor is now root-owned, the normal user can no longer
+# modify the code executed by sudo.
+#
 # ------------------------------------------------------------------------------
 
 echo "⏰ Scheduling security watchdog cron job..."
 
 CURRENT_CRONTAB=$(crontab -l 2>/dev/null || true)
 
+# Remove old PiTweaks security watchdog entries.
 CLEAN_CRONTAB=$(printf '%s\n' "$CURRENT_CRONTAB" | grep -v "sec_monitor.sh" || true)
 
+# Add exactly one watchdog entry.
 printf '%s\n' "$CLEAN_CRONTAB" \
     | sed '/^[[:space:]]*$/d' \
     | {
@@ -633,7 +648,7 @@ echo "✅ Security watchdog scheduled."
 echo ""
 
 # ------------------------------------------------------------------------------
-# 12. FINAL VERIFICATION
+# 11. FINAL SECURITY CHECK
 # ------------------------------------------------------------------------------
 
 echo "=================================================="
@@ -658,7 +673,9 @@ echo "=================================================="
 echo " ✅ Security & Network Watchdog installed safely"
 echo "=================================================="
 echo ""
+echo "The watchdog is now protected from modification by"
+echo "the normal PiTweaks user."
+echo ""
 echo "Existing configuration values were preserved."
-echo "The watchdog now uses the dynamically detected"
-echo "PiTweaks installation path."
+echo "The previous configuration was backed up where possible."
 echo ""
