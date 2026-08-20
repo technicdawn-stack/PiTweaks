@@ -1,7 +1,7 @@
 discord_controller.sh|No description provided
 discord_monitor.sh|No description provided
 disk_check.sh|No description provided
-overclock.sh|No description provided
+overclock.sh|Smart Raspberry Pi overclocking manager with live thermal monitoring and safe backups.
 security_module_upgrade.sh|No description provided
 swap_manager.sh|Smart memory and swap manager with auto-detection and recommendations
 sys_info.sh|Measures network speed using official native Ookla Speedtest
