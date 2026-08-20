@@ -61,42 +61,49 @@ BOT_TOKEN="${CLI_BOT_TOKEN:-$EXISTING_TOKEN}"
 USER_ID="${CLI_USER_ID:-$EXISTING_USER_ID}"
 ALERT_CHANNEL="${CLI_ALERT_CHANNEL:-$EXISTING_CHANNEL}"
 
-# Step 3: Native Whiptail Dialog Menu (Flicker-Free SSH Compatible)
+# Step 3: Native raspi-config Style Whiptail Menu
 if [ "$NON_INTERACTIVE" = false ]; then
-    # Ensure whiptail is installed
     if ! command -v whiptail &> /dev/null; then
         sudo apt-get update -qq && sudo apt-get install -y whiptail -qq
     fi
 
-    while true; do
+    MENU_ACTIVE=true
+    while $MENU_ACTIVE; do
         TOKEN_DISP="${BOT_TOKEN:0:6}..."
-        if [ -z "$BOT_TOKEN" ]; then TOKEN_DISP="Not Set"; fi
+        [ -z "$BOT_TOKEN" ] && TOKEN_DISP="Not Set"
 
-        CHOICE=$(whiptail --title "🤖 PiTweaks Discord Bot Config" \
-            --menu "Use ARROW keys and press ENTER to edit or save:" 16 65 5 \
-            "1" "Discord User ID : [$USER_ID]" \
-            "2" "Bot Token       : [$TOKEN_DISP]" \
-            "3" "Alert Channel   : [$ALERT_CHANNEL]" \
-            "4" "Save and Exit" \
-            "5" "Exit Without Saving" 3>&1 1>&2 2>&3)
+        CHOICE=$(whiptail --clear --backtitle "PiTweaks System Configuration" \
+            --title "Discord Bot Settings" \
+            --menu "Use ARROW keys to select an option and press ENTER:" 18 70 5 \
+            "1 User ID" "Current: $USER_ID" \
+            "2 Bot Token" "Current: $TOKEN_DISP" \
+            "3 Channel" "Current: $ALERT_CHANNEL" \
+            "4 Save" "Save settings and apply configuration" \
+            "5 Cancel" "Exit setup without saving" 3>&1 1>&2 2>&3)
+
+        exit_status=$?
+        if [ $exit_status -ne 0 ]; then
+            echo "❌ Configuration cancelled."
+            exit 0
+        fi
 
         case "$CHOICE" in
-            1)
+            "1 User ID")
                 NEW_ID=$(whiptail --inputbox "Enter Discord User ID (numeric):" 10 60 "$USER_ID" 3>&1 1>&2 2>&3)
-                if [ $? -eq 0 ]; then USER_ID="$NEW_ID"; fi
+                [ $? -eq 0 ] && USER_ID="$NEW_ID"
                 ;;
-            2)
+            "2 Bot Token")
                 NEW_TOK=$(whiptail --passwordbox "Enter Discord Bot Token:" 10 60 "$BOT_TOKEN" 3>&1 1>&2 2>&3)
-                if [ $? -eq 0 ]; then BOT_TOKEN="$NEW_TOK"; fi
+                [ $? -eq 0 ] && BOT_TOKEN="$NEW_TOK"
                 ;;
-            3)
+            "3 Channel")
                 NEW_CHAN=$(whiptail --inputbox "Enter Alert Channel Name:" 10 60 "$ALERT_CHANNEL" 3>&1 1>&2 2>&3)
-                if [ $? -eq 0 ]; then ALERT_CHANNEL="$NEW_CHAN"; fi
+                [ $? -eq 0 ] && ALERT_CHANNEL="$NEW_CHAN"
                 ;;
-            4)
-                break
+            "4 Save")
+                MENU_ACTIVE=false
                 ;;
-            5|"")
+            "5 Cancel")
                 echo "❌ Configuration cancelled."
                 exit 0
                 ;;
