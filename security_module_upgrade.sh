@@ -12,9 +12,6 @@ set -u
 # ------------------------------------------------------------------------------
 # 0. REQUIRE ROOT
 # ------------------------------------------------------------------------------
-# The watchdog and configuration are privileged components.
-# The installer must run as root so it can safely install them as root:root.
-# We still use SUDO_USER to determine the normal PiTweaks user's home directory.
 
 if [ "$EUID" -ne 0 ]; then
     echo "❌ This security module must be installed with sudo."
@@ -46,7 +43,6 @@ INSTALL_DIR="$REAL_HOME/PiTweaks"
 SEC_DIR="$INSTALL_DIR/security"
 CONFIG_FILE="$SEC_DIR/security_config.env"
 MONITOR_SCRIPT="$SEC_DIR/sec_monitor.sh"
-SERVICE_NAME="pitweaks-security-watch"
 
 echo "=================================================="
 echo " 🛡️ PiTweaks Security & Network Watchdog Setup"
@@ -68,25 +64,11 @@ if [ ! -d "$SEC_DIR" ]; then
     exit 1
 fi
 
-# The directory itself must not be writable by the normal user because it
-# contains code that will eventually be executed as root.
 chown root:root "$SEC_DIR"
 chmod 755 "$SEC_DIR"
 
 # ------------------------------------------------------------------------------
 # 3. SAFE CONFIGURATION READER
-# ------------------------------------------------------------------------------
-# IMPORTANT:
-#
-# Do NOT use:
-#
-#   source "$CONFIG_FILE"
-#
-# on an old user-writable configuration file.
-#
-# An attacker could put arbitrary shell commands into that file.
-#
-# Instead, read only the known configuration variables.
 # ------------------------------------------------------------------------------
 
 read_config_value() {
@@ -98,8 +80,6 @@ read_config_value() {
         return 0
     fi
 
-    # Only accept simple KEY="VALUE" or KEY='VALUE' configuration lines.
-    # Anything else is ignored.
     value=$(awk -v key="$key" '
         $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
             sub("^[[:space:]]*" key "[[:space:]]*=[[:space:]]*", "", $0)
@@ -108,7 +88,7 @@ read_config_value() {
                 sub(/^"/, "", $0)
                 sub(/"$/, "", $0)
             }
-            else if ($0 ~ /^'\''.*'\''$/) {
+            else if ($0 ~ /^'\''*'\''$/) {
                 sub(/^'\''/, "", $0)
                 sub(/'\''$/, "", $0)
             }
@@ -131,19 +111,20 @@ TRACK_UFW=""
 TRACK_PIHOLE=""
 TRACK_BANDWIDTH=""
 BANDWIDTH_THRESHOLD_MB=""
+DISCORD_WEBHOOK_URL=""
 
 if [ -f "$CONFIG_FILE" ]; then
 
     echo "🔍 Found existing security configuration."
     echo ""
 
-    # Read existing settings WITHOUT executing the file.
     OLD_TRACK_SSH=$(read_config_value "TRACK_SSH" "$CONFIG_FILE")
     OLD_TRACK_SUDO=$(read_config_value "TRACK_SUDO" "$CONFIG_FILE")
     OLD_TRACK_UFW=$(read_config_value "TRACK_UFW" "$CONFIG_FILE")
     OLD_TRACK_PIHOLE=$(read_config_value "TRACK_PIHOLE" "$CONFIG_FILE")
     OLD_TRACK_BANDWIDTH=$(read_config_value "TRACK_BANDWIDTH" "$CONFIG_FILE")
     OLD_BANDWIDTH_THRESHOLD_MB=$(read_config_value "BANDWIDTH_THRESHOLD_MB" "$CONFIG_FILE")
+    OLD_DISCORD_WEBHOOK_URL=$(read_config_value "DISCORD_WEBHOOK_URL" "$CONFIG_FILE")
 
     TRACK_SSH="${OLD_TRACK_SSH:-Y}"
     TRACK_SUDO="${OLD_TRACK_SUDO:-Y}"
@@ -151,6 +132,7 @@ if [ -f "$CONFIG_FILE" ]; then
     TRACK_PIHOLE="${OLD_TRACK_PIHOLE:-Y}"
     TRACK_BANDWIDTH="${OLD_TRACK_BANDWIDTH:-Y}"
     BANDWIDTH_THRESHOLD_MB="${OLD_BANDWIDTH_THRESHOLD_MB:-100}"
+    DISCORD_WEBHOOK_URL="${OLD_DISCORD_WEBHOOK_URL:-}"
 
     read -p "Do you want to edit your tracking values and toggles? [y/N]: " EDIT_CHOICE </dev/tty
     EDIT_CHOICE=${EDIT_CHOICE:-N}
@@ -159,8 +141,11 @@ if [ -f "$CONFIG_FILE" ]; then
 
     if [[ "$EDIT_CHOICE" =~ ^[yY]$ ]]; then
 
-        echo "⚙️  Let's update your settings (Press Enter to keep current values):"
+        echo "⚙️ Let's update your settings (Press Enter to keep current values):"
         echo "--------------------------------------------------"
+
+        read -p "Discord Webhook URL (Current: ${DISCORD_WEBHOOK_URL:-None}): " input
+        DISCORD_WEBHOOK_URL=${input:-$DISCORD_WEBHOOK_URL}
 
         read -p "Enable SSH Brute-Force & Success Tracking [Y/n] (Current: $TRACK_SSH): " input
         TRACK_SSH=${input:-$TRACK_SSH}
@@ -186,8 +171,10 @@ if [ -f "$CONFIG_FILE" ]; then
 
 else
 
-    echo "⚙️  New Security Configuration Setup"
+    echo "⚙️ New Security Configuration Setup"
     echo "--------------------------------------------------"
+
+    read -p "Enter Discord Webhook URL for Alerts (Optional): " DISCORD_WEBHOOK_URL
 
     read -p "Enable SSH Brute-Force & Success Tracking [Y/n]: " TRACK_SSH
     TRACK_SSH=${TRACK_SSH:-Y}
@@ -212,27 +199,15 @@ fi
 # ------------------------------------------------------------------------------
 # 5. BACK UP EXISTING CONFIGURATION
 # ------------------------------------------------------------------------------
-# Before replacing the configuration, preserve the old file.
-#
-# This is especially useful during migration from the vulnerable version.
 
 if [ -f "$CONFIG_FILE" ]; then
-
     BACKUP_FILE="${CONFIG_FILE}.backup.$(date '+%Y%m%d_%H%M%S')"
-
     cp -p "$CONFIG_FILE" "$BACKUP_FILE"
-
     if [ $? -eq 0 ]; then
         chown root:root "$BACKUP_FILE"
         chmod 600 "$BACKUP_FILE"
-
-        echo "💾 Existing configuration backed up:"
-        echo "   $BACKUP_FILE"
-    else
-        echo "⚠️ Warning: Could not create configuration backup."
-        echo "   Continuing because the existing values were successfully read."
+        echo "💾 Existing configuration backed up: $BACKUP_FILE"
     fi
-
 fi
 
 # ------------------------------------------------------------------------------
@@ -249,6 +224,7 @@ TRACK_UFW="$TRACK_UFW"
 TRACK_PIHOLE="$TRACK_PIHOLE"
 TRACK_BANDWIDTH="$TRACK_BANDWIDTH"
 BANDWIDTH_THRESHOLD_MB="$BANDWIDTH_THRESHOLD_MB"
+DISCORD_WEBHOOK_URL="$DISCORD_WEBHOOK_URL"
 EOL
 
 if [ $? -ne 0 ]; then
@@ -256,9 +232,6 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# CRITICAL:
-# The config is sourced by the root watchdog.
-# Therefore the normal user must NOT be able to modify it.
 chown root:root "$CONFIG_FILE"
 chmod 600 "$CONFIG_FILE"
 
@@ -269,60 +242,39 @@ echo ""
 # ------------------------------------------------------------------------------
 # 7. WRITE THE SECURITY MONITORING ENGINE
 # ------------------------------------------------------------------------------
-#
-# The monitor itself is privileged code.
-#
-# It is deliberately installed root-owned so the normal user cannot modify
-# code that cron executes with sudo.
-#
-# The CONFIG_FILE path is injected dynamically instead of hard-coding:
-#
-#   /home/raspi3b/PiTweaks/...
-#
-# ------------------------------------------------------------------------------
 
 echo "📝 Writing security monitoring engine..."
 
 cat > "$MONITOR_SCRIPT" << SCRIPT
 #!/bin/bash
 
-# ==============================================================================
-# PiTweaks Security & Network Watchdog
-# Installed as a root-owned privileged component.
-# ==============================================================================
+# Ensure cron environment includes system binary paths
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:\$PATH"
 
 CONFIG_FILE="$CONFIG_FILE"
 
 if [ -f "\$CONFIG_FILE" ]; then
-    # This file is installed root:root with mode 600.
     source "\$CONFIG_FILE"
 fi
 
 DISCORD_ALERT_CHAN="/tmp/pi_discord_alert_queue.txt"
-
-# ------------------------------------------------------------------------------
-# Helper function to query real IP geolocation
-# ------------------------------------------------------------------------------
 
 get_geo_info() {
     local ip="\$1"
 
     if [[ "\$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] &&
        [[ ! "\$ip" =~ ^192\.168\. ]] &&
-       [[ ! "\$ip" =~ ^10\. ]]; then
+       [[ ! "\$ip" =~ ^10\. ]] &&
+       [[ ! "\$ip" =~ ^127\. ]]; then
 
         local response
         response=\$(curl -s --max-time 3 "http://ip-api.com/json/\$ip?fields=country,regionName,isp")
 
         if [ \$? -eq 0 ] && [ -n "\$response" ]; then
-
-            local country
-            local region
-            local isp
-
-            country=\$(echo "\$response" | jq -r '.country // empty')
-            region=\$(echo "\$response" | jq -r '.regionName // empty')
-            isp=\$(echo "\$response" | jq -r '.isp // empty')
+            local country region isp
+            country=\$(echo "\$response" | jq -r '.country // empty' 2>/dev/null)
+            region=\$(echo "\$response" | jq -r '.regionName // empty' 2>/dev/null)
+            isp=\$(echo "\$response" | jq -r '.isp // empty' 2>/dev/null)
 
             if [ -n "\$country" ]; then
                 echo "• **Origin:** \$region, \$country (\$isp)"
@@ -334,177 +286,94 @@ get_geo_info() {
     echo "• **Origin:** Local / Private Network or Unknown"
 }
 
+# Check logs for the past 2 minutes
+SINCE_TIME="\$(date -d '2 minutes ago' '+%Y-%m-%d %H:%M:%S')"
+
 # ==============================================================================
-# 1. SSH TRACKER
+# 1. SSH TRACKER (journalctl)
 # ==============================================================================
 
 if [[ "\${TRACK_SSH^^}" =~ ^Y ]]; then
+    LOGS=\$(journalctl _COMM=sshd --since "\$SINCE_TIME" --no-pager 2>/dev/null)
 
-    AUTH_LOG="/var/log/auth.log"
-    STATE_FILE="/tmp/pi_sec_auth_line.txt"
+    if [ -n "\$LOGS" ]; then
+        while IFS= read -r line; do
+            if echo "\$line" | grep -q "Failed password"; then
+                SRC_IP=\$(echo "\$line" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | tail -n 1)
+                USER_ATTEMPT=\$(echo "\$line" | awk '{for(i=1;i<=NF;i++) if(\$i=="for") print \$(i+1)}')
+                GEO=\$(get_geo_info "\$SRC_IP")
 
-    if [ -f "\$AUTH_LOG" ]; then
+                MSG="🚨 **SECURITY ALERT: Failed SSH Login**\n• **User:** \${USER_ATTEMPT:-Unknown}\n• **Source IP:** \${SRC_IP:-Unknown}\n\$GEO\n• **Time:** \$(date '+%Y-%m-%d %H:%M:%S')"
+                echo -e "\$MSG\n---" >> "\$DISCORD_ALERT_CHAN"
 
-        [ ! -f "\$STATE_FILE" ] && wc -l < "\$AUTH_LOG" > "\$STATE_FILE"
+            elif echo "\$line" | grep -qE "Accepted (publickey|password)"; then
+                SRC_IP=\$(echo "\$line" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | tail -n 1)
+                USER_ATTEMPT=\$(echo "\$line" | awk '{for(i=1;i<=NF;i++) if(\$i=="for") print \$(i+1)}')
+                GEO=\$(get_geo_info "\$SRC_IP")
 
-        LAST_LINE=\$(cat "\$STATE_FILE")
-        CURRENT_LINE=\$(wc -l < "\$AUTH_LOG")
-
-        if [ "\$CURRENT_LINE" -gt "\$LAST_LINE" ]; then
-
-            NEW_LOGS=\$(tail -n +\$((LAST_LINE + 1)) "\$AUTH_LOG")
-
-            while IFS= read -r line; do
-
-                if echo "\$line" | grep -q "Failed password"; then
-
-                    SRC_IP=\$(echo "\$line" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | tail -n 1)
-
-                    USER_ATTEMPT=\$(echo "\$line" | awk '{for(i=1;i<=NF;i++) if(\$i=="for") print \$(i+1)}')
-
-                    GEO=\$(get_geo_info "\$SRC_IP")
-
-                    MSG=\$'[ALERT]🚨 **SECURITY ALERT: Failed SSH Login**\n• **User:** '"\${USER_ATTEMPT:-Unknown}"\$'\n• **Source IP:** '"\${SRC_IP:-Unknown}"\$'\n'" \$GEO "\$'\n• **Time:** '"\$(date '+%Y-%m-%d %H:%M:%S')"
-
-                    echo "\$MSG" >> "\$DISCORD_ALERT_CHAN"
-
-                elif echo "\$line" | grep -q "Accepted publickey" ||
-                     echo "\$line" | grep -q "Accepted password"; then
-
-                    SRC_IP=\$(echo "\$line" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | tail -n 1)
-
-                    USER_ATTEMPT=\$(echo "\$line" | awk '{for(i=1;i<=NF;i++) if(\$i=="for") print \$(i+1)}')
-
-                    GEO=\$(get_geo_info "\$SRC_IP")
-
-                    MSG=\$'[NOTICE]🔓 **SECURITY NOTICE: Successful SSH Login**\n• **User:** '"\${USER_ATTEMPT:-Unknown}"\$'\n• **Source IP:** '"\${SRC_IP:-Unknown}"\$'\n'" \$GEO "\$'\n• **Time:** '"\$(date '+%Y-%m-%d %H:%M:%S')"
-
-                    echo "\$MSG" >> "\$DISCORD_ALERT_CHAN"
-
-                fi
-
-            done <<< "\$NEW_LOGS"
-
-            echo "\$CURRENT_LINE" > "\$STATE_FILE"
-        fi
+                MSG="🔓 **SECURITY NOTICE: Successful SSH Login**\n• **User:** \${USER_ATTEMPT:-Unknown}\n• **Source IP:** \${SRC_IP:-Unknown}\n\$GEO\n• **Time:** \$(date '+%Y-%m-%d %H:%M:%S')"
+                echo -e "\$MSG\n---" >> "\$DISCORD_ALERT_CHAN"
+            fi
+        done <<< "\$LOGS"
     fi
 fi
 
 # ==============================================================================
-# 2. SUDO ESCALATION TRACKER
+# 2. SUDO TRACKER (journalctl)
 # ==============================================================================
 
 if [[ "\${TRACK_SUDO^^}" =~ ^Y ]]; then
+    LOGS=\$(journalctl _COMM=sudo --since "\$SINCE_TIME" --no-pager 2>/dev/null)
 
-    AUTH_LOG="/var/log/auth.log"
-    SUDO_STATE="/tmp/pi_sec_sudo_line.txt"
+    if [ -n "\$LOGS" ]; then
+        while IFS= read -r line; do
+            if echo "\$line" | grep -q "COMMAND="; then
+                USER_SUDO=\$(echo "\$line" | grep -oP '(?<=USER=)[^ ]+' | head -n 1)
+                CMD_RUN=\$(echo "\$line" | grep -oP '(?<=COMMAND=).*')
 
-    if [ -f "\$AUTH_LOG" ]; then
-
-        [ ! -f "\$SUDO_STATE" ] && wc -l < "\$AUTH_LOG" > "\$SUDO_STATE"
-
-        LAST_LINE=\$(cat "\$SUDO_STATE")
-        CURRENT_LINE=\$(wc -l < "\$AUTH_LOG")
-
-        if [ "\$CURRENT_LINE" -gt "\$LAST_LINE" ]; then
-
-            NEW_LOGS=\$(tail -n +\$((LAST_LINE + 1)) "\$AUTH_LOG")
-
-            while IFS= read -r line; do
-
-                if echo "\$line" | grep -q "COMMAND="; then
-
-                    USER_SUDO=\$(echo "\$line" | grep -oP '(?<=USER=)[^ ]+' | head -n 1)
-
-                    CMD_RUN=\$(echo "\$line" | grep -oP '(?<=COMMAND=).*')
-
-                    MSG=\$'[AUDIT]⚠️ **SECURITY AUDIT: Sudo Command Executed**\n• **User:** '"\${USER_SUDO:-Unknown}"\$'\n• **Command:** `'"\${CMD_RUN:-Unknown}"\$'`\n• **Time:** '"\$(date '+%Y-%m-%d %H:%M:%S')"
-
-                    echo "\$MSG" >> "\$DISCORD_ALERT_CHAN"
-                fi
-
-            done <<< "\$NEW_LOGS"
-
-            echo "\$CURRENT_LINE" > "\$SUDO_STATE"
-        fi
+                MSG="⚠️ **SECURITY AUDIT: Sudo Command Executed**\n• **User:** \${USER_SUDO:-Unknown}\n• **Command:** \`\${CMD_RUN:-Unknown}\`\n• **Time:** \$(date '+%Y-%m-%d %H:%M:%S')"
+                echo -e "\$MSG\n---" >> "\$DISCORD_ALERT_CHAN"
+            fi
+        done <<< "\$LOGS"
     fi
 fi
 
 # ==============================================================================
-# 3. UFW FIREWALL PROBE TRACKER
+# 3. UFW FIREWALL PROBE TRACKER (journalctl or log)
 # ==============================================================================
 
 if [[ "\${TRACK_UFW^^}" =~ ^Y ]]; then
+    LOGS=\$(journalctl -k --since "\$SINCE_TIME" --no-pager 2>/dev/null | grep "\[UFW BLOCK\]")
 
-    UFW_LOG="/var/log/ufw.log"
-    UFW_STATE="/tmp/pi_sec_ufw_line.txt"
+    if [ -n "\$LOGS" ]; then
+        while IFS= read -r line; do
+            SRC_IP=\$(echo "\$line" | grep -oP '(?<=SRC=)[^ ]+' | head -n 1)
+            DST_PORT=\$(echo "\$line" | grep -oP '(?<=DPT=)[^ ]+' | head -n 1)
 
-    if [ -f "\$UFW_LOG" ]; then
-
-        [ ! -f "\$UFW_STATE" ] && wc -l < "\$UFW_LOG" > "\$UFW_STATE"
-
-        LAST_LINE=\$(cat "\$UFW_STATE")
-        CURRENT_LINE=\$(wc -l < "\$UFW_LOG")
-
-        if [ "\$CURRENT_LINE" -gt "\$LAST_LINE" ]; then
-
-            NEW_LOGS=\$(tail -n +\$((LAST_LINE + 1)) "\$UFW_LOG")
-
-            while IFS= read -r line; do
-
-                if echo "\$line" | grep -q "BLOCK"; then
-
-                    SRC_IP=\$(echo "\$line" | grep -oP '(?<=SRC=)[^ ]+' | head -n 1)
-
-                    DST_PORT=\$(echo "\$line" | grep -oP '(?<=DPT=)[^ ]+' | head -n 1)
-
-                    MSG=\$'[FIREWALL]🛡️ **FIREWALL BLOCK: External Probe Detected**\n• **Blocked IP:** '"\${SRC_IP:-Unknown}"\$'\n• **Target Port:** '"\${DST_PORT:-Unknown}"\$'\n• **Time:** '"\$(date '+%Y-%m-%d %H:%M:%S')"
-
-                    echo "\$MSG" >> "\$DISCORD_ALERT_CHAN"
-                fi
-
-            done <<< "\$NEW_LOGS"
-
-            echo "\$CURRENT_LINE" > "\$UFW_STATE"
-        fi
+            MSG="🛡️ **FIREWALL BLOCK: External Probe Detected**\n• **Blocked IP:** \${SRC_IP:-Unknown}\n• **Target Port:** \${DST_PORT:-Unknown}\n• **Time:** \$(date '+%Y-%m-%d %H:%M:%S')"
+            echo -e "\$MSG\n---" >> "\$DISCORD_ALERT_CHAN"
+        done <<< "\$LOGS"
     fi
 fi
 
 # ==============================================================================
-# 4. PI-HOLE WEB DASHBOARD LOGIN TRACKER
+# 4. PI-HOLE DASHBOARD TRACKER
 # ==============================================================================
 
 if [[ "\${TRACK_PIHOLE^^}" =~ ^Y ]]; then
-
     LIGHTTPD_LOG="/var/log/lighttpd/access.log"
-    PIHOLE_STATE="/tmp/pi_sec_pihole_line.txt"
+    PIHOLE_LOG="/var/log/pihole/pihole-FTL.log"
 
-    if [ -f "\$LIGHTTPD_LOG" ]; then
+    TARGET_LOG=""
+    [ -f "\$LIGHTTPD_LOG" ] && TARGET_LOG="\$LIGHTTPD_LOG"
+    [ -z "\$TARGET_LOG" ] && [ -f "\$PIHOLE_LOG" ] && TARGET_LOG="\$PIHOLE_LOG"
 
-        [ ! -f "\$PIHOLE_STATE" ] && wc -l < "\$LIGHTTPD_LOG" > "\$PIHOLE_STATE"
-
-        LAST_LINE=\$(cat "\$PIHOLE_STATE")
-        CURRENT_LINE=\$(wc -l < "\$LIGHTTPD_LOG")
-
-        if [ "\$CURRENT_LINE" -gt "\$LAST_LINE" ]; then
-
-            NEW_LOGS=\$(tail -n +\$((LAST_LINE + 1)) "\$LIGHTTPD_LOG")
-
-            while IFS= read -r line; do
-
-                if echo "\$line" | grep -q "POST /admin" ||
-                   echo "\$line" | grep -q "login"; then
-
-                    SRC_IP=\$(echo "\$line" | awk '{print \$1}')
-
-                    MSG=\$'[WEB]🌐 **WEB ADMIN NOTICE: Pi-Hole Dashboard Activity**\n• **Source IP:** '"\${SRC_IP:-Unknown}"\$'\n• **Action:** Admin Panel Authentication / Request\n• **Time:** '"\$(date '+%Y-%m-%d %H:%M:%S')"
-
-                    echo "\$MSG" >> "\$DISCORD_ALERT_CHAN"
-                fi
-
-            done <<< "\$NEW_LOGS"
-
-            echo "\$CURRENT_LINE" > "\$PIHOLE_STATE"
+    if [ -n "\$TARGET_LOG" ]; then
+        RECENT_LOGS=\$(tail -n 50 "\$TARGET_LOG" | grep -iE "POST /admin|login")
+        if [ -n "\$RECENT_LOGS" ]; then
+            SRC_IP=\$(echo "\$RECENT_LOGS" | tail -n 1 | awk '{print \$1}')
+            MSG="🌐 **WEB ADMIN NOTICE: Pi-Hole Dashboard Activity**\n• **Source IP:** \${SRC_IP:-Unknown}\n• **Time:** \$(date '+%Y-%m-%d %H:%M:%S')"
+            echo -e "\$MSG\n---" >> "\$DISCORD_ALERT_CHAN"
         fi
     fi
 fi
@@ -514,43 +383,53 @@ fi
 # ==============================================================================
 
 if [[ "\${TRACK_BANDWIDTH^^}" =~ ^Y ]]; then
-
     BW_STATE="/tmp/pi_sec_bw_state.txt"
-
-    DEFAULT_IFACE=\$(ip route show default | awk '/default/ {print \$5}' | head -n 1)
+    DEFAULT_IFACE=\$(ip route show default 2>/dev/null | awk '/default/ {print \$5}' | head -n 1)
 
     if [ -n "\$DEFAULT_IFACE" ]; then
-
-        CURRENT_BYTES=\$(awk -v iface="\$DEFAULT_IFACE" '\$1 == iface":" {print \$2 + \$10}' /proc/net/dev)
-
+        CURRENT_BYTES=\$(awk -v iface="\$DEFAULT_IFACE" '\$1 ~ iface ":" {print \$2 + \$10}' /proc/net/dev)
         CURRENT_TIME=\$(date +%s)
 
         if [ -f "\$BW_STATE" ]; then
-
             read LAST_BYTES LAST_TIME < "\$BW_STATE"
-
             BYTES_DIFF=\$(( CURRENT_BYTES - LAST_BYTES ))
-
             TIME_DIFF=\$(( CURRENT_TIME - LAST_TIME ))
 
             if [ "\$TIME_DIFF" -gt 0 ] && [ "\$BYTES_DIFF" -gt 0 ]; then
-
                 BYTES_PER_SEC=\$(( BYTES_DIFF / TIME_DIFF ))
-
                 MB_PER_MIN=\$(( BYTES_PER_SEC * 60 / 1024 / 1024 ))
-
                 THRESHOLD=\${BANDWIDTH_THRESHOLD_MB:-100}
 
                 if [ "\$MB_PER_MIN" -gt "\$THRESHOLD" ]; then
-
-                    MSG=\$'[BANDWIDTH]📈 **TRAFFIC SPIKE WARNING**\n• **Interface:** '"\$DEFAULT_IFACE"\$'\n• **Usage Rate:** ~'""\${MB_PER_MIN}"\$' MB/min (Threshold: '" "\${THRESHOLD}" "\$' MB/min)\n• **Time:** '"\$(date '+%Y-%m-%d %H:%M:%S')"
-
-                    echo "\$MSG" >> "\$DISCORD_ALERT_CHAN"
+                    MSG="📈 **TRAFFIC SPIKE WARNING**\n• **Interface:** \$DEFAULT_IFACE\n• **Usage Rate:** ~ \${MB_PER_MIN} MB/min (Threshold: \${THRESHOLD} MB/min)\n• **Time:** \$(date '+%Y-%m-%d %H:%M:%S')"
+                    echo -e "\$MSG\n---" >> "\$DISCORD_ALERT_CHAN"
                 fi
             fi
         fi
 
         echo "\$CURRENT_BYTES \$CURRENT_TIME" > "\$BW_STATE"
+    fi
+fi
+
+# ==============================================================================
+# 6. DISCORD DISPATCHER
+# ==============================================================================
+
+if [ -f "\$DISCORD_ALERT_CHAN" ] && [ -n "\${DISCORD_WEBHOOK_URL:-}" ]; then
+    ALERT_PAYLOAD=\$(cat "\$DISCORD_ALERT_CHAN")
+    
+    if [ -n "\$ALERT_PAYLOAD" ]; then
+        # Format payload into valid JSON
+        JSON_PAYLOAD=\$(jq -n --arg content "\$ALERT_PAYLOAD" '{content: \$content}')
+        
+        curl -H "Content-Type: application/json" \
+             -X POST \
+             -d "\$JSON_PAYLOAD" \
+             -s --max-time 10 \
+             "\$DISCORD_WEBHOOK_URL" > /dev/null
+
+        # Clear queue after dispatch
+        > "\$DISCORD_ALERT_CHAN"
     fi
 fi
 SCRIPT
@@ -563,18 +442,6 @@ fi
 # ------------------------------------------------------------------------------
 # 8. SECURE MONITOR PERMISSIONS
 # ------------------------------------------------------------------------------
-#
-# CRITICAL SECURITY FIX:
-#
-# The old version used:
-#
-#   chown "$CURRENT_USER:$CURRENT_USER" "$MONITOR_SCRIPT"
-#
-# while cron executed it with sudo.
-#
-# That allowed the normal user to modify code executed as root.
-#
-# The monitor must therefore be root-owned and not writable by the normal user.
 
 chown root:root "$MONITOR_SCRIPT"
 chmod 755 "$MONITOR_SCRIPT"
@@ -595,15 +462,11 @@ CONFIG_PERMS=$(stat -c '%a' "$CONFIG_FILE" 2>/dev/null || echo "unknown")
 
 if [ "$MONITOR_OWNER" != "root:root" ] || [ "$MONITOR_PERMS" != "755" ]; then
     echo "❌ Security monitor permission verification failed."
-    echo "   Owner: $MONITOR_OWNER"
-    echo "   Mode:  $MONITOR_PERMS"
     exit 1
 fi
 
 if [ "$CONFIG_OWNER" != "root:root" ] || [ "$CONFIG_PERMS" != "600" ]; then
     echo "❌ Security configuration permission verification failed."
-    echo "   Owner: $CONFIG_OWNER"
-    echo "   Mode:  $CONFIG_PERMS"
     exit 1
 fi
 
@@ -613,29 +476,17 @@ echo ""
 # ------------------------------------------------------------------------------
 # 10. CRON JOB INTEGRATION
 # ------------------------------------------------------------------------------
-#
-# Keep the current cron architecture for this commit.
-#
-# We are NOT migrating to systemd yet. That is a later roadmap item.
-#
-# However, because the monitor is now root-owned, the normal user can no longer
-# modify the code executed by sudo.
-#
-# ------------------------------------------------------------------------------
 
 echo "⏰ Scheduling security watchdog cron job..."
 
 CURRENT_CRONTAB=$(crontab -l 2>/dev/null || true)
-
-# Remove old PiTweaks security watchdog entries.
 CLEAN_CRONTAB=$(printf '%s\n' "$CURRENT_CRONTAB" | grep -v "sec_monitor.sh" || true)
 
-# Add exactly one watchdog entry.
 printf '%s\n' "$CLEAN_CRONTAB" \
     | sed '/^[[:space:]]*$/d' \
     | {
         cat
-        echo "* * * * * sudo $MONITOR_SCRIPT > /dev/null 2>&1"
+        echo "* * * * * $MONITOR_SCRIPT > /dev/null 2>&1"
     } \
     | crontab -
 
@@ -644,38 +495,5 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-echo "✅ Security watchdog scheduled."
-echo ""
-
-# ------------------------------------------------------------------------------
-# 11. FINAL SECURITY CHECK
-# ------------------------------------------------------------------------------
-
-echo "=================================================="
-echo " 🔐 Security Installation Verification"
-echo "=================================================="
-echo ""
-echo "Monitor:"
-echo "  Path:  $MONITOR_SCRIPT"
-echo "  Owner: $MONITOR_OWNER"
-echo "  Mode:  $MONITOR_PERMS"
-echo ""
-echo "Config:"
-echo "  Path:  $CONFIG_FILE"
-echo "  Owner: $CONFIG_OWNER"
-echo "  Mode:  $CONFIG_PERMS"
-echo ""
-echo "Cron:"
-echo "  * * * * * sudo $MONITOR_SCRIPT"
-echo ""
-
-echo "=================================================="
-echo " ✅ Security & Network Watchdog installed safely"
-echo "=================================================="
-echo ""
-echo "The watchdog is now protected from modification by"
-echo "the normal PiTweaks user."
-echo ""
-echo "Existing configuration values were preserved."
-echo "The previous configuration was backed up where possible."
+echo "✅ Security watchdog scheduled successfully."
 echo ""
