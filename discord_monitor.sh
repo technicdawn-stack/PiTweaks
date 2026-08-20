@@ -189,6 +189,43 @@ async def on_ready():
     except Exception as e:
         print(f"Could not send boot DM: {e}")
 
+async def cmd_ping(message, args):
+    latency = round(client.latency * 1000)
+    await message.channel.send(f"🏓 **Pong!** Bot latency is `{latency}ms`")
+
+async def cmd_sysinfo(message, args):
+    cmd = """
+echo "=========================================="
+echo " 📊 Raspberry Pi System Information"
+echo "=========================================="
+echo "• OS Version:    $(cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2)"
+echo "• Kernel:        $(uname -r)"
+echo "• Uptime:        $(uptime -p)"
+echo "• Local IP:      $(hostname -I | awk '{print $1}')"
+echo "• Temperature:   $(vcgencmd measure_temp 2>/dev/null || echo "N/A")"
+echo "• Memory Usage:  $(free -h | awk '/Mem:/ {print $3 " / " $2}')"
+echo "• Disk Usage:    $(df -h / | awk 'NR==2 {print $3 " / " $2 " (" $5 " used)"}')"
+echo ""
+echo "=========================================="
+echo " ⚙️ Advanced System Information"
+echo "=========================================="
+echo "• CPU Model:     $(grep -m 1 'Model' /proc/cpuinfo | cut -d ':' -f 2 | xargs 2>/dev/null || echo "Raspberry Pi")"
+echo "• Architecture:  $(uname -m)"
+echo "• Core Voltage:  $(vcgencmd measure_volts core 2>/dev/null || echo "N/A")"
+echo "• Clock Speed:   $(vcgencmd measure_clock arm 2>/dev/null | awk -F'=' '{printf "%.2f GHz\\n", $2/1000000000}' || echo "N/A")"
+echo "• Available RAM: $(free -h | awk '/Mem:/ {print $4}')"
+echo "• Free Disk:     $(df -h / | awk 'NR==2 {print $4}')"
+echo "• Active Users:  $(who | wc -l)"
+echo "• Load Average:  $(uptime | awk -F'load average:' '{print $2}')"
+echo "=========================================="
+"""
+    try:
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=15)
+        output = result.stdout.strip() or "No output returned."
+        await message.channel.send(f"```text\n{output}\n```")
+    except Exception as e:
+        await message.channel.send(f"❌ Error fetching system info: `{e}`")
+
 async def cmd_reboot(message, args):
     await message.channel.send("🔄 Rebooting Raspberry Pi...")
     subprocess.run(['sudo', 'reboot'])
@@ -198,7 +235,7 @@ async def cmd_shutdown(message, args):
     subprocess.run(['sudo', 'shutdown', 'now'])
 
 async def cmd_temp_report(message, args):
-    await message.channel.send("📊 Generating system report...")
+    await message.channel.send("📊 Generating temperature report...")
     try:
         cmd = f"bash {MONITOR_SCRIPT} temp_report"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
@@ -319,6 +356,8 @@ async def cmd_alert(message, args):
 async def cmd_help(message, args):
     help_text = (
         "🤖 **Raspberry Pi Bot Commands:**\n"
+        "• `!ping` - Check bot response latency.\n"
+        "• `!sysinfo` - Show full hardware, OS, network, and RAM stats.\n"
         "• `!temp_report` - Run system temperature report.\n"
         "• `!test <cpu|ram|temp> <num>` or `!test_cpu <num>` - Run diagnostic tests.\n"
         "• `!alert <reboot|shutdown|update|interrupt> <mins>` - Broadcast preset alert to alert channel.\n"
@@ -330,6 +369,8 @@ async def cmd_help(message, args):
     await message.channel.send(help_text)
 
 COMMANDS = {
+    "ping": cmd_ping,
+    "sysinfo": cmd_sysinfo,
     "reboot": cmd_reboot,
     "shutdown": cmd_shutdown,
     "temp_report": cmd_temp_report,
