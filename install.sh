@@ -9,7 +9,6 @@ USER="technicdawn-stack"
 REPO="PiTweaks"
 BRANCH="main"
 
-# Check required commands
 if ! command -v curl &>/dev/null; then
     echo "❌ 'curl' is required but not installed."
     exit 1
@@ -43,19 +42,19 @@ if [ "${#SCRIPTS[@]}" -eq 0 ]; then
     exit 1
 fi
 
-# Build Whiptail Menu Options with Dynamic Descriptions & Fallbacks
 MENU_OPTIONS=()
 
+# Process each script
 for script in "${SCRIPTS[@]}"; do
     SCRIPT_RAW_URL="https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/${script}"
     
-    # Read the first 10 lines of the script with a 2-second timeout
-    HEADER=$(curl -sSL --max-time 2 "$SCRIPT_RAW_URL" | head -n 10 || true)
+    # 1-second connect timeout to prevent freeze
+    HEADER=$(curl -sSL --connect-timeout 1 --max-time 2 "$SCRIPT_RAW_URL" | head -n 10 || true)
     
-    # Extract description comment
+    # Extract line starting with '# Description:'
     DESC=$(echo "$HEADER" | grep -m1 -i '^# Description:' | cut -d':' -f2- | xargs || true)
     
-    # Fallback if no description line exists
+    # Fallback string
     if [ -z "$DESC" ]; then
         DESC="No description provided"
     fi
@@ -63,11 +62,19 @@ for script in "${SCRIPTS[@]}"; do
     MENU_OPTIONS+=("$script" "$DESC")
 done
 
+# Dynamically calculate window dimensions based on terminal size
+TERM_HEIGHT=$(tws 2>/dev/null || stty size 2>/dev/null | awk '{print $1}' || echo 20)
+TERM_WIDTH=$(tws 2>/dev/null || stty size 2>/dev/null | awk '{print $2}' || echo 80)
+
+BOX_HEIGHT=$(( TERM_HEIGHT - 4 ))
+BOX_WIDTH=$(( TERM_WIDTH - 6 ))
+MENU_HEIGHT=$(( BOX_HEIGHT - 8 ))
+
 # Launch Whiptail TUI Menu
 SELECTED_SCRIPT=$(whiptail --clear \
     --backtitle "PiTweaks Script Manager" \
     --title "Script Selection Menu" \
-    --menu "Select a script to execute:" 20 78 10 \
+    --menu "Select a script to execute:" "$BOX_HEIGHT" "$BOX_WIDTH" "$MENU_HEIGHT" \
     "${MENU_OPTIONS[@]}" 3>&1 1>&2 2>&3) || {
         clear
         echo "Cancelled."
@@ -77,7 +84,6 @@ SELECTED_SCRIPT=$(whiptail --clear \
 SCRIPT_URL="https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/${SELECTED_SCRIPT}"
 TEMP_EXEC="/tmp/runner_${SELECTED_SCRIPT}"
 
-# Download and execute selected script
 if curl -fsSL "$SCRIPT_URL" -o "$TEMP_EXEC"; then
     chmod +x "$TEMP_EXEC"
     
