@@ -1,0 +1,51 @@
+name: Auto-Generate Script Index
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**.sh'
+
+jobs:
+  generate-index:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build index.txt
+        run: |
+          # Clear or create index.txt
+          > index.txt
+
+          # Loop through all bash scripts in the root directory
+          for script in *.sh; do
+            # Skip if file doesn't exist or is the main installer
+            [ -e "$script" ] || continue
+            [ "$script" = "install.sh" ] && continue
+
+            # Extract '# Description:' line
+            DESC=$(grep -m1 -i '^# Description:' "$script" | cut -d':' -f2- | xargs || true)
+            
+            # Fallback if no description line exists
+            if [ -z "$DESC" ]; then
+              DESC="No description provided"
+            fi
+
+            echo "${script}|${DESC}" >> index.txt
+          done
+
+      - name: Commit and Push index.txt
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add index.txt
+          if ! git diff --staged --quiet; then
+            git commit -m "auto: update index.txt script manifest"
+            git push
+          fi
