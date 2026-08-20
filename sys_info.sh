@@ -1,25 +1,42 @@
 #!/bin/bash
-clear
+# Description: Measures network speed using official native Ookla Speedtest
+set -eo pipefail
+
 echo "=========================================="
-echo " 📊 Raspberry Pi System Information"
+echo " 🚀 Pi Network Speed Test (Ookla)"
 echo "=========================================="
-echo "• OS Version:    $(cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2)"
-echo "• Kernel:        $(uname -r)"
-echo "• Uptime:        $(uptime -p)"
-echo "• Local IP:      $(hostname -I | awk '{print $1}')"
-echo "• Temperature:   $(vcgencmd measure_temp 2>/dev/null || echo "N/A")"
-echo "• Memory Usage:  $(free -h | awk '/Mem:/ {print $3 " / " $2}')"
-echo "• Disk Usage:    $(df -h / | awk 'NR==2 {print $3 " / " $2 " (" $5 " used)"}')"
+
+if ! command -v speedtest &> /dev/null || speedtest --version 2>&1 | grep -q "Python"; then
+    echo "Installing official Ookla Speedtest binary..."
+    
+    # Detect CPU architecture
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        aarch64|arm64) OOKLA_ARCH="aarch64" ;;
+        armv7l|armhf)   OOKLA_ARCH="armhf" ;;
+        x86_64)        OOKLA_ARCH="x86_64" ;;
+        *)             OOKLA_ARCH="armhf" ;;
+    esac
+
+    # Download direct binary from Ookla servers
+    TEMP_DIR=$(mktemp -d)
+    TAR_URL="https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-${OOKLA_ARCH}.tgz"
+    
+    if curl -fsSL "$TAR_URL" -o "$TEMP_DIR/speedtest.tgz"; then
+        tar -xzf "$TEMP_DIR/speedtest.tgz" -C "$TEMP_DIR"
+        sudo mv "$TEMP_DIR/speedtest" /usr/local/bin/
+        sudo chmod +x /usr/local/bin/speedtest
+        rm -rf "$TEMP_DIR"
+        echo "✅ Speedtest binary successfully installed to /usr/local/bin/speedtest"
+    else
+        echo "❌ Failed to download Ookla Speedtest binary."
+        rm -rf "$TEMP_DIR"
+        exit 1
+    fi
+fi
+
+echo "Running speed test..."
 echo ""
-echo "=========================================="
-echo " ⚙️ Advanced System Information"
-echo "=========================================="
-echo "• CPU Model:     $(grep -m 1 'Model' /proc/cpuinfo | cut -d ':' -f 2 | xargs)"
-echo "• Architecture:  $(uname -m)"
-echo "• Core Voltage:  $(vcgencmd measure_volts core 2>/dev/null || echo "N/A")"
-echo "• Clock Speed:   $(vcgencmd measure_clock arm 2>/dev/null | awk -F'=' '{printf "%.2f GHz\n", $2/1000000000}' || echo "N/A")"
-echo "• Available RAM: $(free -h | awk '/Mem:/ {print $4}')"
-echo "• Free Disk:     $(df -h / | awk 'NR==2 {print $4}')"
-echo "• Active Users:  $(who | wc -l)"
-echo "• Load Average:  $(uptime | awk -F'load average:' '{print $2}')"
-echo "=========================================="
+
+# Run test non-interactively
+speedtest --accept-license --accept-gdpr
