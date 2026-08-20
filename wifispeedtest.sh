@@ -1,4 +1,5 @@
 #!/bin/bash
+# Description: Measures network speed using official native Ookla Speedtest
 set -eo pipefail
 
 echo "=========================================="
@@ -9,7 +10,7 @@ echo "=========================================="
 if ! command -v speedtest &> /dev/null || speedtest --version 2>&1 | grep -q "Python"; then
     echo "Installing official Ookla Speedtest CLI..."
     
-    # Add official Ookla repository script
+    # Add official Ookla repository
     curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | sudo bash
     
     # Install official speedtest package
@@ -19,5 +20,5 @@ fi
 echo "Running speed test..."
 echo ""
 
-# --accept-license and --accept-gdpr prevent interactive prompts on first run
+# Run test non-interactively
 speedtest --accept-license --accept-gdpr
