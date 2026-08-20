@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Smart memory and swap manager with auto-detection and smart recommendations
+# Description: Smart memory and swap manager with auto-detection and recommendations
 set -eo pipefail
 
 BOLD='\033[1m'
@@ -22,12 +22,11 @@ fi
 # ------------------------------------------------------------------------------
 # 1. Hardware & Disk Analysis
 # ------------------------------------------------------------------------------
-# Fixed df argument (-BM instead of -B-M)
+# Fixed flag: -BM instead of -B-M
 FREE_DISK_MB=$(df -BM / | awk 'NR==2 {print $4}' | tr -d 'M')
 RAM_TOTAL_MB=$(free -m | awk '/Mem:/ {print $2}')
 RAM_TOTAL_GB=$(awk -v ram="$RAM_TOTAL_MB" 'BEGIN {printf "%.1f", ram/1024}')
 
-# Get active swap size
 CURRENT_SWAP_MB=$(free -m | awk '/Swap:/ {print $2}')
 
 # ------------------------------------------------------------------------------
@@ -56,10 +55,10 @@ REASON=""
 if [ "$RAM_TOTAL_MB" -ge 8000 ]; then
     if [ "$AVG_RAM_PCT" -gt 85 ]; then
         RECOMMENDED_SWAP=2048
-        REASON="High system RAM detected (${RAM_TOTAL_GB} GB), but usage is critical (~${AVG_RAM_PCT}%). A 2GB swap is suggested."
+        REASON="High system RAM detected (${RAM_TOTAL_GB} GB), but load is high (~${AVG_RAM_PCT}%). A 2GB swap is suggested."
     else
         RECOMMENDED_SWAP=512
-        REASON="Large system RAM detected (${RAM_TOTAL_GB} GB) with low usage (${AVG_RAM_PCT}%). A minimal 512MB swap is sufficient."
+        REASON="Large system RAM detected (${RAM_TOTAL_GB} GB) with low load (${AVG_RAM_PCT}%). A minimal 512MB swap is sufficient."
     fi
 elif [ "$RAM_TOTAL_MB" -ge 2000 ]; then
     if [ "$AVG_RAM_PCT" -gt 75 ]; then
@@ -72,7 +71,7 @@ elif [ "$RAM_TOTAL_MB" -ge 2000 ]; then
 else
     if [ "$AVG_RAM_PCT" -gt 60 ]; then
         RECOMMENDED_SWAP=2048
-        REASON="Low hardware RAM detected (${RAM_TOTAL_GB} GB) with high load (${AVG_RAM_PCT}%). Recommending 2048MB swap."
+        REASON="Low hardware RAM detected (${RAM_TOTAL_GB} GB) under high load (${AVG_RAM_PCT}%). Recommending 2048MB swap."
     else
         RECOMMENDED_SWAP=1024
         REASON="Low hardware RAM detected (${RAM_TOTAL_GB} GB). A 1024MB swap is recommended."
@@ -82,7 +81,7 @@ fi
 SAFE_DISK_LIMIT=$((FREE_DISK_MB / 2))
 if [ "$RECOMMENDED_SWAP" -gt "$SAFE_DISK_LIMIT" ]; then
     RECOMMENDED_SWAP=$SAFE_DISK_LIMIT
-    REASON="${REASON} (Capped to ${SAFE_DISK_LIMIT} MB to protect storage)."
+    REASON="${REASON} (Capped to ${SAFE_DISK_LIMIT} MB to protect storage space)."
 fi
 
 # ------------------------------------------------------------------------------
@@ -145,7 +144,7 @@ case "$CHOICE" in
         exit 0
         ;;
     4)
-        read -p "⚠️ Disable swap? [y/N]: " CONFIRM </dev/tty
+        read -p "⚠️ Disable swap? High RAM usage without swap may cause system crashes. [y/N]: " CONFIRM </dev/tty
         if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
             echo "Operation canceled."
             exit 0
@@ -166,7 +165,7 @@ case "$CHOICE" in
         ;;
 esac
 
-# Apply Swap Resize
+# Apply Swap Resize (Options 1 and 2)
 read -p "⚠️ Configure swap size to ${NEW_SIZE} MB? [y/N]: " CONFIRM </dev/tty
 if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
     echo "Operation canceled."
