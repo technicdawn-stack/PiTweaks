@@ -1,13 +1,13 @@
 #!/bin/bash
-
+# Description: Smart Raspberry Pi overclocking manager with live thermal monitoring and safe backups.
 # ==============================================================================
 # 🍓 PiTweaks - Smart Overclock & Power Manager
 # ==============================================================================
 
 # Ensure script is run with elevated privileges to edit boot files
 if [ "$EUID" -ne 0 ]; then
-  echo "❌ Please run this script with sudo."
-  exit 1
+    echo "❌ Please run this script with sudo."
+    exit 1
 fi
 
 # Locate the active Raspberry Pi boot config file
@@ -20,27 +20,29 @@ LAST_BACKUP="${CONFIG_FILE}.last"
 # ------------------------------------------------------------------------------
 # 1. HANDLE DUAL-STAGE BACKUPS
 # ------------------------------------------------------------------------------
-# Create a permanent factory backup on the very first run (never overwritten)
 if [ ! -f "$ORIG_BACKUP" ]; then
     cp "$CONFIG_FILE" "$ORIG_BACKUP"
 fi
 
-# Always save the immediate previous state before making new changes
 cp "$CONFIG_FILE" "$LAST_BACKUP"
 
 # ------------------------------------------------------------------------------
-# 2. DETECT HARDWARE & CURRENT ACTIVE PRESET
+# 2. DETECT HARDWARE, THERMALS, & THROTTLE STATE
 # ------------------------------------------------------------------------------
-# Extract hardware model name from system device-tree
 MODEL=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || echo "Raspberry Pi")
 
-# Query GPU/SoC for live CPU clock speed (in MHz) and core rail voltage
 LIVE_FREQ=$(vcgencmd measure_clock arm 2>/dev/null | awk -F= '{printf "%.0f MHz", $2/1000000}')
 LIVE_VOLT=$(vcgencmd measure_volts core 2>/dev/null | cut -d= -f2)
 TEMP_RAW=$(vcgencmd measure_temp 2>/dev/null | grep -oE '[0-9.]+' || echo "0")
 TEMP=${TEMP_RAW%.*}
 
-# Detect active profile inside config.txt
+# Check for historical power or thermal throttling
+THROTTLE_HEX=$(vcgencmd get_throttled 2>/dev/null | cut -d= -f2)
+THROTTLE_STATUS="Normal (No throttling detected)"
+if [ "$THROTTLE_HEX" != "0x0" ] && [ -n "$THROTTLE_HEX" ]; then
+    THROTTLE_STATUS="⚠️ Throttled/Under-voltage detected! Code: $THROTTLE_HEX"
+fi
+
 if grep -q "PROFILE: Eco" "$CONFIG_FILE"; then
     ACTIVE_PRESET="Eco"
 elif grep -q "PROFILE: Quiet" "$CONFIG_FILE"; then
@@ -52,7 +54,6 @@ elif grep -q "PROFILE: Performance" "$CONFIG_FILE"; then
 elif grep -q "PROFILE: High Performance" "$CONFIG_FILE"; then
     ACTIVE_PRESET="High Performance"
 elif grep -q "arm_freq" "$CONFIG_FILE" || grep -q "over_voltage" "$CONFIG_FILE"; then
-    # Custom clock/voltage tweaks detected outside of PiTweaks markers
     ACTIVE_PRESET="Custom"
 else
     ACTIVE_PRESET="Default (Factory Stock)"
@@ -65,11 +66,12 @@ clear
 echo "=========================================="
 echo " 📊 Current System State"
 echo "=========================================="
-echo "• Hardware Model: $MODEL"
-echo "• Active Clock:   ${LIVE_FREQ:-N/A}"
-echo "• Core Voltage:   ${LIVE_VOLT:-N/A}"
-echo "• Core Temp:      ${TEMP}°C"
-echo "• Active Preset:  [$ACTIVE_PRESET]"
+echo "• Hardware Model:   $MODEL"
+echo "• Active Clock:     ${LIVE_FREQ:-N/A}"
+echo "• Core Voltage:     ${LIVE_VOLT:-N/A}"
+echo "• Core Temp:        ${TEMP}°C"
+echo "• Power/Throttle:   $THROTTLE_STATUS"
+echo "• Active Preset:    [$ACTIVE_PRESET]"
 echo "=========================================="
 echo ""
 
@@ -92,7 +94,7 @@ echo ""
 # ------------------------------------------------------------------------------
 # 4. USER INTERFACE
 # ------------------------------------------------------------------------------
-echo "Select a preset or restore option:"
+echo "Select a preset or monitoring option:"
 echo "  1) Eco (Low power & thermal priority)"
 echo "  2) Quiet (Stock clock with low idle scaling)"
 echo "  3) Default (Reset to stock factory settings)"
@@ -101,31 +103,32 @@ echo "  5) High Performance (Max safe clock - cooling required)"
 echo "  ----------------------------------------"
 echo "  6) Restore Last Preset State ($LAST_BACKUP)"
 echo "  7) Restore Original Factory Config ($ORIG_BACKUP)"
-echo "  8) Exit"
+echo "  8) Live Thermal & Clock Monitor Mode"
+echo "  9) Exit"
 echo ""
 
-read -p "Enter selection [1-8]: " CHOICE </dev/tty
+read -p "Enter selection [1-9]: " CHOICE </dev/tty
 
-# Function to safely update config.txt without duplicating lines
+# Function to safely update config.txt and prompt for reboot
 apply_settings() {
-    PROFILE_NAME="$1"
-    CONFIG_BODY="$2"
+    local PROFILE_NAME="$1"
+    local CONFIG_BODY="$2"
 
-    # Remove any existing PiTweaks block
     sed -i '/# --- PiTweaks Overclock Start ---/,/# --- PiTweaks Overclock End ---/d' "$CONFIG_FILE"
 
-    # Write new profile block
-    cat <<EOT >> "$CONFIG_FILE"
-
-# --- PiTweaks Overclock Start ---
-# PROFILE: $PROFILE_NAME
-$CONFIG_BODY
-# --- PiTweaks Overclock End ---
-EOT
+    printf '\n# --- PiTweaks Overclock Start ---\n# PROFILE: %s\n%b\n# --- PiTweaks Overclock End ---\n' \
+        "$PROFILE_NAME" "$CONFIG_BODY" >> "$CONFIG_FILE"
 
     echo ""
     echo "✅ Successfully applied [$PROFILE_NAME] profile!"
-    echo "⚠️  Note: You must reboot your Raspberry Pi for change to take effect."
+    
+    read -p "Would you like to reboot now to apply changes? [y/N]: " REBOOT_CHOICE </dev/tty
+    if [[ "$REBOOT_CHOICE" =~ ^[yY]$ ]]; then
+        echo "🔄 Rebooting Raspberry Pi..."
+        sudo reboot
+    else
+        echo "⚠️ Remember to reboot later for changes to take effect."
+    fi
 }
 
 # ------------------------------------------------------------------------------
@@ -133,23 +136,21 @@ EOT
 # ------------------------------------------------------------------------------
 case "$CHOICE" in
     1)
-        # Eco: Caps maximum frequency lower to save energy and keep temps down
         SETTINGS="arm_freq=800\ninitial_turbo=0"
         apply_settings "Eco" "$SETTINGS"
         ;;
     2)
-        # Quiet: Sets dynamic minimum frequency to minimize fan usage
         SETTINGS="arm_freq_min=600"
         apply_settings "Quiet" "$SETTINGS"
         ;;
     3)
-        # Default: Strips all tweaks and restores standard operating parameters
         sed -i '/# --- PiTweaks Overclock Start ---/,/# --- PiTweaks Overclock End ---/d' "$CONFIG_FILE"
         echo ""
         echo "✅ Reset config back to stock Default settings!"
+        read -p "Would you like to reboot now? [y/N]: " REBOOT_CHOICE </dev/tty
+        [[ "$REBOOT_CHOICE" =~ ^[yY]$ ]] && sudo reboot
         ;;
     4)
-        # Performance: Mild frequency boost with modest over-voltage safety margin
         if [[ "$MODEL" =~ "Pi 5" ]]; then
             SETTINGS="arm_freq=2600"
         elif [[ "$MODEL" =~ "Pi 4" ]]; then
@@ -160,7 +161,6 @@ case "$CHOICE" in
         apply_settings "Performance" "$SETTINGS"
         ;;
     5)
-        # High Performance: Pushes higher clocks (safely within hardware limits)
         if [[ "$MODEL" =~ "Pi 5" ]]; then
             SETTINGS="arm_freq=2900\nover_voltage_delta=50000"
         elif [[ "$MODEL" =~ "Pi 4" ]]; then
@@ -174,13 +174,29 @@ case "$CHOICE" in
         cp "$LAST_BACKUP" "$CONFIG_FILE"
         echo ""
         echo "🔄 Restored config from last state backup ($LAST_BACKUP)."
+        read -p "Would you like to reboot now? [y/N]: " REBOOT_CHOICE </dev/tty
+        [[ "$REBOOT_CHOICE" =~ ^[yY]$ ]] && sudo reboot
         ;;
     7)
         cp "$ORIG_BACKUP" "$CONFIG_FILE"
         echo ""
         echo "🔄 Restored original factory config ($ORIG_BACKUP)."
+        read -p "Would you like to reboot now? [y/N]: " REBOOT_CHOICE </dev/tty
+        [[ "$REBOOT_CHOICE" =~ ^[yY]$ ]] && sudo reboot
         ;;
     8)
+        echo ""
+        echo "📈 Entering Live Monitor Mode. Press [Ctrl+C] to exit."
+        echo "--------------------------------------------------"
+        while true; do
+            LF=$(vcgencmd measure_clock arm 2>/dev/null | awk -F= '{printf "%.0f MHz", $2/1000000}')
+            LV=$(vcgencmd measure_volts core 2>/dev/null | cut -d= -f2)
+            TR=$(vcgencmd measure_temp 2>/dev/null | grep -oE '[0-9.]+' || echo "0")
+            printf "\r🕒 Time: %s | 🌡️ Temp: %s°C | ⚡ Voltage: %s | 🚀 Clock: %s" "$(date +%T)" "$TR" "$LV" "$LF"
+            sleep 2
+        done
+        ;;
+    9)
         echo "Exiting without making changes."
         exit 0
         ;;
