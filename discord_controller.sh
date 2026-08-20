@@ -61,91 +61,47 @@ BOT_TOKEN="${CLI_BOT_TOKEN:-$EXISTING_TOKEN}"
 USER_ID="${CLI_USER_ID:-$EXISTING_USER_ID}"
 ALERT_CHANNEL="${CLI_ALERT_CHANNEL:-$EXISTING_CHANNEL}"
 
-# Step 3: Interactive TUI Menu (Flicker-Free Curses Navigation)
+# Step 3: Native Whiptail Dialog Menu (Flicker-Free SSH Compatible)
 if [ "$NON_INTERACTIVE" = false ]; then
-    python3 - << EOF
-import curses
-import sys
-
-def run_menu(stdscr):
-    curses.use_default_colors()
-    curses.cbreak()
-    stdscr.keypad(True)
-    
-    fields = [
-        {"label": "Discord User ID", "value": "$USER_ID"},
-        {"label": "Bot Token      ", "value": "$BOT_TOKEN"},
-        {"label": "Alert Channel  ", "value": "$ALERT_CHANNEL"}
-    ]
-    
-    options = ["Save and Exit", "Exit Without Saving"]
-    current_row = 0
-    
-    while True:
-        curses.curs_set(0) # Hide cursor during menu navigation
-        stdscr.erase()    # Prevents screen flickering compared to clear()
-        
-        stdscr.addstr(1, 2, "==========================================", curses.A_BOLD)
-        stdscr.addstr(2, 2, " 🤖 PiTweaks Discord Bot Config Menu", curses.A_BOLD)
-        stdscr.addstr(3, 2, "==========================================", curses.A_BOLD)
-        stdscr.addstr(4, 2, "UP/DOWN: Navigate | ENTER: Edit/Select")
-        
-        row_idx = 6
-        for i, f in enumerate(fields):
-            prefix = " > " if i == current_row else "   "
-            attr = curses.A_REVERSE if i == current_row else curses.A_NORMAL
-            val_display = f['value'] if i != 1 else ("*" * len(f['value']) if f['value'] else "")
-            stdscr.addstr(row_idx, 2, f"{prefix}{f['label']}: [{val_display}]", attr)
-            row_idx += 1
-            
-        row_idx += 1
-        for i, opt in enumerate(options):
-            opt_idx = len(fields) + i
-            prefix = " > " if opt_idx == current_row else "   "
-            attr = curses.A_REVERSE if opt_idx == current_row else curses.A_NORMAL
-            stdscr.addstr(row_idx, 2, f"{prefix}[ {opt} ]", attr)
-            row_idx += 1
-            
-        stdscr.refresh()
-        key = stdscr.getch()
-        
-        if key == curses.KEY_UP and current_row > 0:
-            current_row -= 1
-        elif key == curses.KEY_DOWN and current_row < (len(fields) + len(options) - 1):
-            current_row += 1
-        elif key in [10, 13]: # ENTER key
-            if current_row < len(fields):
-                # Temporary cursor show for input typing
-                curses.curs_set(1)
-                stdscr.addstr(14, 2, f"Enter new {fields[current_row]['label'].strip()}: ")
-                stdscr.clrtoeol()
-                curses.echo()
-                new_val = stdscr.getstr(14, 38).decode('utf-8').strip()
-                curses.noecho()
-                if new_val:
-                    fields[current_row]['value'] = new_val
-            elif current_row == len(fields): # Save and Exit
-                with open("/tmp/pitweaks_tui.tmp", "w") as out:
-                    out.write(f"USER_ID={fields[0]['value']}\n")
-                    out.write(f"BOT_TOKEN={fields[1]['value']}\n")
-                    out.write(f"ALERT_CHANNEL={fields[2]['value']}\n")
-                sys.exit(0)
-            elif current_row == len(fields) + 1: # Exit Without Saving
-                sys.exit(1)
-
-try:
-    curses.wrapper(run_menu)
-except KeyboardInterrupt:
-    sys.exit(1)
-EOF
-
-    if [ -f "/tmp/pitweaks_tui.tmp" ]; then
-        source /tmp/pitweaks_tui.tmp
-        rm -f /tmp/pitweaks_tui.tmp
-    else
-        echo "❌ Configuration cancelled."
-        exit 0
+    # Ensure whiptail is installed
+    if ! command -v whiptail &> /dev/null; then
+        sudo apt-get update -qq && sudo apt-get install -y whiptail -qq
     fi
+
+    while true; do
+        TOKEN_DISP="${BOT_TOKEN:0:6}..."
+        if [ -z "$BOT_TOKEN" ]; then TOKEN_DISP="Not Set"; fi
+
+        CHOICE=$(whiptail --title "🤖 PiTweaks Discord Bot Config" \
+            --menu "Use ARROW keys and press ENTER to edit or save:" 16 65 5 \
+            "1" "Discord User ID : [$USER_ID]" \
+            "2" "Bot Token       : [$TOKEN_DISP]" \
+            "3" "Alert Channel   : [$ALERT_CHANNEL]" \
+            "4" "Save and Exit" \
+            "5" "Exit Without Saving" 3>&1 1>&2 2>&3)
+
+        case "$CHOICE" in
+            1)
+                NEW_ID=$(whiptail --inputbox "Enter Discord User ID (numeric):" 10 60 "$USER_ID" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ]; then USER_ID="$NEW_ID"; fi
+                ;;
+            2)
+                NEW_TOK=$(whiptail --passwordbox "Enter Discord Bot Token:" 10 60 "$BOT_TOKEN" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ]; then BOT_TOKEN="$NEW_TOK"; fi
+                ;;
+            3)
+                NEW_CHAN=$(whiptail --inputbox "Enter Alert Channel Name:" 10 60 "$ALERT_CHANNEL" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ]; then ALERT_CHANNEL="$NEW_CHAN"; fi
+                ;;
+            4)
+                break
+                ;;
+            5|"")
+                echo "❌ Configuration cancelled."
+                exit 0
+                ;;
+        esac
+    done
 fi
 
 # Step 4: Persist Settings to config.env
