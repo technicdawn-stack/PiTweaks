@@ -1,13 +1,23 @@
 #!/bin/bash
-clear
+set -eo pipefail
+
 echo "=========================================="
-echo " 🚀 Pi Network Speed Test"
+echo " 🚀 Pi Network Speed Test (Ookla)"
 echo "=========================================="
-if ! command -v speedtest-cli &> /dev/null; then
-    echo "Installing speedtest-cli..."
-    sudo apt-get update -qq && sudo apt-get install -y speedtest-cli -qq
+
+# Check if official Ookla 'speedtest' binary is installed
+if ! command -v speedtest &> /dev/null || speedtest --version 2>&1 | grep -q "Python"; then
+    echo "Installing official Ookla Speedtest CLI..."
+    
+    # Add official Ookla repository script
+    curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | sudo bash
+    
+    # Install official speedtest package
+    sudo apt-get install -y speedtest -qq
 fi
 
 echo "Running speed test..."
 echo ""
-speedtest-cli --simple
+
+# --accept-license and --accept-gdpr prevent interactive prompts on first run
+speedtest --accept-license --accept-gdpr
