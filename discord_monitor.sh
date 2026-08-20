@@ -1,5 +1,5 @@
 #!/bin/bash
-
+#Description: Interactive Whiptail TUI installer featuring channel routing, automated dependency setup, and role-based access security.
 # ==============================================================================
 # 🤖 PiTweaks - Discord Bot Installer (Whiptail TUI & Dual-Channel Routing)
 # ==============================================================================
@@ -25,6 +25,7 @@ CLI_BOT_TOKEN=""
 CLI_USER_ID=""
 CLI_LISTEN_CHANNEL=""
 CLI_ALERT_CHANNEL=""
+CLI_ALLOWED_ROLES=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -32,6 +33,7 @@ while [[ $# -gt 0 ]]; do
         --user-id) CLI_USER_ID="$2"; shift 2 ;;
         --listen-channel) CLI_LISTEN_CHANNEL="$2"; shift 2 ;;
         --alert-channel) CLI_ALERT_CHANNEL="$2"; shift 2 ;;
+        --allowed-roles) CLI_ALLOWED_ROLES="$2"; shift 2 ;;
         --non-interactive) NON_INTERACTIVE=true; shift ;;
         *) shift ;;
     esac
@@ -54,18 +56,21 @@ EXISTING_TOKEN=""
 EXISTING_USER_ID=""
 EXISTING_LISTEN="general"
 EXISTING_ALERT="alert"
+EXISTING_ROLES="Admin"
 
 if [ -f "$CONFIG_FILE" ]; then
     EXISTING_TOKEN=$(grep -E '^BOT_TOKEN=' "$CONFIG_FILE" | cut -d'=' -f2- | tr -d '"' || true)
     EXISTING_USER_ID=$(grep -E '^USER_ID=' "$CONFIG_FILE" | cut -d'=' -f2- | tr -d '"' || true)
     EXISTING_LISTEN=$(grep -E '^LISTEN_CHANNEL=' "$CONFIG_FILE" | cut -d'=' -f2- | tr -d '"' || echo "general")
     EXISTING_ALERT=$(grep -E '^ALERT_CHANNEL=' "$CONFIG_FILE" | cut -d'=' -f2- | tr -d '"' || echo "alert")
+    EXISTING_ROLES=$(grep -E '^ALLOWED_ROLES=' "$CONFIG_FILE" | cut -d'=' -f2- | tr -d '"' || echo "Admin")
 fi
 
 BOT_TOKEN="${CLI_BOT_TOKEN:-$EXISTING_TOKEN}"
 USER_ID="${CLI_USER_ID:-$EXISTING_USER_ID}"
 LISTEN_CHANNEL="${CLI_LISTEN_CHANNEL:-$EXISTING_LISTEN}"
 ALERT_CHANNEL="${CLI_ALERT_CHANNEL:-$EXISTING_ALERT}"
+ALLOWED_ROLES="${CLI_ALLOWED_ROLES:-$EXISTING_ROLES}"
 
 # Step 3: Whiptail Menu Interface
 if [ "$NON_INTERACTIVE" = false ]; then
@@ -80,13 +85,14 @@ if [ "$NON_INTERACTIVE" = false ]; then
 
         CHOICE=$(whiptail --clear --backtitle "PiTweaks System Configuration" \
             --title "Discord Bot Settings" \
-            --menu "Use ARROW keys to highlight an option and press ENTER:" 19 72 6 \
-            "1" "Discord User ID   : [$USER_ID]" \
+            --menu "Use ARROW keys to highlight an option and press ENTER:" 20 75 7 \
+            "1" "Discord User ID    : [$USER_ID]" \
             "2" "Bot Token        : [$TOKEN_DISP]" \
             "3" "Listen Channel   : [$LISTEN_CHANNEL]" \
             "4" "Alert Channel    : [$ALERT_CHANNEL]" \
-            "5" "Save and Apply Configuration" \
-            "6" "Exit Without Saving" 3>&1 1>&2 2>&3)
+            "5" "Allowed Roles    : [$ALLOWED_ROLES]" \
+            "6" "Save and Apply Configuration" \
+            "7" "Exit Without Saving" 3>&1 1>&2 2>&3)
 
         exit_status=$?
         if [ $exit_status -ne 0 ]; then
@@ -112,9 +118,13 @@ if [ "$NON_INTERACTIVE" = false ]; then
                 [ $? -eq 0 ] && ALERT_CHANNEL="$NEW_ALERT"
                 ;;
             5)
-                MENU_ACTIVE=false
+                NEW_ROLES=$(whiptail --inputbox "Enter Allowed Roles (separated by ;):" 10 60 "$ALLOWED_ROLES" 3>&1 1>&2 2>&3)
+                [ $? -eq 0 ] && ALLOWED_ROLES="$NEW_ROLES"
                 ;;
             6)
+                MENU_ACTIVE=false
+                ;;
+            7)
                 echo "❌ Configuration cancelled."
                 exit 0
                 ;;
@@ -132,6 +142,7 @@ BOT_TOKEN="$BOT_TOKEN"
 USER_ID="$USER_ID"
 LISTEN_CHANNEL="$LISTEN_CHANNEL"
 ALERT_CHANNEL="$ALERT_CHANNEL"
+ALLOWED_ROLES="$ALLOWED_ROLES"
 MONITOR_SCRIPT="$MONITOR_SCRIPT_PATH"
 EOL
 
@@ -166,26 +177,31 @@ USER_ID = int(USER_ID_STR) if USER_ID_STR.isdigit() else 0
 
 LISTEN_CHANNEL = config.get("LISTEN_CHANNEL", "general").strip().lstrip('#').lower()
 ALERT_CHANNEL = config.get("ALERT_CHANNEL", "alert").strip().lstrip('#').lower()
+ALLOWED_ROLES_RAW = config.get("ALLOWED_ROLES", "Admin").strip()
+ALLOWED_ROLES = [r.strip().lower() for r in ALLOWED_ROLES_RAW.split(";") if r.strip()]
 MONITOR_SCRIPT = os.path.expanduser(config.get("MONITOR_SCRIPT", "~/temp_monitor.sh"))
 
-if not BOT_TOKEN or USER_ID == 0:
-    print("❌ Invalid or missing BOT_TOKEN or USER_ID in config.env")
+if not BOT_TOKEN or (USER_ID == 0 and not ALLOWED_ROLES):
+    print("❌ Invalid or missing BOT_TOKEN, USER_ID, or ALLOWED_ROLES in config.env")
     sys.exit(1)
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True # Required to inspect server member roles
 client = discord.Client(intents=intents)
 
 @client.event
 async def on_ready():
     print(f'Logged in as {client.user.name}')
     try:
-        user = await client.fetch_user(USER_ID)
-        await user.send(
-            f"🚀 **Raspberry Pi Online!**\n"
-            f"• **Listen Channel:** `{LISTEN_CHANNEL}`\n"
-            f"• **Alert Channel:** `{ALERT_CHANNEL}`"
-        )
+        if USER_ID != 0:
+            user = await client.fetch_user(USER_ID)
+            await user.send(
+                f"🚀 **Raspberry Pi Online!**\n"
+                f"• **Listen Channel:** `{LISTEN_CHANNEL}`\n"
+                f"• **Alert Channel:** `{ALERT_CHANNEL}`\n"
+                f"• **Allowed Roles:** `{ALLOWED_ROLES_RAW}`"
+            )
     except Exception as e:
         print(f"Could not send boot DM: {e}")
 
@@ -387,7 +403,16 @@ async def on_message(message):
     if message.author == client.user:
         return
 
-    if message.author.id != USER_ID:
+    # Check permission: User ID OR matching any of the Allowed Roles
+    is_authorized = False
+    if USER_ID != 0 and message.author.id == USER_ID:
+        is_authorized = True
+    elif message.guild and hasattr(message.author, "roles"):
+        user_role_names = [r.name.lower() for r in message.author.roles]
+        if any(role in user_role_names for role in ALLOWED_ROLES):
+            is_authorized = True
+
+    if not is_authorized:
         return
 
     # Restrict channel listening (allow Direct Messages)
