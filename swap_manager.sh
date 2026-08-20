@@ -20,10 +20,12 @@ if ! command -v dphys-swapfile &>/dev/null; then
 fi
 
 # ------------------------------------------------------------------------------
-# 1. Hardware & Disk Analysis
+# 1. Hardware & Disk Analysis (Robust parsing)
 # ------------------------------------------------------------------------------
-# Fixed flag: -BM instead of -B-M
-FREE_DISK_MB=$(df -BM / | awk 'NR==2 {print $4}' | tr -d 'M')
+# Fetch free space in KB and calculate MB directly to avoid df flag inconsistencies
+FREE_DISK_KB=$(df / --output=avail | tail -n1 | tr -d ' ')
+FREE_DISK_MB=$(( FREE_DISK_KB / 1024 ))
+
 RAM_TOTAL_MB=$(free -m | awk '/Mem:/ {print $2}')
 RAM_TOTAL_GB=$(awk -v ram="$RAM_TOTAL_MB" 'BEGIN {printf "%.1f", ram/1024}')
 
