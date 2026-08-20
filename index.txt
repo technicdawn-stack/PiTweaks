@@ -3,7 +3,7 @@ discord_monitor.sh|No description provided
 disk_check.sh|No description provided
 overclock.sh|No description provided
 security_module_upgrade.sh|No description provided
-swap_manager.sh|No description provided
+swap_manager.sh|Safe memory and swap file manager with built-in safeguards
 sys_info.sh|Measures network speed using official native Ookla Speedtest
 throttlecheck.sh|No description provided
 wifispeedtest.sh|Measures network speed using official native Ookla Speedtest
