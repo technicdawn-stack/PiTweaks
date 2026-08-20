@@ -13,7 +13,12 @@ if ! command -v speedtest &> /dev/null || speedtest --version 2>&1 | grep -q "Py
     # Add official Ookla repository
     curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | sudo bash
     
-    # Install official speedtest package
+    # Fix for Debian/Raspbian Trixie: substitute codename with 'bookworm'
+    if [ -f /etc/apt/sources.list.d/ookla_speedtest-cli.list ]; then
+        sudo sed -i 's/trixie/bookworm/g' /etc/apt/sources.list.d/ookla_speedtest-cli.list
+    fi
+    
+    sudo apt-get update -qq
     sudo apt-get install -y speedtest -qq
 fi
 
