@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# 🍓 DYNAMIC RASPBERRY PI SCRIPT INSTALLER (WHIPTAIL TUI)
+# 🍓 DYNAMIC RASPBERRY PI SCRIPT INSTALLER (WHIPTAIL + DESCRIPTIONS)
 # ==============================================================================
 set -eo pipefail
 
@@ -15,7 +15,6 @@ if ! command -v curl &>/dev/null; then
     exit 1
 fi
 
-# Auto-install whiptail if missing
 if ! command -v whiptail &>/dev/null; then
     echo "🔍 Installing whiptail dependency..."
     sudo apt-get update -qq && sudo apt-get install -y whiptail -qq
@@ -28,7 +27,7 @@ HTTP_BODY=$(echo "$HTTP_RESPONSE" | sed '$d')
 HTTP_STATUS=$(echo "$HTTP_RESPONSE" | tail -n1)
 
 if [ "$HTTP_STATUS" -ne 200 ]; then
-    whiptail --title "Error" --msgbox "Failed to fetch repository contents (HTTP status: $HTTP_STATUS).\n\nGitHub API rate limit may have been exceeded." 10 60
+    whiptail --title "Error" --msgbox "Failed to fetch repository contents (HTTP status: $HTTP_STATUS)." 10 60
     exit 1
 fi
 
@@ -44,28 +43,41 @@ if [ "${#SCRIPTS[@]}" -eq 0 ]; then
     exit 1
 fi
 
-# Build Whiptail menu arguments
+# Build Whiptail Menu Options with Dynamic Descriptions & Fallbacks
 MENU_OPTIONS=()
-for i in "${!SCRIPTS[@]}"; do
-    MENU_OPTIONS+=("$((i+1))" "${SCRIPTS[$i]}")
+
+for script in "${SCRIPTS[@]}"; do
+    SCRIPT_RAW_URL="https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/${script}"
+    
+    # Read the first 10 lines of the script with a 2-second timeout
+    HEADER=$(curl -sSL --max-time 2 "$SCRIPT_RAW_URL" | head -n 10 || true)
+    
+    # Extract description comment
+    DESC=$(echo "$HEADER" | grep -m1 -i '^# Description:' | cut -d':' -f2- | xargs || true)
+    
+    # Fallback if no description line exists
+    if [ -z "$DESC" ]; then
+        DESC="No description provided"
+    fi
+    
+    MENU_OPTIONS+=("$script" "$DESC")
 done
 
 # Launch Whiptail TUI Menu
-CHOICE=$(whiptail --clear \
+SELECTED_SCRIPT=$(whiptail --clear \
     --backtitle "PiTweaks Script Manager" \
     --title "Script Selection Menu" \
-    --menu "Use ARROW keys to select a script and press ENTER:" 18 65 8 \
+    --menu "Select a script to execute:" 20 78 10 \
     "${MENU_OPTIONS[@]}" 3>&1 1>&2 2>&3) || {
         clear
         echo "Cancelled."
         exit 0
     }
 
-SELECTED_SCRIPT="${SCRIPTS[$((CHOICE-1))]}"
 SCRIPT_URL="https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/${SELECTED_SCRIPT}"
 TEMP_EXEC="/tmp/runner_${SELECTED_SCRIPT}"
 
-# Download and execute
+# Download and execute selected script
 if curl -fsSL "$SCRIPT_URL" -o "$TEMP_EXEC"; then
     chmod +x "$TEMP_EXEC"
     
