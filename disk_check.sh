@@ -25,8 +25,8 @@ USE_PERCENT=$(echo "$DISK_LINE" | awk '{print $5}' | tr -d '%')
 
 echo "📁 Partition: / (Root)"
 echo "• Total Storage : $TOTAL_SIZE"
-echo "• Used Space    : $USED_SPACE"
-echo "• Free Space    : $FREE_SPACE"
+echo "• Used Space   : $USED_SPACE"
+echo "• Free Space   : $FREE_SPACE"
 
 if [ "$USE_PERCENT" -ge 85 ]; then
     echo -e "• Usage Level   : ${RED}${USE_PERCENT}% (Critical)${NC}"
@@ -55,8 +55,8 @@ else
     echo -e "• Filesystem Status : ${GREEN}Healthy (Read/Write mode normal)${NC}"
 fi
 
-# Scan kernel ring buffer (dmesg) for actual hardware or I/O errors
-SD_ERRORS=$(dmesg | grep -iE 'I/O error|EXT4-fs error|mmc0.*error|sdhci.*error|timed out|crc error' | tail -n 3)
+# Scan kernel ring buffer (sudo dmesg required on Debian 10+)
+SD_ERRORS=$(sudo dmesg 2>/dev/null | grep -iE 'I/O error|EXT4-fs error|mmc0.*error|sdhci.*error|timed out|crc error' | tail -n 3)
 
 if [ -n "$SD_ERRORS" ]; then
     echo -e "• Hardware Errors   : ${RED}Found potential SD card I/O issues!${NC}"
@@ -77,11 +77,26 @@ read -p "Do you want to clean the APT package cache? [y/N]: " APT_CHOICE </dev/t
 case "$APT_CHOICE" in
     [yY]|[yY][eE][sS])
         echo "🧹 Cleaning package cache..."
-        sudo apt clean
+        sudo apt-get clean
         echo "✅ APT cache cleaned successfully!"
         ;;
     *)
         echo "ℹ️  APT cache cleanup skipped."
+        ;;
+esac
+
+echo ""
+
+# Unused Orphaned Packages Cleanup Prompt
+read -p "Do you want to remove unused/orphaned packages? [y/N]: " AUTO_CHOICE </dev/tty
+case "$AUTO_CHOICE" in
+    [yY]|[yY][eE][sS])
+        echo "🧹 Removing orphaned packages..."
+        sudo apt-get autoremove -y
+        echo "✅ Orphaned packages removed successfully!"
+        ;;
+    *)
+        echo "ℹ️  Orphaned package cleanup skipped."
         ;;
 esac
 
@@ -99,6 +114,23 @@ case "$LOG_CHOICE" in
         echo "ℹ️  Journal logs cleanup skipped."
         ;;
 esac
+
+echo ""
+
+# User Thumbnail Cache Cleanup Prompt
+if [ -d "$HOME/.cache/thumbnails" ]; then
+    read -p "Do you want to clear user thumbnail cache? [y/N]: " THUMB_CHOICE </dev/tty
+    case "$THUMB_CHOICE" in
+        [yY]|[yY][eE][sS])
+            echo "🧹 Clearing thumbnail cache..."
+            rm -rf "$HOME/.cache/thumbnails/"*
+            echo "✅ Thumbnail cache cleared successfully!"
+            ;;
+        *)
+            echo "ℹ️  Thumbnail cache cleanup skipped."
+            ;;
+    esac
+fi
 
 echo ""
 echo "=========================================="
