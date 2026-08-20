@@ -1,7 +1,7 @@
 discord_controller.sh|No description provided
 discord_monitor.sh|No description provided
 disk_check.sh|No description provided
-net_auditor.sh|Comprehensive local network device, open port, and connection auditor using standard system tools
+net_auditor.sh|Combined utility for running official Ookla speed tests and local network/port audits with interactive prompts.
 overclock.sh|Smart Raspberry Pi overclocking manager with live thermal monitoring and safe backups.
 security_module_upgrade.sh|No description provided
 swap_manager.sh|Smart memory and swap manager with auto-detection and recommendations
