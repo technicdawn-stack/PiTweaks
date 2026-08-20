@@ -1,11 +1,12 @@
 #!/bin/bash
 
-clear
+# ==============================================================================
+# 🤖 PiTweaks - Discord Bot Setup & Service Manager (v2 Hardened)
+# ==============================================================================
 
-# ==============================================================================
-# 🤖 Discord Bot Interactive Installer & Setup
-# ==============================================================================
-# Automatically resolve the correct user home directory (even if run with sudo)
+set -e
+
+# Resolve execution user and paths
 if [ -n "$SUDO_USER" ]; then
     REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
     CURRENT_USER="$SUDO_USER"
@@ -17,131 +18,130 @@ fi
 INSTALL_DIR="$REAL_HOME/PiTweaks/discord_bot"
 CONFIG_FILE="$INSTALL_DIR/config.env"
 SERVICE_NAME="pitweaks-discord-bot"
+MONITOR_SCRIPT_PATH="$REAL_HOME/temp_monitor.sh"
+
+# Default flag options
+NON_INTERACTIVE=false
+CLI_BOT_TOKEN=""
+CLI_USER_ID=""
+
+# Parse command line flags
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --token) CLI_BOT_TOKEN="$2"; shift 2 ;;
+        --user-id) CLI_USER_ID="$2"; shift 2 ;;
+        --non-interactive) NON_INTERACTIVE=true; shift ;;
+        *) shift ;;
+    esac
+done
 
 echo "=========================================="
-echo " 🤖 Discord Bot Setup & Installer"
+echo " 🤖 Discord Bot Setup & Installer (v2)"
 echo "=========================================="
 echo ""
 
-# Check if already installed (Repair/Upgrade mode)
-if [ -f "$INSTALL_DIR/bot.py" ]; then
-    echo "⚠️  An existing Discord bot installation was found at:"
-    echo "    $INSTALL_DIR"
-    echo ""
-    read -p "Do you want to upgrade or reconfigure it? [y/N]: " REINSTALL_CHOICE </dev/tty
-    echo ""
-    
-    case "$REINSTALL_CHOICE" in
-        [yY]|[yY][eE][sS])
-            echo "🔄 Proceeding with upgrade/reconfiguration..."
-            echo ""
-            ;;
-        *)
-            echo "❌ Installation cancelled by user."
-            exit 0
-            ;;
-    esac
-fi
-
-# ==============================================================================
-# 📦 Dependency Checks & Auto-Install / Upgrade
-# ==============================================================================
-echo "🔍 Checking dependencies..."
-
-if ! command -v python3 &> /dev/null; then
-    echo "📦 Python3 not found. Installing..."
-    sudo apt update && sudo apt install -y python3
-else
-    echo "✅ Python3 is installed."
-fi
-
-if ! command -v pip3 &> /dev/null; then
-    echo "📦 Python3-pip not found. Installing..."
-    sudo apt update && sudo apt install -y python3-pip
-else
-    echo "✅ Pip3 is installed."
-fi
-
-echo "📦 Verifying python library (discord.py)..."
-python3 -c "import discord" &> /dev/null
-if [ $? -ne 0 ]; then
-    echo "📦 Installing discord.py..."
-    pip3 install discord.py --break-system-packages &> /dev/null || pip3 install discord.py
-else
-    echo "🔄 Checking for discord.py updates..."
-    pip3 install --upgrade discord.py --break-system-packages &> /dev/null || pip3 install --upgrade discord.py
-fi
-
-echo ""
-
-# ==============================================================================
-# ⚙️ Configuration Setup (With Option to Reuse Old Values)
-# ==============================================================================
-USE_OLD_CONFIG=false
-
-if [ -f "$CONFIG_FILE" ]; then
-    echo "📄 Existing configuration found at: $CONFIG_FILE"
-    read -p "Do you want to reuse your saved Bot Token and User ID? [Y/n]: " REUSE_CHOICE </dev/tty
-    REUSE_CHOICE=${REUSE_CHOICE:-Y}
-    echo ""
-    
-    case "$REUSE_CHOICE" in
-        [yY]|[yY][eE][sS])
-            source "$CONFIG_FILE"
-            USE_OLD_CONFIG=true
-            echo "✅ Loaded saved configuration credentials."
-            ;;
-    esac
-fi
-
-if [ "$USE_OLD_CONFIG" = false ]; then
-    echo "⚙️  New Configuration Setup"
-    echo "------------------------------------------"
-    
-    read -p "Enter your Discord Bot Token: " -s BOT_TOKEN
-    echo ""
-
-    read -p "Enter your Discord User ID (numeric): " USER_ID
-    echo ""
-
-    if ! [[ "$USER_ID" =~ ^[0-9]+$ ]]; then
-        echo "❌ Error: Discord User ID must be numbers only."
-        exit 1
-    fi
-
-    mkdir -p "$INSTALL_DIR"
-    cat << EOL > "$CONFIG_FILE"
-BOT_TOKEN="$BOT_TOKEN"
-USER_ID="$USER_ID"
-EOL
-    chown "$CURRENT_USER:$CURRENT_USER" "$CONFIG_FILE"
-    chmod 600 "$CONFIG_FILE"
-fi
-
+# Ensure Target Directory Exists
 mkdir -p "$INSTALL_DIR"
 
-echo "📝 Generating bot script..."
+# Step 1: Install System Dependencies
+echo "🔍 Checking dependencies..."
+if ! command -v python3 &> /dev/null; then
+    sudo apt update -qq && sudo apt install -y python3 python3-pip python3-discord -qq
+fi
 
-cat << EOF > "$INSTALL_DIR/bot.py"
+# Fallback install for discord.py if APT package isn't present
+python3 -c "import discord" &> /dev/null || {
+    pip3 install discord.py --break-system-packages &> /dev/null || pip3 install discord.py
+}
+
+# Step 2: Load / Merge Configuration (Preserving Existing Credentials)
+EXISTING_TOKEN=""
+EXISTING_USER_ID=""
+
+if [ -f "$CONFIG_FILE" ]; then
+    echo "📄 Existing configuration detected."
+    # Preserve legacy variables
+    EXISTING_TOKEN=$(grep -E '^BOT_TOKEN=' "$CONFIG_FILE" | cut -d'=' -f2- | tr -d '"' || true)
+    EXISTING_USER_ID=$(grep -E '^USER_ID=' "$CONFIG_FILE" | cut -d'=' -f2- | tr -d '"' || true)
+fi
+
+# Resolve final settings using precedence: CLI Flags > Config File > Interactive Prompt
+BOT_TOKEN="${CLI_BOT_TOKEN:-$EXISTING_TOKEN}"
+USER_ID="${CLI_USER_ID:-$EXISTING_USER_ID}"
+
+if [ "$NON_INTERACTIVE" = false ]; then
+    if [ -n "$BOT_TOKEN" ]; then
+        read -p "Reuse existing Bot Token? [Y/n]: " REUSE_TOK </dev/tty
+        if [[ "$REUSE_TOK" =~ ^[nN] ]]; then BOT_TOKEN=""; fi
+    fi
+    
+    if [ -z "$BOT_TOKEN" ]; then
+        read -sp "Enter your Discord Bot Token: " BOT_TOKEN </dev/tty
+        echo ""
+    fi
+
+    if [ -z "$USER_ID" ]; then
+        read -p "Enter your Discord User ID (numeric): " USER_ID </dev/tty
+    fi
+fi
+
+# Validate User ID
+if ! [[ "$USER_ID" =~ ^[0-9]+$ ]]; then
+    echo "❌ Error: Discord User ID must be numeric."
+    exit 1
+fi
+
+# Persist Secure Credentials
+cat << EOL > "$CONFIG_FILE"
+BOT_TOKEN="$BOT_TOKEN"
+USER_ID="$USER_ID"
+MONITOR_SCRIPT="$MONITOR_SCRIPT_PATH"
+EOL
+
+chown "$CURRENT_USER:$CURRENT_USER" "$CONFIG_FILE"
+chmod 600 "$CONFIG_FILE"
+echo "✅ Credentials securely saved to $CONFIG_FILE"
+
+# Step 3: Write Hardened bot.py
+cat << 'EOF' > "$INSTALL_DIR/bot.py"
+import os
+import sys
+import shlex
 import discord
 import subprocess
 import datetime
-import shlex
+
+# Load Config File
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.env")
+config = {}
+
+if os.path.exists(CONFIG_PATH):
+    with open(CONFIG_PATH, "r") as f:
+        for line in f:
+            if "=" in line and not line.startswith("#"):
+                k, v = line.strip().split("=", 1)
+                config[k] = v.strip('"\'')
+
+BOT_TOKEN = config.get("BOT_TOKEN")
+USER_ID = int(config.get("USER_ID", 0))
+MONITOR_SCRIPT = config.get("MONITOR_SCRIPT", os.path.expanduser("~/temp_monitor.sh"))
+
+if not BOT_TOKEN or not USER_ID:
+    print("❌ Critical Failure: Missing credentials in config.env")
+    sys.exit(1)
 
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
 
-YOUR_DISCORD_USER_ID = $USER_ID
-
 @client.event
 async def on_ready():
     print(f'Logged in as {client.user.name}')
     try:
-        user = await client.fetch_user(YOUR_DISCORD_USER_ID)
-        await user.send("🚀 **Raspberry Pi Booted Successfully!**\nSystem control bot is online and ready.")
+        user = await client.fetch_user(USER_ID)
+        await user.send("🚀 **Raspberry Pi Online!**\nSystem control daemon active.")
     except Exception as e:
-        print(f"Could not send boot DM: {e}")
+        print(f"DM Notification Failed: {e}")
 
 async def cmd_reboot(message, args):
     await message.channel.send("🔄 Rebooting Raspberry Pi...")
@@ -154,135 +154,52 @@ async def cmd_shutdown(message, args):
 async def cmd_temp_report(message, args):
     await message.channel.send("📊 Generating system report...")
     try:
-        result = subprocess.run("stdbuf -oL bash ~/temp_monitor.sh temp_report", shell=True, capture_output=True, text=True, timeout=30)
-        output = result.stdout.strip() or result.stderr.strip() or "Report generated with no output."
+        result = subprocess.run(
+            ['bash', MONITOR_SCRIPT, 'temp_report'],
+            capture_output=True, text=True, timeout=30
+        )
+        output = result.stdout.strip() or result.stderr.strip() or "No output returned."
         if len(output) > 1900:
             output = output[:1900] + "\n[Output truncated...]"
-        await message.channel.send(f"\`\`\`text\n{output}\n\`\`\`")
+        await message.channel.send(f"```text\n{output}\n```")
     except Exception as e:
-        await message.channel.send(f"❌ Error running command: \`{e}\`")
+        await message.channel.send(f"❌ Error executing report: `{e}`")
 
 async def cmd_test(message, args):
     parts = args.split(" ", 1)
     if len(parts) < 2 or parts[0].lower() not in ["cpu", "ram", "temp"]:
-        await message.channel.send("❌ Usage: \`!test <cpu|ram|temp> <num>\` (e.g., \`!test cpu 99\`).")
+        await message.channel.send("❌ Usage: `!test <cpu|ram|temp> <num>`")
         return
     
     test_type = parts[0].lower()
     val_str = parts[1].strip()
     if not val_str.isdigit():
-        await message.channel.send("❌ Please provide a valid numeric value.")
+        await message.channel.send("❌ Value must be numeric.")
         return
         
-    value = int(val_str)
-    action_labels = {"cpu": "CPU test", "ram": "RAM test", "temp": "temp test"}
-    await message.channel.send(f"⚡ Executing {action_labels[test_type]} with value {value}...")
-    
+    await message.channel.send(f"⚡ Executing {test_type} test with value {val_str}...")
     try:
-        result = subprocess.run(f"stdbuf -oL bash ~/temp_monitor.sh test_{test_type} {value}", shell=True, capture_output=True, text=True, timeout=60)
-        output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
+        result = subprocess.run(
+            ['bash', MONITOR_SCRIPT, f'test_{test_type}', val_str],
+            capture_output=True, text=True, timeout=60
+        )
+        output = result.stdout.strip() or result.stderr.strip() or "Execution finished."
         if len(output) > 1500:
             output = output[:1500] + "\n[Output truncated...]"
-        await message.channel.send(f"✅ \`test_{test_type} {value}\` finished.\n\`\`\`text\n{output}\n\`\`\`")
+        await message.channel.send(f"✅ Executed `test_{test_type}`:\n```text\n{output}\n```")
     except Exception as e:
-        await message.channel.send(f"❌ Error executing terminal command: \`{e}\`")
-
-async def cmd_alert(message, args):
-    try:
-        parts = shlex.split(args)
-    except Exception:
-        parts = args.split()
-        
-    if not parts:
-        await message.channel.send("❌ Usage examples:\n\`!alert reboot 5\`\n\`!alert 5 15 \"Custom maintenance notice\"\`")
-        return
-
-    now = datetime.datetime.now()
-    
-    # Preset Action Logic
-    if parts[0].lower() in ["reboot", "shutdown", "update", "interrupt"]:
-        action = parts[0].lower()
-        delay_mins = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 5
-        start_time = now + datetime.timedelta(minutes=delay_mins)
-        
-        if action in ["reboot", "shutdown"]:
-            title = f"PLANNED NETWORK DOWNTIME: {action.upper()}"
-            classification = "Necessary Downtime (Guaranteed Event)"
-            emoji = "🚨"
-            advice = "Please save your work accordingly!"
-        else:
-            title = f"POTENTIAL SERVICE INTERRUPTION: {action.upper()}"
-            classification = "Soft Event (Downtime Not Guaranteed)"
-            emoji = "⚠️"
-            advice = "Services may experience a brief blip."
-        
-        output_msg = (
-            f"{emoji} **{title}** {emoji}\n"
-            f"• **Action Type:** {action.capitalize()}\n"
-            f"• **Notice Given At:** {now.strftime('%H:%M')}\n"
-            f"• **Execution Time:** ~{start_time.strftime('%H:%M')} (In {delay_mins} mins)\n"
-            f"• **Event Classification:** {classification}\n\n"
-            f"*{advice}*"
-        )
-        await message.channel.send(output_msg)
-        
-    # Custom Timed Window Logic
-    elif parts[0].isdigit():
-        delay_mins = int(parts[0])
-        duration_mins = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 5
-        
-        custom_text_parts = parts[2:] if len(parts) > 2 and parts[1].isdigit() else parts[1:]
-        custom_text = " ".join(custom_text_parts).strip("\"'")
-        if not custom_text:
-            custom_text = "Scheduled maintenance notification."
-            
-        start_time = now + datetime.timedelta(minutes=delay_mins)
-        end_time = start_time + datetime.timedelta(minutes=duration_mins)
-        
-        output_msg = (
-            f"🚨 **PLANNED NETWORK NOTICE: CUSTOM EVENT** 🚨\n"
-            f"• **Custom Message:** {custom_text}\n"
-            f"• **Notice Given At:** {now.strftime('%H:%M')}\n"
-            f"• **Execution Time:** ~{start_time.strftime('%H:%M')} (In {delay_mins} mins)\n"
-            f"• **Expected Length:** {duration_mins} minute(s) (Expected back ~{end_time.strftime('%H:%M')})\n\n"
-            f"*Please save your work and log off if necessary.*"
-        )
-        await message.channel.send(output_msg)
-    else:
-        await message.channel.send("❌ Unknown alert command format. Use presets (\`reboot\`, \`shutdown\`, \`update\`, \`interrupt\`) or timed windows (\`!alert 5 15 \"text\"\`).")
-
-async def cmd_help(message, args):
-    help_text = (
-        "🤖 **Raspberry Pi Bot Commands:**\n"
-        "• \`!temp_report\` - Run system temperature report.\n"
-        "• \`!test <cpu|ram|temp> <num>\` - Run hardware diagnostic tests.\n"
-        "• \`!alert <reboot|shutdown|update|interrupt> <mins>\` - Broadcast a preset alert.\n"
-        "• \`!alert <delay> <dur> \"text\"\` - Broadcast a custom timed alert.\n"
-        "• \`!reboot\` - Safely restart the Raspberry Pi.\n"
-        "• \`!shutdown\` - Safely shut down the Raspberry Pi.\n"
-        "• \`!help\` - Display this command menu."
-    )
-    await message.channel.send(help_text)
+        await message.channel.send(f"❌ Command Error: `{e}`")
 
 COMMANDS = {
     "reboot": cmd_reboot,
     "shutdown": cmd_shutdown,
     "temp_report": cmd_temp_report,
-    "test": cmd_test,
-    "alert": cmd_alert,
-    "help": cmd_help
+    "test": cmd_test
 }
 
 @client.event
 async def on_message(message):
-    if message.author == client.user:
-        return
-
-    # Restrict bot functionality exclusively to the 'alert' channel
-    if message.channel.name != "alert":
-        return
-
-    if message.author.id != YOUR_DISCORD_USER_ID:
+    if message.author == client.user or message.author.id != USER_ID:
         return
 
     if message.content.startswith("!"):
@@ -294,34 +211,25 @@ async def on_message(message):
             try:
                 await COMMANDS[cmd_name](message, args)
             except Exception as e:
-                await message.channel.send(f"❌ Error executing command: \`{e}\`")
-        else:
-            await message.channel.send(f"❌ Unknown command \`!{cmd_name}\`. Type \`!help\` for options.")
+                await message.channel.send(f"❌ Execution Error: `{e}`")
 
-client.run('$BOT_TOKEN')
+client.run(BOT_TOKEN)
 EOF
 
 chown "$CURRENT_USER:$CURRENT_USER" "$INSTALL_DIR/bot.py"
 
-# ==============================================================================
-# 🔄 Auto-Start on Reboot Configuration (Systemd Service)
-# ==============================================================================
-echo ""
-read -p "Do you want the bot to automatically start on system reboot? [y/N]: " AUTOSTART_CHOICE </dev/tty
-echo ""
-
-case "$AUTOSTART_CHOICE" in
-    [yY]|[yY][eE][sS])
-        echo "⚙️  Setting up background systemd service..."
-        
-        sudo bash -c "cat > /etc/systemd/system/$SERVICE_NAME.service" << EOL
+# Step 4: Systemd Service Registration
+echo "⚙️ Configuring systemd daemon..."
+sudo bash -c "cat > /etc/systemd/system/$SERVICE_NAME.service" << EOL
 [Unit]
-Description=PiTweaks Discord Bot
-After=network.target
+Description=PiTweaks Discord Bot Daemon
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=$CURRENT_USER
+WorkingDirectory=$INSTALL_DIR
 ExecStart=/usr/bin/python3 $INSTALL_DIR/bot.py
 Restart=always
 RestartSec=10
@@ -330,38 +238,8 @@ RestartSec=10
 WantedBy=multi-user.target
 EOL
 
-        sudo systemctl daemon-reload
-        sudo systemctl enable $SERVICE_NAME.service
-        echo "✅ Auto-start enabled successfully!"
-        ;;
-    *)
-        echo "ℹ️  Skipped auto-start configuration."
-        ;;
-esac
+sudo systemctl daemon-reload
+sudo systemctl enable "$SERVICE_NAME.service"
+sudo systemctl restart "$SERVICE_NAME.service"
 
-# ==============================================================================
-# 🚀 Service Restart / Launch Prompt
-# ==============================================================================
-echo ""
-read -p "Do you want to restart/start the Discord bot service now? [Y/n]: " RESTART_SERVICE_CHOICE </dev/tty
-RESTART_SERVICE_CHOICE=${RESTART_SERVICE_CHOICE:-Y}
-echo ""
-
-case "$RESTART_SERVICE_CHOICE" in
-    [yY]|[yY][eE][sS])
-        if systemctl list-unit-files | grep -q "$SERVICE_NAME.service"; then
-            sudo systemctl restart "$SERVICE_NAME.service"
-            echo "🚀 Discord bot service restarted successfully!"
-        else
-            echo "🚀 Starting bot manually..."
-            python3 "$INSTALL_DIR/bot.py" &
-        fi
-        ;;
-    *)
-        echo "ℹ️  Service restart skipped."
-        ;;
-esac
-
-echo ""
-echo "✅ Installation & update complete!"
-echo "📂 Bot installed to: $INSTALL_DIR/bot.py"
+echo "✅ Discord Bot Controller updated and running!"
