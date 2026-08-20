@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # ==============================================================================
-# 🤖 PiTweaks - Discord Bot Setup with Whiptail TUI & Dual-Channel Routing
+# 🤖 PiTweaks - Discord Bot Installer (Whiptail TUI & Dual-Channel Routing)
 # ==============================================================================
 
 set -e
 
-# Resolve execution user and paths
+# Resolve execution user and home directory
 if [ -n "$SUDO_USER" ]; then
     REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
     CURRENT_USER="$SUDO_USER"
@@ -39,17 +39,17 @@ done
 
 mkdir -p "$INSTALL_DIR"
 
-# Step 1: Install System Dependencies
-echo "🔍 Verifying dependencies..."
+# Step 1: Install Dependencies
+echo "🔍 Checking dependencies..."
 if ! command -v python3 &> /dev/null; then
-    sudo apt-get update -qq && sudo apt-get install -y python3 python3-pip python3-discord -qq
+    sudo apt-get update -qq && sudo apt-get install -y python3 python3-pip -qq
 fi
 
 python3 -c "import discord" &> /dev/null || {
     pip3 install discord.py --break-system-packages &> /dev/null || pip3 install discord.py
 }
 
-# Step 2: Read Existing Config Values
+# Step 2: Load Existing Settings
 EXISTING_TOKEN=""
 EXISTING_USER_ID=""
 EXISTING_LISTEN="general"
@@ -67,7 +67,7 @@ USER_ID="${CLI_USER_ID:-$EXISTING_USER_ID}"
 LISTEN_CHANNEL="${CLI_LISTEN_CHANNEL:-$EXISTING_LISTEN}"
 ALERT_CHANNEL="${CLI_ALERT_CHANNEL:-$EXISTING_ALERT}"
 
-# Step 3: Native raspi-config Style Whiptail TUI Menu
+# Step 3: Whiptail Menu Interface
 if [ "$NON_INTERACTIVE" = false ]; then
     if ! command -v whiptail &> /dev/null; then
         sudo apt-get update -qq && sudo apt-get install -y whiptail -qq
@@ -80,13 +80,13 @@ if [ "$NON_INTERACTIVE" = false ]; then
 
         CHOICE=$(whiptail --clear --backtitle "PiTweaks System Configuration" \
             --title "Discord Bot Settings" \
-            --menu "Use ARROW keys to select an option and press ENTER:" 19 72 6 \
-            "1 User ID" "Current: $USER_ID" \
-            "2 Bot Token" "Current: $TOKEN_DISP" \
-            "3 Listen Channel" "Channel for bot commands: $LISTEN_CHANNEL" \
-            "4 Alert Channel" "Channel for broadcast alerts: $ALERT_CHANNEL" \
-            "5 Save" "Save settings and apply configuration" \
-            "6 Cancel" "Exit setup without saving" 3>&1 1>&2 2>&3)
+            --menu "Use ARROW keys to highlight an option and press ENTER:" 19 72 6 \
+            "1" "Discord User ID  : [$USER_ID]" \
+            "2" "Bot Token        : [$TOKEN_DISP]" \
+            "3" "Listen Channel   : [$LISTEN_CHANNEL]" \
+            "4" "Alert Channel    : [$ALERT_CHANNEL]" \
+            "5" "Save and Apply Configuration" \
+            "6" "Exit Without Saving" 3>&1 1>&2 2>&3)
 
         exit_status=$?
         if [ $exit_status -ne 0 ]; then
@@ -95,26 +95,26 @@ if [ "$NON_INTERACTIVE" = false ]; then
         fi
 
         case "$CHOICE" in
-            "1 User ID")
+            1)
                 NEW_ID=$(whiptail --inputbox "Enter Discord User ID (numeric):" 10 60 "$USER_ID" 3>&1 1>&2 2>&3)
                 [ $? -eq 0 ] && USER_ID="$NEW_ID"
                 ;;
-            "2 Bot Token")
+            2)
                 NEW_TOK=$(whiptail --passwordbox "Enter Discord Bot Token:" 10 60 "$BOT_TOKEN" 3>&1 1>&2 2>&3)
                 [ $? -eq 0 ] && BOT_TOKEN="$NEW_TOK"
                 ;;
-            "3 Listen Channel")
-                NEW_LISTEN=$(whiptail --inputbox "Enter Command Listen Channel Name:" 10 60 "$LISTEN_CHANNEL" 3>&1 1>&2 2>&3)
+            3)
+                NEW_LISTEN=$(whiptail --inputbox "Enter Listen Channel Name (e.g. general):" 10 60 "$LISTEN_CHANNEL" 3>&1 1>&2 2>&3)
                 [ $? -eq 0 ] && LISTEN_CHANNEL="$NEW_LISTEN"
                 ;;
-            "4 Alert Channel")
-                NEW_ALERT=$(whiptail --inputbox "Enter Broadcast Alert Channel Name:" 10 60 "$ALERT_CHANNEL" 3>&1 1>&2 2>&3)
+            4)
+                NEW_ALERT=$(whiptail --inputbox "Enter Alert Channel Name (e.g. alert):" 10 60 "$ALERT_CHANNEL" 3>&1 1>&2 2>&3)
                 [ $? -eq 0 ] && ALERT_CHANNEL="$NEW_ALERT"
                 ;;
-            "5 Save")
+            5)
                 MENU_ACTIVE=false
                 ;;
-            "6 Cancel")
+            6)
                 echo "❌ Configuration cancelled."
                 exit 0
                 ;;
@@ -122,7 +122,11 @@ if [ "$NON_INTERACTIVE" = false ]; then
     done
 fi
 
-# Step 4: Persist Settings to config.env
+# Clean up channel string names (strip leading # or whitespace)
+LISTEN_CHANNEL=$(echo "$LISTEN_CHANNEL" | sed 's/^#//' | xargs)
+ALERT_CHANNEL=$(echo "$ALERT_CHANNEL" | sed 's/^#//' | xargs)
+
+# Step 4: Write Config File
 cat << EOL > "$CONFIG_FILE"
 BOT_TOKEN="$BOT_TOKEN"
 USER_ID="$USER_ID"
@@ -134,7 +138,7 @@ EOL
 chown "$CURRENT_USER:$CURRENT_USER" "$CONFIG_FILE"
 chmod 600 "$CONFIG_FILE"
 
-# Step 5: Write Hardened bot.py with Original Command Set & Channel Routing
+# Step 5: Write Bot Logic Script
 cat << 'EOF' > "$INSTALL_DIR/bot.py"
 import os
 import sys
@@ -153,14 +157,16 @@ if os.path.exists(CONFIG_PATH):
                 k, v = line.strip().split("=", 1)
                 config[k] = v.strip('"\'')
 
-BOT_TOKEN = config.get("BOT_TOKEN")
-USER_ID = int(config.get("USER_ID", 0))
-LISTEN_CHANNEL = config.get("LISTEN_CHANNEL", "general")
-ALERT_CHANNEL = config.get("ALERT_CHANNEL", "alert")
-MONITOR_SCRIPT = config.get("MONITOR_SCRIPT", os.path.expanduser("~/temp_monitor.sh"))
+BOT_TOKEN = config.get("BOT_TOKEN", "").strip()
+USER_ID_STR = config.get("USER_ID", "0").strip()
+USER_ID = int(USER_ID_STR) if USER_ID_STR.isdigit() else 0
 
-if not BOT_TOKEN or not USER_ID:
-    print("❌ Missing credentials in config.env")
+LISTEN_CHANNEL = config.get("LISTEN_CHANNEL", "general").strip().lstrip('#').lower()
+ALERT_CHANNEL = config.get("ALERT_CHANNEL", "alert").strip().lstrip('#').lower()
+MONITOR_SCRIPT = os.path.expanduser(config.get("MONITOR_SCRIPT", "~/temp_monitor.sh"))
+
+if not BOT_TOKEN or USER_ID == 0:
+    print("❌ Invalid or missing BOT_TOKEN or USER_ID in config.env")
     sys.exit(1)
 
 intents = discord.Intents.default()
@@ -172,7 +178,11 @@ async def on_ready():
     print(f'Logged in as {client.user.name}')
     try:
         user = await client.fetch_user(USER_ID)
-        await user.send(f"🚀 **Raspberry Pi Online!**\nListening for commands in: `{LISTEN_CHANNEL}`\nAlerts channel: `{ALERT_CHANNEL}`")
+        await user.send(
+            f"🚀 **Raspberry Pi Online!**\n"
+            f"• **Listen Channel:** `{LISTEN_CHANNEL}`\n"
+            f"• **Alert Channel:** `{ALERT_CHANNEL}`"
+        )
     except Exception as e:
         print(f"Could not send boot DM: {e}")
 
@@ -222,6 +232,16 @@ async def cmd_test(message, args):
     except Exception as e:
         await message.channel.send(f"❌ Error executing terminal command: `{e}`")
 
+# Explicit aliases for !test_cpu, !test_ram, !test_temp
+async def cmd_test_cpu(message, args):
+    await cmd_test(message, f"cpu {args}")
+
+async def cmd_test_ram(message, args):
+    await cmd_test(message, f"ram {args}")
+
+async def cmd_test_temp(message, args):
+    await cmd_test(message, f"temp {args}")
+
 async def cmd_alert(message, args):
     try:
         parts = shlex.split(args)
@@ -232,10 +252,15 @@ async def cmd_alert(message, args):
         await message.channel.send("❌ Usage examples:\n`!alert reboot 5`\n`!alert 5 15 \"Custom maintenance notice\"`")
         return
 
-    # Find target channel for alert broadcast
-    target_channel = discord.utils.get(message.guild.text_channels, name=ALERT_CHANNEL) if message.guild else None
+    target_channel = None
+    if message.guild:
+        for ch in message.guild.text_channels:
+            if ch.name.lower() == ALERT_CHANNEL:
+                target_channel = ch
+                break
+
     if not target_channel:
-        target_channel = message.channel # Fallback to current channel if target alert channel is missing
+        target_channel = message.channel
 
     now = datetime.datetime.now()
 
@@ -287,18 +312,18 @@ async def cmd_alert(message, args):
         )
         await target_channel.send(output_msg)
     else:
-        await message.channel.send("❌ Unknown alert command format. Use presets (`reboot`, `shutdown`, `update`, `interrupt`) or timed windows (`!alert 5 15 \"text\"`).")
+        await message.channel.send("❌ Unknown alert format. Use presets (`reboot`, `shutdown`) or timed windows (`!alert 5 15 \"text\"`).")
 
 async def cmd_help(message, args):
     help_text = (
         "🤖 **Raspberry Pi Bot Commands:**\n"
         "• `!temp_report` - Run system temperature report.\n"
-        "• `!test <cpu|ram|temp> <num>` - Run hardware diagnostic tests.\n"
-        "• `!alert <reboot|shutdown|update|interrupt> <mins>` - Broadcast a preset alert to the alert channel.\n"
-        "• `!alert <delay> <dur> \"text\"` - Broadcast a custom timed alert to the alert channel.\n"
-        "• `!reboot` - Safely restart the Raspberry Pi.\n"
-        "• `!shutdown` - Safely shut down the Raspberry Pi.\n"
-        "• `!help` - Display this command menu."
+        "• `!test <cpu|ram|temp> <num>` or `!test_cpu <num>` - Run diagnostic tests.\n"
+        "• `!alert <reboot|shutdown|update|interrupt> <mins>` - Broadcast preset alert to alert channel.\n"
+        "• `!alert <delay> <dur> \"text\"` - Broadcast custom alert to alert channel.\n"
+        "• `!reboot` - Restart the Raspberry Pi.\n"
+        "• `!shutdown` - Shut down the Raspberry Pi.\n"
+        "• `!help` - Display this menu."
     )
     await message.channel.send(help_text)
 
@@ -307,6 +332,9 @@ COMMANDS = {
     "shutdown": cmd_shutdown,
     "temp_report": cmd_temp_report,
     "test": cmd_test,
+    "test_cpu": cmd_test_cpu,
+    "test_ram": cmd_test_ram,
+    "test_temp": cmd_test_temp,
     "alert": cmd_alert,
     "help": cmd_help
 }
@@ -316,12 +344,14 @@ async def on_message(message):
     if message.author == client.user:
         return
 
-    # Restrict incoming commands to the specified Listen Channel or Direct Messages
-    if isinstance(message.channel, discord.TextChannel) and message.channel.name != LISTEN_CHANNEL:
-        return
-
+    # User validation
     if message.author.id != USER_ID:
         return
+
+    # Channel check (case-insensitive, ignore DMs)
+    if isinstance(message.channel, discord.TextChannel):
+        if message.channel.name.lower() != LISTEN_CHANNEL:
+            return
 
     if message.content.startswith("!"):
         parts = message.content[1:].split(" ", 1)
@@ -341,7 +371,7 @@ EOF
 
 chown "$CURRENT_USER:$CURRENT_USER" "$INSTALL_DIR/bot.py"
 
-# Step 6: Systemd Unit Creation
+# Step 6: Reload Systemd Service
 sudo bash -c "cat > /etc/systemd/system/$SERVICE_NAME.service" << EOL
 [Unit]
 Description=PiTweaks Discord Bot Daemon
@@ -364,4 +394,4 @@ sudo systemctl daemon-reload
 sudo systemctl enable "$SERVICE_NAME.service"
 sudo systemctl restart "$SERVICE_NAME.service"
 
-echo "✅ Discord Bot configured and started successfully!"
+echo "✅ Discord Bot updated and service restarted!"
