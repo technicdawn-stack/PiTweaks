@@ -61,14 +61,15 @@ BOT_TOKEN="${CLI_BOT_TOKEN:-$EXISTING_TOKEN}"
 USER_ID="${CLI_USER_ID:-$EXISTING_USER_ID}"
 ALERT_CHANNEL="${CLI_ALERT_CHANNEL:-$EXISTING_CHANNEL}"
 
-# Step 3: Interactive TUI Menu (Arrow Keys & Space/Enter Selection)
+# Step 3: Interactive TUI Menu (Flicker-Free Curses Navigation)
 if [ "$NON_INTERACTIVE" = false ]; then
     python3 - << EOF
 import curses
 import sys
 
 def run_menu(stdscr):
-    curses.curs_set(1)
+    curses.use_default_colors()
+    curses.cbreak()
     stdscr.keypad(True)
     
     fields = [
@@ -81,11 +82,13 @@ def run_menu(stdscr):
     current_row = 0
     
     while True:
-        stdscr.clear()
+        curses.curs_set(0) # Hide cursor during menu navigation
+        stdscr.erase()    # Prevents screen flickering compared to clear()
+        
         stdscr.addstr(1, 2, "==========================================", curses.A_BOLD)
         stdscr.addstr(2, 2, " 🤖 PiTweaks Discord Bot Config Menu", curses.A_BOLD)
         stdscr.addstr(3, 2, "==========================================", curses.A_BOLD)
-        stdscr.addstr(4, 2, "Use UP/DOWN arrows to navigate. Press ENTER to edit/select.")
+        stdscr.addstr(4, 2, "UP/DOWN: Navigate | ENTER: Edit/Select")
         
         row_idx = 6
         for i, f in enumerate(fields):
@@ -110,12 +113,14 @@ def run_menu(stdscr):
             current_row -= 1
         elif key == curses.KEY_DOWN and current_row < (len(fields) + len(options) - 1):
             current_row += 1
-        elif key in [10, 13]: # Enter key
+        elif key in [10, 13]: # ENTER key
             if current_row < len(fields):
-                # Edit field value
-                stdscr.addstr(15, 2, f"Enter new value for {fields[current_row]['label'].strip()}: ")
+                # Temporary cursor show for input typing
+                curses.curs_set(1)
+                stdscr.addstr(14, 2, f"Enter new {fields[current_row]['label'].strip()}: ")
+                stdscr.clrtoeol()
                 curses.echo()
-                new_val = stdscr.getstr(15, 45).decode('utf-8').strip()
+                new_val = stdscr.getstr(14, 38).decode('utf-8').strip()
                 curses.noecho()
                 if new_val:
                     fields[current_row]['value'] = new_val
