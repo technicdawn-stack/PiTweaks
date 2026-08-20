@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Combined network utility featuring an interactive menu to choose between the official Ookla Speed Test and the local network/port auditor.
+# Description: Enhanced network utility featuring an interactive menu for Ookla Speed Tests, open port auditing, ping checks, DNS tests, and Wi-Fi diagnostics.
 set -eo pipefail
 
 clear
@@ -84,19 +84,35 @@ case "$CHOICE" in
         echo ""
 
         echo "--------------------------------------------------"
-        echo " 🛡️ 2. Raspberry Pi Open Listening Ports"
+        echo " 📶 2. Connectivity, Ping, & Wi-Fi Check"
+        echo "--------------------------------------------------"
+        echo "• Testing packet loss to gateway and internet (8.8.8.8)..."
+        ping -c 3 -W 2 "$DEFAULT_GATEWAY" >/dev/null 2>&1 && echo "  - Gateway Ping: OK ✅" || echo "  - Gateway Ping: Failed ❌"
+        ping -c 3 -W 2 8.8.8.8 >/dev/null 2>&1 && echo "  - Internet Ping (8.8.8.8): OK ✅" || echo "  - Internet Ping: Failed ❌"
+        
+        echo ""
+        echo "• Wireless Interface Status:"
+        if command -v iwconfig &> /dev/null; then
+            iwconfig 2>/dev/null | grep -E "Link Quality|Signal level" || echo "  - Ethernet connected or no active wireless interface."
+        else
+            echo "  - iwconfig not installed."
+        fi
+        echo ""
+
+        echo "--------------------------------------------------"
+        echo " 🛡️ 3. Raspberry Pi Open Listening Ports"
         echo "--------------------------------------------------"
         ss -tuln | awk 'NR==1 || /LISTEN/'
         echo ""
 
         echo "--------------------------------------------------"
-        echo " 🌐 3. Active Established Connections"
+        echo " 🌐 4. Active Established Connections"
         echo "--------------------------------------------------"
         ss -tunap state established 2>/dev/null | head -n 10 || echo "No active established connections."
         echo ""
 
         echo "--------------------------------------------------"
-        echo " 🏠 4. Active Local Subnet Devices"
+        echo " 🏠 5. Active Local Subnet Devices"
         echo "--------------------------------------------------"
         DEFAULT_SUBNET=$(echo "$DEFAULT_GATEWAY" | sed 's/\.[0-9]*$/.0\/24/')
 
