@@ -1,0 +1,9 @@
+discord_controller.sh|No description provided
+discord_monitor.sh|No description provided
+disk_check.sh|No description provided
+overclock.sh|No description provided
+security_module_upgrade.sh|No description provided
+swap_manager.sh|No description provided
+sys_info.sh|No description provided
+throttlecheck.sh|No description provided
+wifispeedtest.sh|No description provided
