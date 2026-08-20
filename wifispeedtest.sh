@@ -6,20 +6,33 @@ echo "=========================================="
 echo " 🚀 Pi Network Speed Test (Ookla)"
 echo "=========================================="
 
-# Check if official Ookla 'speedtest' binary is installed
 if ! command -v speedtest &> /dev/null || speedtest --version 2>&1 | grep -q "Python"; then
-    echo "Installing official Ookla Speedtest CLI..."
+    echo "Installing official Ookla Speedtest binary..."
     
-    # Add official Ookla repository
-    curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | sudo bash
+    # Detect CPU architecture
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        aarch64|arm64) OOKLA_ARCH="aarch64" ;;
+        armv7l|armhf)   OOKLA_ARCH="armhf" ;;
+        x86_64)        OOKLA_ARCH="x86_64" ;;
+        *)             OOKLA_ARCH="armhf" ;;
+    esac
+
+    # Download binary directly from Ookla CDN
+    TEMP_DIR=$(mktemp -d)
+    TAR_URL="https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-${OOKLA_ARCH}.tgz"
     
-    # Fix for Debian/Raspbian Trixie: substitute codename with 'bookworm'
-    if [ -f /etc/apt/sources.list.d/ookla_speedtest-cli.list ]; then
-        sudo sed -i 's/trixie/bookworm/g' /etc/apt/sources.list.d/ookla_speedtest-cli.list
+    if curl -fsSL "$TAR_URL" -o "$TEMP_DIR/speedtest.tgz"; then
+        tar -xzf "$TEMP_DIR/speedtest.tgz" -C "$TEMP_DIR"
+        sudo mv "$TEMP_DIR/speedtest" /usr/local/bin/
+        sudo chmod +x /usr/local/bin/speedtest
+        rm -rf "$TEMP_DIR"
+        echo "✅ Installed /usr/local/bin/speedtest"
+    else
+        echo "❌ Download failed."
+        rm -rf "$TEMP_DIR"
+        exit 1
     fi
-    
-    sudo apt-get update -qq
-    sudo apt-get install -y speedtest -qq
 fi
 
 echo "Running speed test..."
