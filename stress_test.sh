@@ -320,7 +320,7 @@ fi
 echo "=================================================="
 
 read -p "Do you want to launch the stability tester now? (y/n): " RUN_CHOICE
-if [[ "$RUN_CHOICE" =~ ^[Yy]$ ]]; then
+if [ "$RUN_CHOICE" = "y" ] || [ "$RUN_CHOICE" = "Y" ]; then
     echo "Launching pitweaks-tui..."
     exec pitweaks-tui
 else
