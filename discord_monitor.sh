@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Raspberry Pi system resource monitor installer with auto-config preservation, automated Discord alerts, priority temperature tracking, and testing utilities.
+# Description: Raspberry Pi system resource monitor installer with safe manual/auto fallback, automated Discord alerts, priority temperature tracking, and testing utilities.
 
 # Clear screen
 clear
@@ -13,7 +13,7 @@ if [ -f "$HOME/temp_monitor.sh" ]; then
     echo "================================================="
     echo ""
     
-    # Automatically extract the existing Discord Webhook URL from the old script
+    # Try to auto-extract the existing Discord Webhook URL
     EXISTING_URL=$(grep 'DISCORD_URL=' "$HOME/temp_monitor.sh" | head -n 1 | sed 's/.*DISCORD_URL=["\x27]\?//;s/["\x27]\?$//')
     
     if [ -n "$EXISTING_URL" ]; then
@@ -31,7 +31,9 @@ if [ -f "$HOME/temp_monitor.sh" ]; then
                 ;;
         esac
     else
-        echo "⚠️ Existing installation found, but could not auto-extract old URL."
+        echo "⚠️ Existing installation found, but could not auto-extract old URL automatically."
+        echo "Please provide your Discord Webhook URL below to update the script safely:"
+        echo ""
         read -p "Enter your Discord Webhook URL: " DISCORD_URL < /dev/tty
     fi
 else
@@ -47,14 +49,21 @@ else
             echo "Installation cancelled."
             exit 0
             ;;
-    esac
+    es
 
     echo ""
     read -p "Enter your Discord Webhook URL: " DISCORD_URL < /dev/tty
 fi
 
+# Final safety net if it's still somehow empty
 if [ -z "$DISCORD_URL" ]; then
-    echo "❌ Error: Webhook URL cannot be empty."
+    echo ""
+    echo "⚠️ Warning: Webhook URL was left blank."
+    read -p "Please enter your Discord Webhook URL now to continue: " DISCORD_URL < /dev/tty
+fi
+
+if [ -z "$DISCORD_URL" ]; then
+    echo "❌ Error: Webhook URL cannot be empty. Installation aborted."
     exit 1
 fi
 
