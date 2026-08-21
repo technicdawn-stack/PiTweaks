@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Raspberry Pi system resource monitor with automated Discord alerts, priority temperature tracking, and testing utilities.
+# Description: Raspberry Pi system resource monitor installer with auto-config preservation, automated Discord alerts, priority temperature tracking, and testing utilities.
 
 # Clear screen
 clear
@@ -13,16 +13,17 @@ if [ -f "$HOME/temp_monitor.sh" ]; then
     echo "================================================="
     echo ""
     
-    # Try to auto-extract first so we don't necessarily even need to prompt if it's already there
+    # Automatically extract the existing Discord Webhook URL from the old script
     EXISTING_URL=$(grep 'DISCORD_URL=' "$HOME/temp_monitor.sh" | head -n 1 | sed 's/.*DISCORD_URL=["\x27]\?//;s/["\x27]\?$//')
     
     if [ -n "$EXISTING_URL" ]; then
-        echo "✔ Found existing Discord Webhook configuration."
-        read -p "Would you like to keep this existing webhook? (y/n): " KEEP_CONFIG
+        echo "✔ Successfully found your existing Discord Webhook configuration!"
+        echo ""
+        read -p "Would you like to keep and reuse your existing configuration values? (y/n): " KEEP_CONFIG
         case "$KEEP_CONFIG" in 
             [Yy]* ) 
                 DISCORD_URL="$EXISTING_URL"
-                echo "⚙️ Retained existing webhook URL."
+                echo "⚙️ Preserved existing webhook URL. Updating script, shortcuts, and cron..."
                 ;;
             * ) 
                 echo ""
@@ -30,7 +31,7 @@ if [ -f "$HOME/temp_monitor.sh" ]; then
                 ;;
         esac
     else
-        echo "⚠️ Could not auto-extract old URL."
+        echo "⚠️ Existing installation found, but could not auto-extract old URL."
         read -p "Enter your Discord Webhook URL: " DISCORD_URL
     fi
 else
@@ -39,38 +40,31 @@ else
     echo " 🍓 Raspberry Pi Discord Monitor Setup"
     echo "=========================================="
     echo ""
-    read -p "Do you want to proceed with installation? (y/n): " PROCEED
+    read -p "Do you want to proceed with a fresh installation? (y/n): " PROCEED
     case "$PROCEED" in 
         [Yy]* ) ;;
         * ) 
             echo "Installation cancelled."
             exit 0
             ;;
-    es
+    esac
 
     echo ""
     read -p "Enter your Discord Webhook URL: " DISCORD_URL
 fi
 
-# Fallback check if it's still somehow empty
 if [ -z "$DISCORD_URL" ]; then
-    echo ""
-    echo "⚠️ Warning: No webhook URL detected or provided."
-    read -p "Please enter your Discord Webhook URL manually to proceed: " DISCORD_URL
-fi
-
-if [ -z "$DISCORD_URL" ]; then
-    echo "❌ Error: Webhook URL cannot be empty. Installation aborted."
+    echo "❌ Error: Webhook URL cannot be empty."
     exit 1
 fi
 
 # 3. DEPENDENCY INSTALLATION
 echo ""
-echo "📦 Installing required dependencies (jq)..."
+echo "📦 Checking and installing dependencies (jq)..."
 sudo apt-get update -qq && sudo apt-get install -y jq -qq
 
 # 4. WRITE THE MONITORING SCRIPT
-echo "📝 Writing ~/temp_monitor.sh..."
+echo "📝 Writing updated ~/temp_monitor.sh..."
 cat << SCRIPT > ~/temp_monitor.sh
 #!/bin/bash
 
