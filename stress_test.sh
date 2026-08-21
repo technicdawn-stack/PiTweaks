@@ -167,7 +167,6 @@ def show_diagnostic_page(test_type, elapsed_time, peak_temp, final_hex):
         for issue in issues:
             report += f" • {issue}\n"
 
-    # Use whiptail to show a clean graphical message box at the end
     subprocess.run(["whiptail", "--title", "PiTweaks Diagnostic Report", "--msgbox", report, "18", "65"])
 
 def main_dashboard(test_type):
@@ -197,7 +196,6 @@ def main_dashboard(test_type):
             if raw_hex:
                 final_hex = raw_hex
 
-            # Live text dashboard update during test
             os.system('clear')
             print(f"==================================================")
             print(f" PiTweaks STABILITY TESTER [{test_type.upper()}]")
@@ -226,30 +224,30 @@ EOF
 chown "$CURRENT_USER:$CURRENT_USER" "$TARGET_SCRIPT"
 chmod +x "$TARGET_SCRIPT"
 
-# Wrapper executable that brings up the Whiptail Menu
-cat << 'EOF' > /usr/local/bin/pitweaks-tui
+# Wrapper executable that brings up the Whiptail Menu cleanly
+cat << EOF > /usr/local/bin/pitweaks-tui
 #!/bin/bash
 while true; do
-    CHOICE=$(whiptail --title "PiTweaks - Stability & Stress Test Suite" \
-        --menu "Please select a benchmark test mode:" 15 60 5 \
-        "1" "CPU Stress Test" \
-        "2" "RAM Memory Test" \
-        "3" "GPU Render Test" \
-        "4" "All-At-Once Comprehensive Test" \
+    CHOICE=\$(whiptail --title "PiTweaks - Stability & Stress Test Suite" \\
+        --menu "Please select a benchmark test mode:" 15 60 5 \\
+        "1" "CPU Stress Test" \\
+        "2" "RAM Memory Test" \\
+        "3" "GPU Render Test" \\
+        "4" "All-At-Once Comprehensive Test" \\
         "5" "Exit" 3>&1 1>&2 2>&3)
     
-    EXIT_STATUS=$?
-    if [ $EXIT_STATUS != 0 ] || [ "$CHOICE" = "5" ]; then
+    EXIT_STATUS=\$?
+    if [ \$EXIT_STATUS != 0 ] || [ "\$CHOICE" = "5" ]; then
         clear
         echo "Exiting PiTweaks. Goodbye!"
         exit 0
     fi
 
-    case $CHOICE in
-        1) python3 "$HOME/PiTweaks/pi_tui.py" cpu ;;
-        2) python3 "$HOME/PiTweaks/pi_tui.py" ram ;;
-        3) python3 "$HOME/PiTweaks/pi_tui.py" gpu ;;
-        4) python3 "$HOME/PiTweaks/pi_tui.py" all ;;
+    case \$CHOICE in
+        1) python3 "$INSTALL_DIR/pi_tui.py" cpu ;;
+        2) python3 "$INSTALL_DIR/pi_tui.py" ram ;;
+        3) python3 "$INSTALL_DIR/pi_tui.py" gpu ;;
+        4) python3 "$INSTALL_DIR/pi_tui.py" all ;;
     esac
 done
 EOF
