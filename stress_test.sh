@@ -1,8 +1,8 @@
 #!/bin/bash
-# Description: PiTweaks Advanced Telemetry & Stability Suite Installer
+# Description: PiTweaks Advanced Telemetry & Continuous Stress Suite Installer
 
 # ==============================================================================
-# 🍓 PiTweaks TUI Installer - Advanced Telemetry & Stability Suite
+# 🍓 PiTweaks TUI Installer - Continuous Telemetry & Stability Suite
 # ==============================================================================
 
 set -e
@@ -27,17 +27,17 @@ if ! dpkg -s python3 stress-ng whiptail &> /dev/null; then
     sudo apt-get update -qq && sudo apt-get install -y stress-ng whiptail -qq
 fi
 
-# Force-remove old script to prevent any caching or stale updates
+# Force-remove old script to prevent caching or stale code
 if [ -f "$TARGET_SCRIPT" ]; then
-    echo "🧹 Removing old telemetry script for a fresh replacement..."
+    echo "🧹 Removing old script for a clean replacement..."
     rm -f "$TARGET_SCRIPT"
 fi
 
-echo "📝 Writing Advanced PiTweaks core telemetry script..."
+echo "📝 Writing Continuous Telemetry core script..."
 
 cat << 'EOF' > "$TARGET_SCRIPT"
 #!/usr/bin/env python3
-# Description: PiTweaks Advanced Hardware Telemetry and Stability Core Engine
+# Description: PiTweaks Continuous Hardware Telemetry and Stop-Watch Core Engine
 
 import os
 import sys
@@ -60,9 +60,11 @@ def run_cmd(command):
         return "N/A"
 
 def get_hardware_stats():
+    # Temperature
     temp_raw = run_cmd("vcgencmd measure_temp")
     temp = temp_raw.replace("temp=", "").replace("'C", "°C") if "temp=" in temp_raw else "N/A"
 
+    # CPU Clock Frequency
     freq_raw = run_cmd("vcgencmd measure_clock arm")
     if "=" in freq_raw:
         try:
@@ -73,12 +75,31 @@ def get_hardware_stats():
     else:
         freq = "N/A"
 
+    # GPU / Core Clock Frequency
+    gpu_freq_raw = run_cmd("vcgencmd measure_clock core")
+    if "=" in gpu_freq_raw:
+        try:
+            gpu_hz = int(gpu_freq_raw.split("=")[1])
+            gpu_freq = f"{gpu_hz / 1000000:.0f} MHz"
+        except Exception:
+            gpu_freq = "N/A"
+    else:
+        gpu_freq = "N/A"
+
+    # Voltages (Core, SDRAM Core, SDRAM I/O, SDRAM Phy)
     volts_raw = run_cmd("vcgencmd measure_volts core")
     volts = volts_raw.replace("volt=", "") if "volt=" in volts_raw else "N/A"
 
-    sdram_raw = run_cmd("vcgencmd measure_volts sdram_c")
-    sdram = sdram_raw.replace("volt=", "") if "volt=" in sdram_raw else "N/A"
+    sdram_c_raw = run_cmd("vcgencmd measure_volts sdram_c")
+    sdram_c = sdram_c_raw.replace("volt=", "") if "volt=" in sdram_c_raw else "N/A"
 
+    sdram_io_raw = run_cmd("vcgencmd measure_volts sdram_i")
+    sdram_io = sdram_io_raw.replace("volt=", "") if "volt=" in sdram_io_raw else "N/A"
+
+    sdram_p_raw = run_cmd("vcgencmd measure_volts sdram_p")
+    sdram_p = sdram_p_raw.replace("volt=", "") if "volt=" in sdram_p_raw else "N/A"
+
+    # RAM Usage Breakdown
     ram_raw = run_cmd("free -m | awk '/Mem:/ {print $3, $2}'")
     if ram_raw and "N/A" not in ram_raw:
         parts = ram_raw.split()
@@ -91,11 +112,12 @@ def get_hardware_stats():
     else:
         ram = "N/A"
 
+    # Load Averages
     load_raw = run_cmd("cat /proc/loadavg")
     loads = load_raw.split()[:3] if load_raw else ["N/A", "N/A", "N/A"]
     load_avg = f"{loads[0]} / {loads[1]} / {loads[2]}"
 
-    return temp, freq, volts, sdram, ram, load_avg
+    return temp, freq, gpu_freq, volts, sdram_c, sdram_io, sdram_p, ram, load_avg
 
 def parse_throttle_status(raw_hex):
     if "throttled=" not in raw_hex:
@@ -151,22 +173,20 @@ def format_throttle_display(raw_hex):
             formatted.append(f"{YELLOW}  ⚠ {issue}{RESET}")
     return "\n".join(formatted)
 
-def start_stress_workload(test_type, duration):
+def start_stress_workload(test_type):
     if test_type == "cpu":
-        cmd = f"stress-ng --cpu 0 --timeout {duration}s"
+        cmd = "stress-ng --cpu 0"
     elif test_type == "ram":
-        cmd = f"stress-ng --vm 4 --vm-bytes 85% --vm-method all --timeout {duration}s"
+        cmd = "stress-ng --vm 4 --vm-bytes 85% --vm-method all"
     elif test_type == "gpu":
         subprocess.run("vcgencmd render_bar 1", shell=True, capture_output=True)
-        time.sleep(duration)
-        subprocess.run("vcgencmd render_bar 0", shell=True, capture_output=True)
         return
     elif test_type == "all":
-        cmd = f"stress-ng --cpu 0 --vm 2 --vm-bytes 75% --timeout {duration}s"
+        cmd = "stress-ng --cpu 0 --vm 2 --vm-bytes 75%"
     else:
         return
     
-    subprocess.run(cmd, shell=True, capture_output=True)
+    subprocess.run(cmd, shell=True)
 
 def show_diagnostic_page(test_type, elapsed_time, peak_temp, final_hex):
     level, issues = parse_throttle_status(final_hex)
@@ -178,8 +198,11 @@ def show_diagnostic_page(test_type, elapsed_time, peak_temp, final_hex):
     else:
         rating = "POOR / UNSTABLE (Active thermal/power limits hit)"
 
+    mins, secs = divmod(elapsed_time, 60)
+    time_str = f"{mins:02d}m {secs:02d}s"
+
     report = f"Test Performed   : {test_type.upper()}\n"
-    report += f"Duration Run     : {elapsed_time} seconds\n"
+    report += f"Total Time Ran   : {time_str}\n"
     report += f"Peak Temperature : {peak_temp}\n"
     report += f"System Rating    : {rating}\n"
     report += "--------------------------------------------------\n"
@@ -194,8 +217,7 @@ def show_diagnostic_page(test_type, elapsed_time, peak_temp, final_hex):
     subprocess.run(["whiptail", "--title", "PiTweaks Diagnostic Report", "--msgbox", report, "18", "65"])
 
 def main_dashboard(test_type):
-    duration = 45 
-    stress_thread = threading.Thread(target=start_stress_workload, args=(test_type, duration))
+    stress_thread = threading.Thread(target=start_stress_workload, args=(test_type,))
     stress_thread.daemon = True
     stress_thread.start()
 
@@ -210,12 +232,10 @@ def main_dashboard(test_type):
     try:
         while True:
             elapsed = int(time.time() - start_time)
-            remaining = max(0, duration - elapsed)
-            
-            if not stress_thread.is_alive() or remaining == 0:
-                break
+            mins, secs = divmod(elapsed, 60)
+            time_formatted = f"{mins:02d}:{secs:02d}"
 
-            temp, freq, volts, sdram, ram, load_avg = get_hardware_stats()
+            temp, freq, gpu_freq, volts, sdram_c, sdram_io, sdram_p, ram, load_avg = get_hardware_stats()
             if temp != "N/A":
                 peak_temp = temp
 
@@ -228,21 +248,23 @@ def main_dashboard(test_type):
             os.system('clear')
             dashboard = f"""
 {CYAN}╔══════════════════════════════════════════════════════════════╗
-║             PiTweaks ADVANCED TELEMETRY TESTER               ║
+║        PiTweaks CONTINUOUS TELEMETRY & STRESS SUITE          ║
 ╚══════════════════════════════════════════════════════════════╝{RESET}
- {BOLD}Active Test:{RESET} {test_type.upper()}  |  {BOLD}Time Remaining:{RESET} {remaining}s
+ {BOLD}Active Test:{RESET} {test_type.upper()}  |  {BOLD}Elapsed Time (Stop-Watch):{RESET} {YELLOW}{time_formatted}{RESET}
 
- {CYAN}┌─ HARDWARE METRICS ──────────────────────────────────────────┐{RESET}
-   CPU Temperature : {YELLOW}{temp}{RESET}
-   CPU Frequency   : {freq}
-   Core Voltage    : {volts}  |  SDRAM: {sdram}
+ {CYAN}┌─ ADVANCED HARDWARE TELEMETRY ───────────────────────────────┐{RESET}
+   CPU Temperature : {YELLOW}{temp}{RESET}  (Peak: {peak_temp})
+   CPU Clock Speed : {freq}
+   GPU / Core Clock: {gpu_freq}
+   Core Voltage    : {volts}
+   SDRAM Volts     : Core: {sdram_c} | I/O: {sdram_io} | Phy: {sdram_p}
    RAM Usage       : {ram}
    Load Average    : {load_avg}
 
  {CYAN}┌─ LIVE THROTTLING & HEALTH WATCHER ──────────────────────────┐{RESET}
 {throttle_info}
 {CYAN}└─────────────────────────────────────────────────────────────┘{RESET}
- {BOLD}[Ctrl+C] Abort Test & View Report{RESET}
+ {BOLD}[Ctrl+C] Stop Test, Clean Up & View Report{RESET}
 """
             sys.stdout.write(dashboard)
             sys.stdout.flush()
@@ -271,11 +293,11 @@ cat << EOF > "$WRAPPER_SCRIPT"
 TARGET_PY="$TARGET_SCRIPT"
 
 while true; do
-    CHOICE=\$(whiptail --title "PiTweaks - Stability & Stress Test Suite" \\
-        --menu "Please select a benchmark test mode:" 15 60 5 \\
-        "1" "CPU Stress Test (All Cores)" \\
-        "2" "RAM Memory Stress Test" \\
-        "3" "GPU Render Stress Test" \\
+    CHOICE=\$(whiptail --title "PiTweaks - Continuous Stress & Diagnostic Suite" \\
+        --menu "Select a test mode (Press Ctrl+C anytime to finish):" 15 65 5 \\
+        "1" "CPU Stress Test (Continuous / All Cores)" \\
+        "2" "RAM Memory Stress Test (Continuous)" \\
+        "3" "GPU Render Stress Test (Continuous)" \\
         "4" "All-At-Once Comprehensive Test" \\
         "5" "Exit" 3>&1 1>&2 2>&3)
     
@@ -298,9 +320,9 @@ EOF
 chmod +x "$WRAPPER_SCRIPT"
 
 echo "=================================================="
-echo " ✅ PiTweaks Advanced Suite installed & updated cleanly!"
+echo " ✅ PiTweaks Continuous Suite installed cleanly!"
 echo "=================================================="
-echo "ℹ️ Launch anytime by running: pitweaks-tui"
+echo "ℹ️ Launch anytime by typing: pitweaks-tui"
 echo "=================================================="
 
 read -p "Do you want to launch the stability tester now? (y/n): " RUN_CHOICE
