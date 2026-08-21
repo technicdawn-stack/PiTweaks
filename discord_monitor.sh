@@ -1,5 +1,5 @@
 #!/bin/bash
-#Description: PiTweaks Discord Bot Installer with Whiptail TUI and dual-channel routing.
+# Description: PiTweaks Discord Bot Installer with Whiptail TUI and dual-channel routing.
 # ==============================================================================
 # 🤖 PiTweaks - Discord Bot Installer (Whiptail TUI & Dual-Channel Routing)
 # ==============================================================================
@@ -228,7 +228,7 @@ echo "=========================================="
 echo "• CPU Model:     $(grep -m 1 'Model' /proc/cpuinfo | cut -d ':' -f 2 | xargs 2>/dev/null || echo "Raspberry Pi")"
 echo "• Architecture:  $(uname -m)"
 echo "• Core Voltage:  $(vcgencmd measure_volts core 2>/dev/null || echo "N/A")"
-echo "• Clock Speed:   $(vcgencmd measure_clock arm 2>/dev/null | awk -F'=' '{printf "%.2f GHz\\n", $2/1000000000}' || echo "N/A")"
+echo "• Clock Speed:   $(vcgencmd measure_clock arm 2>/dev/null || echo "N/A")"
 echo "• Available RAM: $(free -h | awk '/Mem:/ {print $4}')"
 echo "• Free Disk:     $(df -h / | awk 'NR==2 {print $4}')"
 echo "• Active Users:  $(who | wc -l)"
@@ -275,7 +275,8 @@ async def cmd_test(message, args):
         return
 
     value = int(val_str)
-    status_msg = await message.channel.send(f"Executing CPU test with value {value}...")
+    status_text = f"Executing {test_type.upper()} test with value {value}..."
+    status_msg = await message.channel.send(status_text)
 
     try:
         cmd = f"bash {MONITOR_SCRIPT} test_{test_type} {value}"
@@ -284,7 +285,8 @@ async def cmd_test(message, args):
         if len(output) > 1900:
             output = output[:1900] + "\n[Output truncated...]"
         
-        await status_msg.edit(content=output)
+        final_content = f"{status_text}\n\n{output}"
+        await status_msg.edit(content=final_content)
     except Exception as e:
         await status_msg.edit(content=f"❌ Error executing terminal command: `{e}`")
 
