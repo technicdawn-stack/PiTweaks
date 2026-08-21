@@ -1,4 +1,5 @@
 #!/bin/bash
+# Description: PiTweaks Advanced Telemetry & Stability Suite Installer
 
 # ==============================================================================
 # 🍓 PiTweaks TUI Installer - Advanced Telemetry & Stability Suite
@@ -26,16 +27,18 @@ if ! dpkg -s python3 stress-ng whiptail &> /dev/null; then
     sudo apt-get update -qq && sudo apt-get install -y stress-ng whiptail -qq
 fi
 
-UPDATE_MODE=false
+# Force-remove old script to prevent any caching or stale updates
 if [ -f "$TARGET_SCRIPT" ]; then
-    echo "🔄 Existing installation detected. Updating in place..."
-    UPDATE_MODE=true
+    echo "🧹 Removing old telemetry script for a fresh replacement..."
+    rm -f "$TARGET_SCRIPT"
 fi
 
 echo "📝 Writing Advanced PiTweaks core telemetry script..."
 
 cat << 'EOF' > "$TARGET_SCRIPT"
 #!/usr/bin/env python3
+# Description: PiTweaks Advanced Hardware Telemetry and Stability Core Engine
+
 import os
 import sys
 import time
@@ -57,11 +60,9 @@ def run_cmd(command):
         return "N/A"
 
 def get_hardware_stats():
-    # Temperature
     temp_raw = run_cmd("vcgencmd measure_temp")
     temp = temp_raw.replace("temp=", "").replace("'C", "°C") if "temp=" in temp_raw else "N/A"
 
-    # CPU Clock Frequency
     freq_raw = run_cmd("vcgencmd measure_clock arm")
     if "=" in freq_raw:
         try:
@@ -72,15 +73,12 @@ def get_hardware_stats():
     else:
         freq = "N/A"
 
-    # Core Voltage
     volts_raw = run_cmd("vcgencmd measure_volts core")
     volts = volts_raw.replace("volt=", "") if "volt=" in volts_raw else "N/A"
 
-    # SDRAM Voltage
     sdram_raw = run_cmd("vcgencmd measure_volts sdram_c")
     sdram = sdram_raw.replace("volt=", "") if "volt=" in sdram_raw else "N/A"
 
-    # RAM Usage Breakdown
     ram_raw = run_cmd("free -m | awk '/Mem:/ {print $3, $2}'")
     if ram_raw and "N/A" not in ram_raw:
         parts = ram_raw.split()
@@ -93,7 +91,6 @@ def get_hardware_stats():
     else:
         ram = "N/A"
 
-    # Load Averages
     load_raw = run_cmd("cat /proc/loadavg")
     loads = load_raw.split()[:3] if load_raw else ["N/A", "N/A", "N/A"]
     load_avg = f"{loads[0]} / {loads[1]} / {loads[2]}"
@@ -116,7 +113,6 @@ def parse_throttle_status(raw_hex):
     issues = []
     has_active = False
     
-    # Active bits (0-3)
     if (dec_val >> 0) & 1:
         issues.append("[CRITICAL ACTIVE] Under-voltage detected (Power supply issue)")
         has_active = True
@@ -130,7 +126,6 @@ def parse_throttle_status(raw_hex):
         issues.append("[CRITICAL ACTIVE] Soft temperature limit active")
         has_active = True
 
-    # Past bits / Sticky history (16-19)
     if (dec_val >> 16) & 1:
         issues.append("[WARNING PAST] Under-voltage occurred since last boot")
     if (dec_val >> 17) & 1:
@@ -272,6 +267,7 @@ chmod +x "$TARGET_SCRIPT"
 echo "📝 Writing user selector wrapper..."
 cat << EOF > "$WRAPPER_SCRIPT"
 #!/bin/bash
+# Description: PiTweaks Interactive Whiptail Menu Launcher
 TARGET_PY="$TARGET_SCRIPT"
 
 while true; do
@@ -302,7 +298,7 @@ EOF
 chmod +x "$WRAPPER_SCRIPT"
 
 echo "=================================================="
-echo " ✅ PiTweaks Advanced Suite installed successfully!"
+echo " ✅ PiTweaks Advanced Suite installed & updated cleanly!"
 echo "=================================================="
 echo "ℹ️ Launch anytime by running: pitweaks-tui"
 echo "=================================================="
