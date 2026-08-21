@@ -1,5 +1,5 @@
 discord_controller.sh|No description provided
-discord_monitor.sh|Revert 3
+discord_monitor.sh|Reverted again
 disk_check.sh|No description provided
 net_auditor.sh|Enhanced network utility featuring an interactive menu for Ookla Speed Tests, open port auditing, ping checks, DNS tests, and Wi-Fi diagnostics.
 overclock.sh|Smart Raspberry Pi overclocking manager with live thermal monitoring and safe backups.
