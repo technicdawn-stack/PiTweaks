@@ -1,5 +1,4 @@
 #!/bin/bash
-# Description: Raspberry Pi system resource monitor with automated Discord alerts, priority temperature tracking, and testing utilities. V2?
 
 # Clear screen
 clear
