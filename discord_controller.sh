@@ -194,17 +194,31 @@ async def cmd_shutdown(message, args):
     await message.channel.send("🛑 Shutting down Raspberry Pi...")
     subprocess.run(['sudo', 'shutdown', 'now'])
 
-async def cmd_temp_report(message, args):
-    await message.channel.send("📊 Generating system report...")
+async def cmd_ping(message, args):
+    latency = round(client.latency * 1000)
+    await message.channel.send(f"🏓 Pong! Latency: `{latency}ms`")
+
+async def cmd_sysinfo(message, args):
+    status_msg = await message.channel.send("🖥️ Gathering system info...")
     try:
-        cmd = f"stdbuf -oL bash {MONITOR_SCRIPT} temp_report"
+        cmd = "uname -a && uptime"
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=15)
+        output = result.stdout.strip() or "System info retrieved with no output."
+        await status_msg.edit(content=f"```text\n{output}\n```")
+    except Exception as e:
+        await status_msg.edit(content=f"❌ Error getting system info: `{e}`")
+
+async def cmd_temp_report(message, args):
+    status_msg = await message.channel.send("📊 Generating temperature report...")
+    try:
+        cmd = f"bash {MONITOR_SCRIPT} temp_report"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
         output = result.stdout.strip() or result.stderr.strip() or "Report generated with no output."
         if len(output) > 1900:
             output = output[:1900] + "\n[Output truncated...]"
-        await message.channel.send(f"```text\n{output}\n```")
+        await status_msg.edit(content=f"```text\n{output}\n```")
     except Exception as e:
-        await message.channel.send(f"❌ Error running command: `{e}`")
+        await status_msg.edit(content=f"❌ Error running command: `{e}`")
 
 async def cmd_test(message, args):
     parts = args.split(" ", 1)
@@ -219,18 +233,28 @@ async def cmd_test(message, args):
         return
 
     value = int(val_str)
-    action_labels = {"cpu": "CPU test", "ram": "RAM test", "temp": "temp test"}
-    await message.channel.send(f"⚡ Executing {action_labels[test_type]} with value {value}...")
+    
+    # Restored original execution header format
+    initial_text = f"Executing {test_type} test with value {value}..."
+    status_msg = await message.channel.send(initial_text)
 
     try:
-        cmd = f"stdbuf -oL bash {MONITOR_SCRIPT} test_{test_type} {value}"
+        cmd = f"bash {MONITOR_SCRIPT} test_{test_type} {value}"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
         output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
-        if len(output) > 1500:
-            output = output[:1500] + "\n[Output truncated...]"
-        await message.channel.send(f"✅ `test_{test_type} {value}` finished.\n```text\n{output}\n```")
+        
+        # Filter out unwanted lines from the monitor script
+        clean_lines = [line for line in output.splitlines() if not line.startswith("Running Real")]
+        output = "\n".join(clean_lines).strip()
+
+        if len(output) > 1900:
+            output = output[:1900] + "\n[Output truncated...]"
+        
+        # Combine the original header with the raw dashed simulation box
+        final_content = f"{initial_text}\n\n{output}"
+        await status_msg.edit(content=final_content)
     except Exception as e:
-        await message.channel.send(f"❌ Error executing terminal command: `{e}`")
+        await status_msg.edit(content=f"❌ Error executing terminal command: `{e}`")
 
 # Explicit aliases for !test_cpu, !test_ram, !test_temp
 async def cmd_test_cpu(message, args):
@@ -319,6 +343,8 @@ async def cmd_help(message, args):
         "🤖 **Raspberry Pi Bot Commands:**\n"
         "• `!temp_report` - Run system temperature report.\n"
         "• `!test <cpu|ram|temp> <num>` or `!test_cpu <num>` - Run diagnostic tests.\n"
+        "• `!ping` - Check bot connection latency.\n"
+        "• `!sysinfo` - Display kernel and system info.\n"
         "• `!alert <reboot|shutdown|update|interrupt> <mins>` - Broadcast preset alert to alert channel.\n"
         "• `!alert <delay> <dur> \"text\"` - Broadcast custom alert to alert channel.\n"
         "• `!reboot` - Restart the Raspberry Pi.\n"
@@ -330,6 +356,8 @@ async def cmd_help(message, args):
 COMMANDS = {
     "reboot": cmd_reboot,
     "shutdown": cmd_shutdown,
+    "ping": cmd_ping,
+    "sysinfo": cmd_sysinfo,
     "temp_report": cmd_temp_report,
     "test": cmd_test,
     "test_cpu": cmd_test_cpu,
@@ -394,4 +422,4 @@ sudo systemctl daemon-reload
 sudo systemctl enable "$SERVICE_NAME.service"
 sudo systemctl restart "$SERVICE_NAME.service"
 
-echo "✅ Discord Bot updated and service restarted!"
+echo "✅ Discord Bot updated with all commands restored and service restarted!"
