@@ -1,9 +1,5 @@
 #!/bin/bash
-# Description: PiTweaks Advanced Telemetry & Continuous Stress Suite Installer
-
-# ==============================================================================
-# 🍓 PiTweaks TUI Installer - Continuous Telemetry & Stability Suite
-# ==============================================================================
+# Description: PiTweaks Advanced Continuous Telemetry Suite Installer
 
 set -e
 
@@ -16,24 +12,10 @@ WRAPPER_SCRIPT="$USER_BIN_DIR/pitweaks-tui"
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$USER_BIN_DIR"
 
-echo "🔍 Checking system dependencies..."
-if ! command -v vcgencmd &> /dev/null; then
-    echo "❌ Error: 'vcgencmd' not found. This tool must run on Raspberry Pi OS."
-    exit 1
-fi
+echo "📦 Installing required packages..."
+sudo apt-get update -qq && sudo apt-get install -y stress-ng whiptail -qq
 
-if ! dpkg -s python3 stress-ng whiptail &> /dev/null; then
-    echo "📦 Installing required packages (stress-ng, whiptail)..."
-    sudo apt-get update -qq && sudo apt-get install -y stress-ng whiptail -qq
-fi
-
-# Force-remove old script to prevent caching or stale code
-if [ -f "$TARGET_SCRIPT" ]; then
-    echo "🧹 Removing old script for a clean replacement..."
-    rm -f "$TARGET_SCRIPT"
-fi
-
-echo "📝 Writing Continuous Telemetry core script..."
+echo "📝 Writing Fresh Stop-Watch Telemetry Core..."
 
 cat << 'EOF' > "$TARGET_SCRIPT"
 #!/usr/bin/env python3
@@ -60,59 +42,43 @@ def run_cmd(command):
         return "N/A"
 
 def get_hardware_stats():
-    # Temperature
     temp_raw = run_cmd("vcgencmd measure_temp")
     temp = temp_raw.replace("temp=", "").replace("'C", "°C") if "temp=" in temp_raw else "N/A"
 
-    # CPU Clock Frequency
     freq_raw = run_cmd("vcgencmd measure_clock arm")
     if "=" in freq_raw:
         try:
-            freq_hz = int(freq_raw.split("=")[1])
-            freq = f"{freq_hz / 1000000:.0f} MHz"
-        except Exception:
+            freq = f"{int(freq_raw.split('=')[1]) / 1000000:.0f} MHz"
+        except:
             freq = "N/A"
     else:
         freq = "N/A"
 
-    # GPU / Core Clock Frequency
     gpu_freq_raw = run_cmd("vcgencmd measure_clock core")
     if "=" in gpu_freq_raw:
         try:
-            gpu_hz = int(gpu_freq_raw.split("=")[1])
-            gpu_freq = f"{gpu_hz / 1000000:.0f} MHz"
-        except Exception:
+            gpu_freq = f"{int(gpu_freq_raw.split('=')[1]) / 1000000:.0f} MHz"
+        except:
             gpu_freq = "N/A"
     else:
         gpu_freq = "N/A"
 
-    # Voltages (Core, SDRAM Core, SDRAM I/O, SDRAM Phy)
-    volts_raw = run_cmd("vcgencmd measure_volts core")
-    volts = volts_raw.replace("volt=", "") if "volt=" in volts_raw else "N/A"
+    volts = run_cmd("vcgencmd measure_volts core").replace("volt=", "")
+    sdram_c = run_cmd("vcgencmd measure_volts sdram_c").replace("volt=", "")
+    sdram_io = run_cmd("vcgencmd measure_volts sdram_i").replace("volt=", "")
+    sdram_p = run_cmd("vcgencmd measure_volts sdram_p").replace("volt=", "")
 
-    sdram_c_raw = run_cmd("vcgencmd measure_volts sdram_c")
-    sdram_c = sdram_c_raw.replace("volt=", "") if "volt=" in sdram_c_raw else "N/A"
-
-    sdram_io_raw = run_cmd("vcgencmd measure_volts sdram_i")
-    sdram_io = sdram_io_raw.replace("volt=", "") if "volt=" in sdram_io_raw else "N/A"
-
-    sdram_p_raw = run_cmd("vcgencmd measure_volts sdram_p")
-    sdram_p = sdram_p_raw.replace("volt=", "") if "volt=" in sdram_p_raw else "N/A"
-
-    # RAM Usage Breakdown
     ram_raw = run_cmd("free -m | awk '/Mem:/ {print $3, $2}'")
     if ram_raw and "N/A" not in ram_raw:
         parts = ram_raw.split()
         if len(parts) == 2:
             used, total = int(parts[0]), int(parts[1])
-            pct = (used / total) * 100
-            ram = f"{used}MB / {total}MB ({pct:.1f}%)"
+            ram = f"{used}MB / {total}MB ({(used/total)*100:.1f}%)"
         else:
             ram = "N/A"
     else:
         ram = "N/A"
 
-    # Load Averages
     load_raw = run_cmd("cat /proc/loadavg")
     loads = load_raw.split()[:3] if load_raw else ["N/A", "N/A", "N/A"]
     load_avg = f"{loads[0]} / {loads[1]} / {loads[2]}"
@@ -122,11 +88,9 @@ def get_hardware_stats():
 def parse_throttle_status(raw_hex):
     if "throttled=" not in raw_hex:
         return "OPTIMAL", []
-    
     try:
-        hex_str = raw_hex.split("=")[1].strip()
-        dec_val = int(hex_str, 16)
-    except Exception:
+        dec_val = int(raw_hex.split("=")[1].strip(), 16)
+    except:
         return "OPTIMAL", []
 
     if dec_val == 0:
@@ -136,42 +100,34 @@ def parse_throttle_status(raw_hex):
     has_active = False
     
     if (dec_val >> 0) & 1:
-        issues.append("[CRITICAL ACTIVE] Under-voltage detected (Power supply issue)")
+        issues.append("[CRITICAL ACTIVE] Under-voltage detected")
         has_active = True
     if (dec_val >> 1) & 1:
-        issues.append("[CRITICAL ACTIVE] ARM frequency capped due to thermal limits")
+        issues.append("[CRITICAL ACTIVE] ARM frequency capped (Thermal)")
         has_active = True
     if (dec_val >> 2) & 1:
-        issues.append("[CRITICAL ACTIVE] CPU actively being throttled")
+        issues.append("[CRITICAL ACTIVE] CPU actively throttled")
         has_active = True
     if (dec_val >> 3) & 1:
         issues.append("[CRITICAL ACTIVE] Soft temperature limit active")
         has_active = True
 
     if (dec_val >> 16) & 1:
-        issues.append("[WARNING PAST] Under-voltage occurred since last boot")
+        issues.append("[WARNING PAST] Under-voltage since boot")
     if (dec_val >> 17) & 1:
-        issues.append("[WARNING PAST] Frequency capping occurred since last boot")
+        issues.append("[WARNING PAST] Frequency capping since boot")
     if (dec_val >> 18) & 1:
-        issues.append("[WARNING PAST] Throttling occurred since last boot")
+        issues.append("[WARNING PAST] Throttling since boot")
     if (dec_val >> 19) & 1:
-        issues.append("[WARNING PAST] Soft temperature limit occurred since last boot")
+        issues.append("[WARNING PAST] Soft temp limit since boot")
 
-    status_level = "CRITICAL" if has_active else "WARNING"
-    return status_level, issues
+    return ("CRITICAL" if has_active else "WARNING"), issues
 
 def format_throttle_display(raw_hex):
     level, issues = parse_throttle_status(raw_hex)
     if not issues:
         return f"{GREEN}  ✔ OPTIMAL: No throttling detected{RESET}"
-    
-    formatted = []
-    for issue in issues:
-        if "CRITICAL" in issue:
-            formatted.append(f"{RED}  ✘ {issue}{RESET}")
-        else:
-            formatted.append(f"{YELLOW}  ⚠ {issue}{RESET}")
-    return "\n".join(formatted)
+    return "\n".join([f"{RED}  ✘ {i}{RESET}" if "CRITICAL" in i else f"{YELLOW}  ⚠ {i}{RESET}" for i in issues])
 
 def start_stress_workload(test_type):
     if test_type == "cpu":
@@ -185,34 +141,18 @@ def start_stress_workload(test_type):
         cmd = "stress-ng --cpu 0 --vm 2 --vm-bytes 75%"
     else:
         return
-    
     subprocess.run(cmd, shell=True)
 
 def show_diagnostic_page(test_type, elapsed_time, peak_temp, final_hex):
     level, issues = parse_throttle_status(final_hex)
-    
-    if level == "OPTIMAL":
-        rating = "EXCELLENT (Fully Stable)"
-    elif level == "WARNING":
-        rating = "MODERATE (Past warnings present, current run stable)"
-    else:
-        rating = "POOR / UNSTABLE (Active thermal/power limits hit)"
-
+    rating = "EXCELLENT (Fully Stable)" if level == "OPTIMAL" else ("MODERATE (Past Warnings)" if level == "WARNING" else "POOR / UNSTABLE")
     mins, secs = divmod(elapsed_time, 60)
-    time_str = f"{mins:02d}m {secs:02d}s"
-
-    report = f"Test Performed   : {test_type.upper()}\n"
-    report += f"Total Time Ran   : {time_str}\n"
-    report += f"Peak Temperature : {peak_temp}\n"
-    report += f"System Rating    : {rating}\n"
-    report += "--------------------------------------------------\n"
-    report += "Diagnostic Findings:\n"
     
-    if not issues:
-        report += " • No active or historical stability issues logged."
-    else:
-        for issue in issues:
-            report += f" • {issue}\n"
+    report = f"Test Performed   : {test_type.upper()}\n"
+    report += f"Total Time Ran   : {mins:02d}m {secs:02d}s\n"
+    report += f"Peak Temperature : {peak_temp}\n"
+    report += f"System Rating    : {rating}\n--------------------------------------------------\nFindings:\n"
+    report += " • No issues logged." if not issues else "\n".join([f" • {i}" for i in issues])
 
     subprocess.run(["whiptail", "--title", "PiTweaks Diagnostic Report", "--msgbox", report, "18", "65"])
 
@@ -246,11 +186,11 @@ def main_dashboard(test_type):
             throttle_info = format_throttle_display(raw_hex)
 
             os.system('clear')
-            dashboard = f"""
+            print(f"""
 {CYAN}╔══════════════════════════════════════════════════════════════╗
 ║        PiTweaks CONTINUOUS TELEMETRY & STRESS SUITE          ║
 ╚══════════════════════════════════════════════════════════════╝{RESET}
- {BOLD}Active Test:{RESET} {test_type.upper()}  |  {BOLD}Elapsed Time (Stop-Watch):{RESET} {YELLOW}{time_formatted}{RESET}
+ {BOLD}Active Test:{RESET} {test_type.upper()}  |  {BOLD}Stop-Watch Time:{RESET} {YELLOW}{time_formatted}{RESET}
 
  {CYAN}┌─ ADVANCED HARDWARE TELEMETRY ───────────────────────────────┐{RESET}
    CPU Temperature : {YELLOW}{temp}{RESET}  (Peak: {peak_temp})
@@ -264,12 +204,9 @@ def main_dashboard(test_type):
  {CYAN}┌─ LIVE THROTTLING & HEALTH WATCHER ──────────────────────────┐{RESET}
 {throttle_info}
 {CYAN}└─────────────────────────────────────────────────────────────┘{RESET}
- {BOLD}[Ctrl+C] Stop Test, Clean Up & View Report{RESET}
-"""
-            sys.stdout.write(dashboard)
-            sys.stdout.flush()
+ {BOLD}[Ctrl+C] Stop Test & View Diagnostic Report{RESET}
+""")
             time.sleep(1.0)
-
     except KeyboardInterrupt:
         pass
     finally:
@@ -286,23 +223,22 @@ EOF
 
 chmod +x "$TARGET_SCRIPT"
 
-echo "📝 Writing user selector wrapper..."
+echo "📝 Writing Launcher Wrapper..."
 cat << EOF > "$WRAPPER_SCRIPT"
 #!/bin/bash
 # Description: PiTweaks Interactive Whiptail Menu Launcher
 TARGET_PY="$TARGET_SCRIPT"
 
 while true; do
-    CHOICE=\$(whiptail --title "PiTweaks - Continuous Stress & Diagnostic Suite" \\
-        --menu "Select a test mode (Press Ctrl+C anytime to finish):" 15 65 5 \\
-        "1" "CPU Stress Test (Continuous / All Cores)" \\
+    CHOICE=\$(whiptail --title "PiTweaks - Continuous Stress Suite" \\
+        --menu "Select a test mode (Press Ctrl+C to stop anytime):" 15 65 5 \\
+        "1" "CPU Stress Test (Continuous)" \\
         "2" "RAM Memory Stress Test (Continuous)" \\
         "3" "GPU Render Stress Test (Continuous)" \\
         "4" "All-At-Once Comprehensive Test" \\
         "5" "Exit" 3>&1 1>&2 2>&3)
     
-    EXIT_STATUS=\$?
-    if [ \$EXIT_STATUS != 0 ] || [ "\$CHOICE" = "5" ]; then
+    if [ \$? != 0 ] || [ "\$CHOICE" = "5" ]; then
         clear
         echo "Exiting PiTweaks. Goodbye!"
         exit 0
@@ -320,15 +256,7 @@ EOF
 chmod +x "$WRAPPER_SCRIPT"
 
 echo "=================================================="
-echo " ✅ PiTweaks Continuous Suite installed cleanly!"
+echo " ✅ Clean installation complete!"
 echo "=================================================="
-echo "ℹ️ Launch anytime by typing: pitweaks-tui"
+echo "ℹ️ Run your fresh tool via: pitweaks-tui"
 echo "=================================================="
-
-read -p "Do you want to launch the stability tester now? (y/n): " RUN_CHOICE
-if [ "$RUN_CHOICE" = "y" ] || [ "$RUN_CHOICE" = "Y" ]; then
-    echo "Launching pitweaks-tui..."
-    exec "$WRAPPER_SCRIPT"
-else
-    echo "Installation finalized."
-fi
