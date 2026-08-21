@@ -1,5 +1,5 @@
 #!/bin/bash
-#Description: Interactive Whiptail TUI installer featuring channel routing, automated dependency setup, and role-based access security.
+#Description: PiTweaks Discord Bot Installer with Whiptail TUI and dual-channel routing.
 # ==============================================================================
 # 🤖 PiTweaks - Discord Bot Installer (Whiptail TUI & Dual-Channel Routing)
 # ==============================================================================
@@ -251,16 +251,16 @@ async def cmd_shutdown(message, args):
     subprocess.run(['sudo', 'shutdown', 'now'])
 
 async def cmd_temp_report(message, args):
-    await message.channel.send("📊 Generating temperature report...")
+    status_msg = await message.channel.send("📊 Generating temperature report...")
     try:
         cmd = f"bash {MONITOR_SCRIPT} temp_report"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
         output = result.stdout.strip() or result.stderr.strip() or "Report generated with no output."
         if len(output) > 1900:
             output = output[:1900] + "\n[Output truncated...]"
-        await message.channel.send(f"```text\n{output}\n```")
+        await status_msg.edit(content=output)
     except Exception as e:
-        await message.channel.send(f"❌ Error running command: `{e}`")
+        await status_msg.edit(content=f"❌ Error running command: `{e}`")
 
 async def cmd_test(message, args):
     parts = args.split(" ", 1)
@@ -275,7 +275,7 @@ async def cmd_test(message, args):
         return
 
     value = int(val_str)
-    status_msg = await message.channel.send(f"⚡ Executing CPU test with value {value}...")
+    status_msg = await message.channel.send(f"Executing CPU test with value {value}...")
 
     try:
         cmd = f"bash {MONITOR_SCRIPT} test_{test_type} {value}"
@@ -284,7 +284,6 @@ async def cmd_test(message, args):
         if len(output) > 1900:
             output = output[:1900] + "\n[Output truncated...]"
         
-        # Edit message directly with native Discord rendering (no code blocks)
         await status_msg.edit(content=output)
     except Exception as e:
         await status_msg.edit(content=f"❌ Error executing terminal command: `{e}`")
