@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # ==============================================================================
-# 🍓 PiTweaks - Interactive Throttle Manager & Diagnostic Suite
+# 🍓 PiTweaks - Whiptail Throttle Manager & Diagnostic Suite
 # ==============================================================================
 
-# ANSI Colors
+# ANSI Colors for the Live Dashboard
 RED="\033[31m"
 YELLOW="\033[33m"
 GREEN="\033[32m"
@@ -12,8 +12,12 @@ CYAN="\033[36m"
 RESET="\033[0m"
 
 if ! command -v vcgencmd &> /dev/null; then
-    echo -e "${RED}❌ Error: 'vcgencmd' not found. This must run on Raspberry Pi OS.${RESET}"
+    echo "❌ Error: 'vcgencmd' not found. This must run on Raspberry Pi OS."
     exit 1
+fi
+
+if ! command -v whiptail &> /dev/null; then
+    sudo apt-get update -qq && sudo apt-get install -y whiptail -qq
 fi
 
 # Function to parse throttling bits with color coding
@@ -44,25 +48,18 @@ get_throttle_status() {
 # Live UI Benchmark Function
 run_benchmark() {
     local test_type="$1"
-    local duration=30 # Test duration in seconds
+    local duration=30
     local elapsed=0
 
-    # Start background stress workload
     case "$test_type" in
-        cpu)
-            stress-ng --cpu 4 --timeout ${duration}s &> /dev/null &
-            ;;
-        ram)
-            stress-ng --vm 2 --vm-bytes 75% --timeout ${duration}s &> /dev/null &
-            ;;
-        gpu)
+        cpu) stress-ng --cpu 4 --timeout ${duration}s &> /dev/null & ;;
+        ram) stress-ng --vm 2 --vm-bytes 75% --timeout ${duration}s &> /dev/null & ;;
+        gpu) 
             vcgencmd render_bar 1 &> /dev/null
             sleep ${duration}
             vcgencmd render_bar 0 &> /dev/null &
             ;;
-        all)
-            stress-ng --cpu 4 --vm 1 --timeout ${duration}s &> /dev/null &
-            ;;
+        all) stress-ng --cpu 4 --vm 1 --timeout ${duration}s &> /dev/null & ;;
     esac
 
     while [ $elapsed -lt $duration ]; do
@@ -73,7 +70,6 @@ run_benchmark() {
         echo " Time Remaining: $((duration - elapsed))s"
         echo ""
         
-        # Gather live system metrics
         TEMP=$(vcgencmd measure_temp | awk -F= '{print $2}')
         FREQ=$(vcgencmd measure_clock arm | awk -F= '{printf "%.0f MHz\n", $2/1000000}')
         VOLTS=$(vcgencmd measure_volts core | awk -F= '{print $2}')
@@ -118,7 +114,7 @@ show_throttling_check() {
     echo "=================================================="
 }
 
-# Check if arguments were passed (for Discord Bot integration) or run interactive menu
+# Handle command-line arguments (for Discord Bot integration)
 if [ "$1" == "temp_report" ]; then
     show_throttling_check
     exit 0
@@ -136,55 +132,49 @@ elif [ "$1" == "test_all" ]; then
     exit 0
 fi
 
-# Interactive Terminal Menu
+# Whiptail Interactive Menu Loop
 while true; do
-    clear
-    echo -e "${CYAN}==================================================${RESET}"
-    echo -e "${CYAN} 🍓 PiTweaks - Throttle Manager & Diagnostic Menu${RESET}"
-    echo -e "${CYAN}==================================================${RESET}"
-    echo " 1) Check Throttling & Hardware Health"
-    echo " 2) Run Performance Benchmark / Diagnostic Test"
-    echo " 3) Exit"
-    echo "--------------------------------------------------"
-    read -p " Select an option [1-3]: " main_choice
+    MAIN_CHOICE=$(whiptail --clear --backtitle "PiTweaks System Manager" \
+        --title "Throttle & Diagnostic Manager" \
+        --menu "Choose an option:" 15 60 3 \
+        "1" "Check Throttling & Hardware Health" \
+        "2" "Run Performance Benchmark / Diagnostic" \
+        "3" "Exit" 3>&1 1>&2 2>&3)
 
-    case "$main_choice" in
+    exit_status=$?
+    if [ $exit_status -ne 0 ] || [ "$MAIN_CHOICE" = "3" ]; then
+        clear
+        echo "Exiting PiTweaks Throttle Manager. Goodbye!"
+        exit 0
+    fi
+
+    case "$MAIN_CHOICE" in
         1)
             show_throttling_check
             echo ""
             read -p "Press [Enter] to return to menu..."
             ;;
         2)
-            clear
-            echo -e "${CYAN}==================================================${RESET}"
-            echo -e "${CYAN} 🧪 Select Diagnostic Test Type${RESET}"
-            echo -e "${CYAN}==================================================${RESET}"
-            echo " 1) CPU Stress Test"
-            echo " 2) RAM Memory Test"
-            echo " 3) GPU Render Test"
-            echo " 4) All-At-Once Comprehensive Test"
-            echo " 5) Back to Main Menu"
-            echo "--------------------------------------------------"
-            read -p " Select test mode [1-5]: " test_choice
+            TEST_CHOICE=$(whiptail --clear --backtitle "PiTweaks System Manager" \
+                --title "Diagnostic Selector" \
+                --menu "Select component to stress test:" 16 60 5 \
+                "cpu" "CPU Stress Test" \
+                "ram" "RAM Memory Test" \
+                "gpu" "GPU Render Test" \
+                "all" "All-At-Once Comprehensive Test" \
+                "back" "Return to Main Menu" 3>&1 1>&2 2>&3)
 
-            case "$test_choice" in
-                1) run_benchmark "cpu";;
-                2) run_benchmark "ram";;
-                3) run_benchmark "gpu";;
-                4) run_benchmark "all";;
-                5) continue;;
-                *) echo -e "${RED}Invalid option.${RESET}"; sleep 1;;
+            [ $? -ne 0 ] && continue
+
+            case "$TEST_CHOICE" in
+                cpu) run_benchmark "cpu" ;;
+                ram) run_benchmark "ram" ;;
+                gpu) run_benchmark "gpu" ;;
+                all) run_benchmark "all" ;;
+                back) continue ;;
             esac
             echo ""
             read -p "Press [Enter] to return to menu..."
-            ;;
-        3)
-            echo "Exiting PiTweaks Throttle Manager. Goodbye!"
-            exit 0
-            ;;
-        *)
-            echo -e "${RED}Invalid selection. Please choose 1, 2, or 3.${RESET}"
-            sleep 1
             ;;
     esac
 done
