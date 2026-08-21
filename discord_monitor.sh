@@ -1,4 +1,5 @@
 #!/bin/bash
+# Description: Raspberry Pi system resource monitor with automated Discord alerts, priority temperature tracking, and testing utilities.
 
 # Clear screen
 clear
@@ -17,8 +18,8 @@ if [ -f "$HOME/temp_monitor.sh" ]; then
         [Yy]* ) 
             echo ""
             echo "⚙️ Extracting existing Discord Webhook URL..."
-            # Extract the webhook URL from the existing script if possible
-            EXISTING_URL=$(grep -m 1 'DISCORD_URL="' "$HOME/temp_monitor.sh" | cut -d'"' -f2)
+            # Look for lines containing DISCORD_URL and extract everything inside the quotes or after the equals sign
+            EXISTING_URL=$(grep 'DISCORD_URL=' "$HOME/temp_monitor.sh" | head -n 1 | sed 's/.*DISCORD_URL=["\x27]\?//;s/["\x27]\?$//')
             if [ -n "$EXISTING_URL" ]; then
                 DISCORD_URL="$EXISTING_URL"
                 echo "✔ Successfully retained existing webhook configuration."
