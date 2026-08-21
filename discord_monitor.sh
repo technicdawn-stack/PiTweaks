@@ -1,5 +1,5 @@
 #!/bin/bash
-#Description: revevrrve
+# Description: revevrrve
 # ==============================================================================
 # 🤖 PiTweaks - Discord Bot Installer (Whiptail TUI & Dual-Channel Routing)
 # ==============================================================================
