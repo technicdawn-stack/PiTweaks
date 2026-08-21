@@ -12,27 +12,27 @@ if [ -f "$HOME/temp_monitor.sh" ]; then
     echo "🔍 Existing installation detected at ~/temp_monitor.sh!"
     echo "================================================="
     echo ""
-    read -p "Would you like to keep your existing Discord Webhook and settings? (y/n): " KEEP_CONFIG
     
-    case "$KEEP_CONFIG" in 
-        [Yy]* ) 
-            echo ""
-            echo "⚙️ Extracting existing Discord Webhook URL..."
-            # Look for lines containing DISCORD_URL and extract everything inside the quotes or after the equals sign
-            EXISTING_URL=$(grep 'DISCORD_URL=' "$HOME/temp_monitor.sh" | head -n 1 | sed 's/.*DISCORD_URL=["\x27]\?//;s/["\x27]\?$//')
-            if [ -n "$EXISTING_URL" ]; then
+    # Try to auto-extract first so we don't necessarily even need to prompt if it's already there
+    EXISTING_URL=$(grep 'DISCORD_URL=' "$HOME/temp_monitor.sh" | head -n 1 | sed 's/.*DISCORD_URL=["\x27]\?//;s/["\x27]\?$//')
+    
+    if [ -n "$EXISTING_URL" ]; then
+        echo "✔ Found existing Discord Webhook configuration."
+        read -p "Would you like to keep this existing webhook? (y/n): " KEEP_CONFIG
+        case "$KEEP_CONFIG" in 
+            [Yy]* ) 
                 DISCORD_URL="$EXISTING_URL"
-                echo "✔ Successfully retained existing webhook configuration."
-            else
-                echo "⚠️ Could not auto-extract old URL. Please enter it below."
-                read -p "Enter your Discord Webhook URL: " DISCORD_URL
-            fi
-            ;;
-        * ) 
-            echo ""
-            read -p "Enter your new Discord Webhook URL: " DISCORD_URL
-            ;;
-    esac
+                echo "⚙️ Retained existing webhook URL."
+                ;;
+            * ) 
+                echo ""
+                read -p "Enter your new Discord Webhook URL: " DISCORD_URL
+                ;;
+        esac
+    else
+        echo "⚠️ Could not auto-extract old URL."
+        read -p "Enter your Discord Webhook URL: " DISCORD_URL
+    fi
 else
     # 2. CONFIRMATION PROMPT FOR NEW INSTALLATION
     echo "=========================================="
@@ -46,14 +46,21 @@ else
             echo "Installation cancelled."
             exit 0
             ;;
-    esac
+    es
 
     echo ""
     read -p "Enter your Discord Webhook URL: " DISCORD_URL
 fi
 
+# Fallback check if it's still somehow empty
 if [ -z "$DISCORD_URL" ]; then
-    echo "❌ Error: Webhook URL cannot be empty."
+    echo ""
+    echo "⚠️ Warning: No webhook URL detected or provided."
+    read -p "Please enter your Discord Webhook URL manually to proceed: " DISCORD_URL
+fi
+
+if [ -z "$DISCORD_URL" ]; then
+    echo "❌ Error: Webhook URL cannot be empty. Installation aborted."
     exit 1
 fi
 
