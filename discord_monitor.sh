@@ -1,13 +1,12 @@
 #!/bin/bash
-
-# Description: Reverted again
-
-clear
-
+#Description: Interactive Whiptail TUI installer featuring channel routing, automated dependency setup, and role-based access security.
 # ==============================================================================
-# 🍓 PiTweaks All-in-One System & Discord Bot Installer
+# 🤖 PiTweaks - Discord Bot Installer (Whiptail TUI & Dual-Channel Routing)
 # ==============================================================================
 
+set -e
+
+# Resolve execution user and home directory
 if [ -n "$SUDO_USER" ]; then
     REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
     CURRENT_USER="$SUDO_USER"
@@ -16,320 +15,315 @@ else
     CURRENT_USER="$(whoami)"
 fi
 
-INSTALL_DIR="$REAL_HOME/PiTweaks"
-BOT_DIR="$INSTALL_DIR/discord_bot"
-CONFIG_FILE="$BOT_DIR/config.env"
-MONITOR_SCRIPT="$REAL_HOME/temp_monitor.sh"
-BOT_SCRIPT="$BOT_DIR/bot.py"
+INSTALL_DIR="$REAL_HOME/PiTweaks/discord_bot"
+CONFIG_FILE="$INSTALL_DIR/config.env"
 SERVICE_NAME="pitweaks-discord-bot"
+MONITOR_SCRIPT_PATH="$REAL_HOME/temp_monitor.sh"
 
-echo "=========================================="
-echo " 🍓 PiTweaks All-in-One Setup & Installer"
-echo "=========================================="
-echo ""
+NON_INTERACTIVE=false
+CLI_BOT_TOKEN=""
+CLI_USER_ID=""
+CLI_LISTEN_CHANNEL=""
+CLI_ALERT_CHANNEL=""
+CLI_ALLOWED_ROLES=""
 
-# 1. INTELLIGENT AUTO-DETECTION OF EXISTING FILES
-MISSING_ITEMS=""
-PRESENT_ITEMS=""
-
-[ -f "$MONITOR_SCRIPT" ] && PRESENT_ITEMS="$PRESENT_ITEMS temp_monitor.sh" || MISSING_ITEMS="$MISSING_ITEMS temp_monitor.sh"
-[ -f "$BOT_SCRIPT" ] && PRESENT_ITEMS="$PRESENT_ITEMS bot.py" || MISSING_ITEMS="$MISSING_ITEMS bot.py"
-[ -f "$CONFIG_FILE" ] && PRESENT_ITEMS="$PRESENT_ITEMS config.env" || MISSING_ITEMS="$MISSING_ITEMS config.env"
-
-if [ -n "$PRESENT_ITEMS" ]; then
-    echo "🔍 **Status Check:** Found existing components:$PRESENT_ITEMS"
-    if [ -n "$MISSING_ITEMS" ]; then
-        echo "⚠️  **Missing components:**$MISSING_ITEMS"
-    fi
-    echo ""
-    read -p "Do you want to repair/update existing scripts or perform a clean reinstall? [U]pdate/Repair / [F]resh Install / [Q]uit: " INSTALL_CHOICE </dev/tty
-    echo ""
-    case "$INSTALL_CHOICE" in
-        [qQ]* )
-            echo "❌ Installation cancelled by user."
-            exit 0
-            ;;
-        [fF]* )
-            echo "🔄 Performing fresh installation (overwriting everything)..."
-            echo ""
-            ;;
-        * )
-            echo "⚙️ Proceeding with smart update/repair mode..."
-            echo ""
-            ;;
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --token) CLI_BOT_TOKEN="$2"; shift 2 ;;
+        --user-id) CLI_USER_ID="$2"; shift 2 ;;
+        --listen-channel) CLI_LISTEN_CHANNEL="$2"; shift 2 ;;
+        --alert-channel) CLI_ALERT_CHANNEL="$2"; shift 2 ;;
+        --allowed-roles) CLI_ALLOWED_ROLES="$2"; shift 2 ;;
+        --non-interactive) NON_INTERACTIVE=true; shift ;;
+        *) shift ;;
     esac
-else
-    echo "🆕 No existing installation detected. Starting fresh setup..."
-    echo ""
+done
+
+mkdir -p "$INSTALL_DIR"
+
+# Step 1: Install Dependencies
+echo "🔍 Checking system dependencies..."
+if ! command -v python3 &> /dev/null; then
+    sudo apt-get update -qq && sudo apt-get install -y python3 python3-pip -qq
 fi
 
-# 2. DEPENDENCY INSTALLATION
-echo "📦 Installing required system dependencies (jq, python3)..."
-sudo apt-get update -qq && sudo apt-get install -y jq python3 python3-pip -qq
+python3 -c "import discord" &> /dev/null || {
+    pip3 install discord.py --break-system-packages &> /dev/null || pip3 install discord.py
+}
 
-echo "📦 Verifying python library (discord.py)..."
-python3 -c "import discord" &> /dev/null || pip3 install discord.py --break-system-packages &> /dev/null || pip3 install discord.py
+# Step 2: Load Existing Settings
+EXISTING_TOKEN=""
+EXISTING_USER_ID=""
+EXISTING_LISTEN="general"
+EXISTING_ALERT="alert"
+EXISTING_ROLES="Admin"
 
-echo ""
-
-# 3. CONFIGURATION SETUP
-USE_OLD_CONFIG=false
 if [ -f "$CONFIG_FILE" ]; then
-    read -p "Do you want to reuse your saved Bot Token and User ID? [Y/n]: " REUSE_CHOICE </dev/tty
-    REUSE_CHOICE=${REUSE_CHOICE:-Y}
-    echo ""
-    case "$REUSE_CHOICE" in
-        [yY]|[yY][eE][sS])
-            source "$CONFIG_FILE"
-            USE_OLD_CONFIG=true
-            echo "✅ Loaded saved configuration credentials."
-            ;;
-    esac
+    EXISTING_TOKEN=$(grep -E '^BOT_TOKEN=' "$CONFIG_FILE" | cut -d'=' -f2- | tr -d '"' || true)
+    EXISTING_USER_ID=$(grep -E '^USER_ID=' "$CONFIG_FILE" | cut -d'=' -f2- | tr -d '"' || true)
+    EXISTING_LISTEN=$(grep -E '^LISTEN_CHANNEL=' "$CONFIG_FILE" | cut -d'=' -f2- | tr -d '"' || echo "general")
+    EXISTING_ALERT=$(grep -E '^ALERT_CHANNEL=' "$CONFIG_FILE" | cut -d'=' -f2- | tr -d '"' || echo "alert")
+    EXISTING_ROLES=$(grep -E '^ALLOWED_ROLES=' "$CONFIG_FILE" | cut -d'=' -f2- | tr -d '"' || echo "Admin")
 fi
 
-if [ "$USE_OLD_CONFIG" = false ]; then
-    echo "⚙️  New Configuration Setup"
-    echo "------------------------------------------"
-    read -p "Enter your Discord Bot Token: " -s BOT_TOKEN
-    echo ""
-    read -p "Enter your Discord User ID (numeric): " USER_ID
-    echo ""
+BOT_TOKEN="${CLI_BOT_TOKEN:-$EXISTING_TOKEN}"
+USER_ID="${CLI_USER_ID:-$EXISTING_USER_ID}"
+LISTEN_CHANNEL="${CLI_LISTEN_CHANNEL:-$EXISTING_LISTEN}"
+ALERT_CHANNEL="${CLI_ALERT_CHANNEL:-$EXISTING_ALERT}"
+ALLOWED_ROLES="${CLI_ALLOWED_ROLES:-$EXISTING_ROLES}"
 
-    if ! [[ "$USER_ID" =~ ^[0-9]+$ ]]; then
-        echo "❌ Error: Discord User ID must be numbers only."
-        exit 1
+# Step 3: Whiptail Menu Interface
+if [ "$NON_INTERACTIVE" = false ]; then
+    if ! command -v whiptail &> /dev/null; then
+        sudo apt-get update -qq && sudo apt-get install -y whiptail -qq
     fi
 
-    mkdir -p "$BOT_DIR"
-    cat << EOL > "$CONFIG_FILE"
+    MENU_ACTIVE=true
+    while $MENU_ACTIVE; do
+        TOKEN_DISP="${BOT_TOKEN:0:6}..."
+        [ -z "$BOT_TOKEN" ] && TOKEN_DISP="Not Set"
+
+        CHOICE=$(whiptail --clear --backtitle "PiTweaks System Configuration" \
+            --title "Discord Bot Settings" \
+            --menu "Use ARROW keys to highlight an option and press ENTER:" 20 75 7 \
+            "1" "Discord User ID    : [$USER_ID]" \
+            "2" "Bot Token        : [$TOKEN_DISP]" \
+            "3" "Listen Channel   : [$LISTEN_CHANNEL]" \
+            "4" "Alert Channel    : [$ALERT_CHANNEL]" \
+            "5" "Allowed Roles    : [$ALLOWED_ROLES]" \
+            "6" "Save and Apply Configuration" \
+            "7" "Exit Without Saving" 3>&1 1>&2 2>&3)
+
+        exit_status=$?
+        if [ $exit_status -ne 0 ]; then
+            echo "❌ Configuration cancelled."
+            exit 0
+        fi
+
+        case "$CHOICE" in
+            1)
+                NEW_ID=$(whiptail --inputbox "Enter Discord User ID (numeric):" 10 60 "$USER_ID" 3>&1 1>&2 2>&3)
+                [ $? -eq 0 ] && USER_ID="$NEW_ID"
+                ;;
+            2)
+                NEW_TOK=$(whiptail --passwordbox "Enter Discord Bot Token:" 10 60 "$BOT_TOKEN" 3>&1 1>&2 2>&3)
+                [ $? -eq 0 ] && BOT_TOKEN="$NEW_TOK"
+                ;;
+            3)
+                NEW_LISTEN=$(whiptail --inputbox "Enter Listen Channel Name (e.g. raspi3b):" 10 60 "$LISTEN_CHANNEL" 3>&1 1>&2 2>&3)
+                [ $? -eq 0 ] && LISTEN_CHANNEL="$NEW_LISTEN"
+                ;;
+            4)
+                NEW_ALERT=$(whiptail --inputbox "Enter Alert Channel Name (e.g. alert):" 10 60 "$ALERT_CHANNEL" 3>&1 1>&2 2>&3)
+                [ $? -eq 0 ] && ALERT_CHANNEL="$NEW_ALERT"
+                ;;
+            5)
+                NEW_ROLES=$(whiptail --inputbox "Enter Allowed Roles (separated by ;):" 10 60 "$ALLOWED_ROLES" 3>&1 1>&2 2>&3)
+                [ $? -eq 0 ] && ALLOWED_ROLES="$NEW_ROLES"
+                ;;
+            6)
+                MENU_ACTIVE=false
+                ;;
+            7)
+                echo "❌ Configuration cancelled."
+                exit 0
+                ;;
+        esac
+    done
+fi
+
+# Clean up channel string names
+LISTEN_CHANNEL=$(echo "$LISTEN_CHANNEL" | sed 's/^#//' | xargs)
+ALERT_CHANNEL=$(echo "$ALERT_CHANNEL" | sed 's/^#//' | xargs)
+
+# Step 4: Write Config File
+cat << EOL > "$CONFIG_FILE"
 BOT_TOKEN="$BOT_TOKEN"
 USER_ID="$USER_ID"
+LISTEN_CHANNEL="$LISTEN_CHANNEL"
+ALERT_CHANNEL="$ALERT_CHANNEL"
+ALLOWED_ROLES="$ALLOWED_ROLES"
+MONITOR_SCRIPT="$MONITOR_SCRIPT_PATH"
 EOL
-    chown "$CURRENT_USER:$CURRENT_USER" "$CONFIG_FILE"
-    chmod 600 "$CONFIG_FILE"
-fi
 
-mkdir -p "$BOT_DIR"
+chown "$CURRENT_USER:$CURRENT_USER" "$CONFIG_FILE"
+chmod 600 "$CONFIG_FILE"
 
-# ==============================================================================
-# 4. WRITE THE MONITORING SCRIPT (~/temp_monitor.sh)
-# ==============================================================================
-echo "📝 Writing ~/temp_monitor.sh..."
-cat << 'SCRIPT' > "$MONITOR_SCRIPT"
-#!/bin/bash
+# Ensure monitor script permissions if present
+[ -f "$MONITOR_SCRIPT_PATH" ] && chmod +x "$MONITOR_SCRIPT_PATH"
 
-# --- CONFIGURATION ---
-STATUS_FILE="/tmp/pi_system_status.txt"
-CPU_THRESHOLD=90
-RAM_THRESHOLD=90
-DIVIDER="---------------------------------------"
-# ---------------------
-
-get_top_cpu() {
-    ps -eo comm,%cpu,%mem --sort=-%cpu | head -n 4 | tail -n 3 | awk '{printf "  • %s: CPU %s%% | RAM %s%%\n", $1, $2, $3}'
-}
-
-get_top_ram() {
-    ps -eo comm,%cpu,%mem --sort=-%mem | head -n 4 | tail -n 3 | awk '{printf "  • %s: RAM %s%% | CPU %s%%\n", $1, $3, $2}'
-}
-
-RAW_TEMP=$(vcgencmd measure_temp | egrep -o '[0-9]*\.[0-9]*')
-TEMP=${RAW_TEMP%.*}
-
-RAM_TOTAL=$(free -m | awk '/Mem:/ {print $2}')
-RAM_USED=$(free -m | awk '/Mem:/ {print $3}')
-RAM_PERC=$(( RAM_USED * 100 / RAM_TOTAL ))
-
-CPU_IDLE=$(top -bn1 | grep "%Cpu" | awk '{print $8}' | cut -d'.' -f1)
-if [ -z "$CPU_IDLE" ]; then
-    CPU_IDLE=$(top -bn1 | awk '/Cpu\(s\)/ {print $8}' | cut -d'.' -f1)
-fi
-CPU_USAGE=$(( 100 - CPU_IDLE ))
-
-if [ "$1" = "temp_report" ]; then
-    TOP_PROCS=$(get_top_cpu)
-    MSG="${DIVIDER}
-🟨 📝 **System Report**:
-• **Temp:** ${RAW_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${RAM_PERC}% (${RAM_USED}MB / ${RAM_TOTAL}MB)
-
-**Top Processes (CPU):**
-${TOP_PROCS}
-${DIVIDER}"
-    echo "$MSG"
-    exit 0
-
-elif [ "$1" = "test_cpu" ] && [ -n "$2" ]; then
-    SIM_CPU=$2
-    TOP_PROCS=$(get_top_cpu)
-    MSG="${DIVIDER}
-🟦 ⚡ **HIGH CPU ALERT (TEST SIMULATION)**: Load sustained at ${SIM_CPU}% for 3 mins!
-• **Temp:** ${RAW_TEMP}°C | **CPU:** ${SIM_CPU}% | **RAM:** ${RAM_PERC}%
-
-**Top CPU Processes:**
-${TOP_PROCS}
-${DIVIDER}"
-    echo "$MSG"
-    exit 0
-
-elif [ "$1" = "test_ram" ] && [ -n "$2" ]; then
-    SIM_RAM=$2
-    TOP_PROCS=$(get_top_ram)
-    MSG="${DIVIDER}
-🟦 📊 **HIGH RAM ALERT (TEST SIMULATION)**: Usage sustained at ${SIM_RAM}% for 3 mins!
-• **Temp:** ${RAW_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${SIM_RAM}%
-
-**Top RAM Processes:**
-${TOP_PROCS}
-${DIVIDER}"
-    echo "$MSG"
-    exit 0
-
-elif [ "$1" = "test_temp" ] && [ -n "$2" ]; then
-    SIM_TEMP=$2
-    TOP_PROCS=$(get_top_cpu)
-    MSG="${DIVIDER}
-🟦 🌡️ **TEMP WARNING (TEST SIMULATION)**: CPU reached ${SIM_TEMP}°C!
-• **Temp:** ${SIM_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${RAM_PERC}%
-
-**Top CPU Processes:**
-${TOP_PROCS}
-${DIVIDER}"
-    echo "$MSG"
-    exit 0
-fi
-SCRIPT
-
-chmod +x "$MONITOR_SCRIPT"
-chown "$CURRENT_USER:$CURRENT_USER" "$MONITOR_SCRIPT"
-
-# ==============================================================================
-# 5. WRITE THE DISCORD BOT SCRIPT ($BOT_DIR/bot.py)
-# ==============================================================================
-echo "📝 Writing Discord bot script..."
-cat << 'EOF' > "$BOT_SCRIPT"
+# Step 5: Write Bot Logic Script
+cat << 'EOF' > "$INSTALL_DIR/bot.py"
+import os
+import sys
 import discord
 import subprocess
 import datetime
 import shlex
 
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.env")
+config = {}
+
+if os.path.exists(CONFIG_PATH):
+    with open(CONFIG_PATH, "r") as f:
+        for line in f:
+            if "=" in line and not line.startswith("#"):
+                k, v = line.strip().split("=", 1)
+                config[k] = v.strip('"\'')
+
+BOT_TOKEN = config.get("BOT_TOKEN", "").strip()
+USER_ID_STR = config.get("USER_ID", "0").strip()
+USER_ID = int(USER_ID_STR) if USER_ID_STR.isdigit() else 0
+
+LISTEN_CHANNEL = config.get("LISTEN_CHANNEL", "general").strip().lstrip('#').lower()
+ALERT_CHANNEL = config.get("ALERT_CHANNEL", "alert").strip().lstrip('#').lower()
+ALLOWED_ROLES_RAW = config.get("ALLOWED_ROLES", "Admin").strip()
+ALLOWED_ROLES = [r.strip().lower() for r in ALLOWED_ROLES_RAW.split(";") if r.strip()]
+MONITOR_SCRIPT = os.path.expanduser(config.get("MONITOR_SCRIPT", "~/temp_monitor.sh"))
+
+if not BOT_TOKEN or (USER_ID == 0 and not ALLOWED_ROLES):
+    print("❌ Invalid or missing BOT_TOKEN, USER_ID, or ALLOWED_ROLES in config.env")
+    sys.exit(1)
+
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True # Required to inspect server member roles
 client = discord.Client(intents=intents)
-
-config = {}
-with open("/home/raspi3b/PiTweaks/discord_bot/config.env") as f:
-    for line in f:
-        if "=" in line:
-            k, v = line.strip().split("=", 1)
-            config[k] = v.strip('"\'')
-
-YOUR_DISCORD_USER_ID = int(config.get("USER_ID", 0))
-
-def get_target_channel(guild, channel_name):
-    if not guild:
-        return None
-    return discord.utils.get(guild.text_channels, name=channel_name)
 
 @client.event
 async def on_ready():
     print(f'Logged in as {client.user.name}')
     try:
-        user = await client.fetch_user(YOUR_DISCORD_USER_ID)
-        await user.send("🚀 **Raspberry Pi Booted Successfully!**\nSystem control bot is online and ready.")
+        if USER_ID != 0:
+            user = await client.fetch_user(USER_ID)
+            await user.send(
+                f"🚀 **Raspberry Pi Online!**\n"
+                f"• **Listen Channel:** `{LISTEN_CHANNEL}`\n"
+                f"• **Alert Channel:** `{ALERT_CHANNEL}`\n"
+                f"• **Allowed Roles:** `{ALLOWED_ROLES_RAW}`"
+            )
     except Exception as e:
         print(f"Could not send boot DM: {e}")
 
+async def cmd_ping(message, args):
+    latency = round(client.latency * 1000)
+    await message.channel.send(f"🏓 **Pong!** Bot latency is `{latency}ms`")
+
+async def cmd_sysinfo(message, args):
+    cmd = """
+echo "=========================================="
+echo " 📊 Raspberry Pi System Information"
+echo "=========================================="
+echo "• OS Version:    $(cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2)"
+echo "• Kernel:        $(uname -r)"
+echo "• Uptime:        $(uptime -p)"
+echo "• Local IP:      $(hostname -I | awk '{print $1}')"
+echo "• Temperature:   $(vcgencmd measure_temp 2>/dev/null || echo "N/A")"
+echo "• Memory Usage:  $(free -h | awk '/Mem:/ {print $3 " / " $2}')"
+echo "• Disk Usage:    $(df -h / | awk 'NR==2 {print $3 " / " $2 " (" $5 " used)"}')"
+echo ""
+echo "=========================================="
+echo " ⚙️ Advanced System Information"
+echo "=========================================="
+echo "• CPU Model:     $(grep -m 1 'Model' /proc/cpuinfo | cut -d ':' -f 2 | xargs 2>/dev/null || echo "Raspberry Pi")"
+echo "• Architecture:  $(uname -m)"
+echo "• Core Voltage:  $(vcgencmd measure_volts core 2>/dev/null || echo "N/A")"
+echo "• Clock Speed:   $(vcgencmd measure_clock arm 2>/dev/null | awk -F'=' '{printf "%.2f GHz\\n", $2/1000000000}' || echo "N/A")"
+echo "• Available RAM: $(free -h | awk '/Mem:/ {print $4}')"
+echo "• Free Disk:     $(df -h / | awk 'NR==2 {print $4}')"
+echo "• Active Users:  $(who | wc -l)"
+echo "• Load Average:  $(uptime | awk -F'load average:' '{print $2}')"
+echo "=========================================="
+"""
+    try:
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=15)
+        output = result.stdout.strip() or "No output returned."
+        await message.channel.send(f"```text\n{output}\n```")
+    except Exception as e:
+        await message.channel.send(f"❌ Error fetching system info: `{e}`")
+
 async def cmd_reboot(message, args):
-    target_chan = get_target_channel(message.guild, "raspi3b") or message.channel
-    await target_chan.send("🔄 Rebooting Raspberry Pi...")
+    await message.channel.send("🔄 Rebooting Raspberry Pi...")
     subprocess.run(['sudo', 'reboot'])
 
 async def cmd_shutdown(message, args):
-    target_chan = get_target_channel(message.guild, "raspi3b") or message.channel
-    await target_chan.send("🛑 Shutting down Raspberry Pi...")
+    await message.channel.send("🛑 Shutting down Raspberry Pi...")
     subprocess.run(['sudo', 'shutdown', 'now'])
 
 async def cmd_temp_report(message, args):
-    target_chan = get_target_channel(message.guild, "raspi3b") or message.channel
-    await target_chan.send("📊 Generating system report...")
+    await message.channel.send("📊 Generating temperature report...")
     try:
-        result = subprocess.run("stdbuf -oL bash ~/temp_monitor.sh temp_report", shell=True, capture_output=True, text=True, timeout=30)
+        cmd = f"bash {MONITOR_SCRIPT} temp_report"
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
         output = result.stdout.strip() or result.stderr.strip() or "Report generated with no output."
         if len(output) > 1900:
             output = output[:1900] + "\n[Output truncated...]"
-        await target_chan.send(output)
+        await message.channel.send(f"```text\n{output}\n```")
     except Exception as e:
-        await target_chan.send(f"❌ Error running command: `{e}`")
+        await message.channel.send(f"❌ Error running command: `{e}`")
 
-async def run_test_command(message, test_type, args):
-    target_chan = get_target_channel(message.guild, "raspi3b") or message.channel
-    val_str = args.strip()
-    if not val_str.isdigit():
-        await target_chan.send(f"❌ Please provide a valid numeric value (e.g., `!test_{test_type} 99`).")
+async def cmd_test(message, args):
+    parts = args.split(" ", 1)
+    if len(parts) < 2 or parts[0].lower() not in ["cpu", "ram", "temp"]:
+        await message.channel.send("❌ Usage: `!test <cpu|ram|temp> <num>` (e.g., `!test cpu 99`).")
         return
-        
+
+    test_type = parts[0].lower()
+    val_str = parts[1].strip()
+    if not val_str.isdigit():
+        await message.channel.send("❌ Please provide a valid numeric value.")
+        return
+
     value = int(val_str)
     action_labels = {"cpu": "CPU test", "ram": "RAM test", "temp": "temp test"}
-    await target_chan.send(f"⚡ Executing {action_labels[test_type]} with value {value}...")
-    
+    await message.channel.send(f"⚡ Executing {action_labels[test_type]} with value {value}...")
+
     try:
-        result = subprocess.run(f"stdbuf -oL bash ~/temp_monitor.sh test_{test_type} {value}", shell=True, capture_output=True, text=True, timeout=60)
+        cmd = f"bash {MONITOR_SCRIPT} test_{test_type} {value}"
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
         output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
         if len(output) > 1500:
             output = output[:1500] + "\n[Output truncated...]"
-        await target_chan.send(output)
-        await message.channel.send(f"✅ `test_{test_type} {value}` finished.")
+        await message.channel.send(f"✅ `test_{test_type} {value}` finished.\n```text\n{output}\n```")
     except Exception as e:
-        await target_chan.send(f"❌ Error executing terminal command: `{e}`")
+        await message.channel.send(f"❌ Error executing terminal command: `{e}`")
 
 async def cmd_test_cpu(message, args):
-    await run_test_command(message, "cpu", args)
+    await cmd_test(message, f"cpu {args}")
 
 async def cmd_test_ram(message, args):
-    await run_test_command(message, "ram", args)
+    await cmd_test(message, f"ram {args}")
 
 async def cmd_test_temp(message, args):
-    await run_test_command(message, "temp", args)
-
-async def cmd_test_security(message, args):
-    target_chan = get_target_channel(message.guild, "alert") or message.channel
-    await target_chan.send("🛡️ **Running Security Watchdog Test Simulations...**")
-    
-    simulated_alerts = [
-        "🚨 **SECURITY ALERT: Failed SSH Login (TEST)**\n• **User:** root\n• **Source IP:** 203.0.113.42\n• **Origin:** Test City, Testland (Test ISP)\n• **Time:** [Simulated]",
-        "⚠️ **SECURITY AUDIT: Sudo Command Executed (TEST)**\n• **User:** raspi3b\n• **Command:** `sudo apt-get upgrade`\n• **Time:** [Simulated]",
-        "🛡️ **FIREWALL BLOCK: External Probe Detected (TEST)**\n• **Blocked IP:** 198.51.100.14\n• **Target Port:** 22\n• **Time:** [Simulated]",
-        "🌐 **WEB ADMIN NOTICE: Pi-Hole Dashboard Activity (TEST)**\n• **Source IP:** 192.168.1.50\n• **Action:** Admin Panel Authentication / Request\n• **Time:** [Simulated]",
-        "📈 **TRAFFIC SPIKE WARNING (TEST)**\n• **Interface:** eth0\n• **Usage Rate:** ~150 MB/min (Threshold: 100 MB/min)\n• **Time:** [Simulated]"
-    ]
-    for alert in simulated_alerts:
-        await target_chan.send(alert)
-    await message.channel.send("✅ `!test_security` test suite finished successfully.")
+    await cmd_test(message, f"temp {args}")
 
 async def cmd_alert(message, args):
-    target_chan = get_target_channel(message.guild, "alert") or message.channel
     try:
         parts = shlex.split(args)
     except Exception:
         parts = args.split()
-        
+
     if not parts:
-        await message.channel.send("❌ Usage examples:\n`!alert reboot 5` (notice only)\n`!alert reboot 5 10` (notice + duration)\n`!alert 5 \"Custom notice\"` (notice only)\n`!alert 5 15 \"Custom notice\"` (notice + duration)")
+        await message.channel.send("❌ Usage examples:\n`!alert reboot 5`\n`!alert 5 15 \"Custom maintenance notice\"`")
         return
 
+    target_channel = None
+    if message.guild:
+        for ch in message.guild.text_channels:
+            if ch.name.lower() == ALERT_CHANNEL:
+                target_channel = ch
+                break
+
+    if not target_channel:
+        target_channel = message.channel
+
     now = datetime.datetime.now()
-    
-    # --- CASE 1: Preset Actions (reboot, shutdown, update, interrupt) ---
+
     if parts[0].lower() in ["reboot", "shutdown", "update", "interrupt"]:
         action = parts[0].lower()
         delay_mins = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 5
-        
-        has_duration = len(parts) > 2 and parts[2].isdigit()
-        duration_mins = int(parts[2]) if has_duration else 0
-        
         start_time = now + datetime.timedelta(minutes=delay_mins)
-        end_time = start_time + datetime.timedelta(minutes=duration_mins)
-        
+
         if action in ["reboot", "shutdown"]:
             title = f"PLANNED NETWORK DOWNTIME: {action.upper()}"
             classification = "Necessary Downtime (Guaranteed Event)"
@@ -340,89 +334,66 @@ async def cmd_alert(message, args):
             classification = "Soft Event (Downtime Not Guaranteed)"
             emoji = "⚠️"
             advice = "Services may experience a brief blip."
-        
+
         output_msg = (
             f"{emoji} **{title}** {emoji}\n"
             f"• **Action Type:** {action.capitalize()}\n"
             f"• **Notice Given At:** {now.strftime('%H:%M')}\n"
             f"• **Execution Time:** ~{start_time.strftime('%H:%M')} (In {delay_mins} mins)\n"
-        )
-        
-        if has_duration:
-            output_msg += f"• **Expected Length:** {duration_mins} minute(s) (Expected back ~{end_time.strftime('%H:%M')})\n"
-            
-        output_msg += (
             f"• **Event Classification:** {classification}\n\n"
             f"*{advice}*"
         )
-        await target_chan.send(output_msg)
-        
-    # --- CASE 2: Custom Alerts starting with a number ---
+        await target_channel.send(output_msg)
+
     elif parts[0].isdigit():
         delay_mins = int(parts[0])
-        
-        has_duration = len(parts) > 1 and parts[1].isdigit()
-        
-        if has_duration:
-            duration_mins = int(parts[1])
-            custom_text_parts = parts[2:]
-        else:
-            duration_mins = 0
-            custom_text_parts = parts[1:]
-            
+        duration_mins = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 5
+
+        custom_text_parts = parts[2:] if len(parts) > 2 and parts[1].isdigit() else parts[1:]
         custom_text = " ".join(custom_text_parts).strip("\"'")
         if not custom_text:
             custom_text = "Scheduled maintenance notification."
-            
+
         start_time = now + datetime.timedelta(minutes=delay_mins)
         end_time = start_time + datetime.timedelta(minutes=duration_mins)
-        
+
         output_msg = (
             f"🚨 **PLANNED NETWORK NOTICE: CUSTOM EVENT** 🚨\n"
             f"• **Custom Message:** {custom_text}\n"
             f"• **Notice Given At:** {now.strftime('%H:%M')}\n"
             f"• **Execution Time:** ~{start_time.strftime('%H:%M')} (In {delay_mins} mins)\n"
+            f"• **Expected Length:** {duration_mins} minute(s) (Expected back ~{end_time.strftime('%H:%M')})\n\n"
+            f"*Please save your work and log off if necessary.*"
         )
-        
-        if has_duration:
-            output_msg += f"• **Expected Length:** {duration_mins} minute(s) (Expected back ~{end_time.strftime('%H:%M')})\n"
-        else:
-            output_msg += f"• **Expected Length:** Unknown / Not Specified\n"
-            
-        output_msg += f"\n*Please save your work and log off if necessary.*"
-        
-        await target_chan.send(output_msg)
+        await target_channel.send(output_msg)
     else:
-        await message.channel.send("❌ Unknown alert command format.")
+        await message.channel.send("❌ Unknown alert format. Use presets (`reboot`, `shutdown`) or timed windows (`!alert 5 15 \"text\"`).")
 
 async def cmd_help(message, args):
-    target_chan = get_target_channel(message.guild, "raspi3b") or message.channel
     help_text = (
         "🤖 **Raspberry Pi Bot Commands:**\n"
+        "• `!ping` - Check bot response latency.\n"
+        "• `!sysinfo` - Show full hardware, OS, network, and RAM stats.\n"
         "• `!temp_report` - Run system temperature report.\n"
-        "• `!test_cpu <num>` - Run CPU diagnostic test.\n"
-        "• `!test_ram <num>` - Run RAM diagnostic test.\n"
-        "• `!test_temp <num>` - Run temperature diagnostic test.\n"
-        "• `!test_security` - Run simulated test suite for security watchdog.\n"
-        "• `!alert reboot <delay> [dur]` - Broadcast preset reboot alert (duration optional).\n"
-        "• `!alert shutdown <delay> [dur]` - Broadcast preset shutdown alert (duration optional).\n"
-        "• `!alert update <delay> [dur]` - Broadcast preset update alert (duration optional).\n"
-        "• `!alert interrupt <delay> [dur]` - Broadcast preset interruption alert (duration optional).\n"
-        "• `!alert <delay> [dur] \"text\"` - Broadcast a custom timed alert (duration optional).\n"
-        "• `!reboot` - Safely restart the Raspberry Pi.\n"
-        "• `!shutdown` - Safely shut down the Raspberry Pi.\n"
-        "• `!help` - Display this command menu."
+        "• `!test <cpu|ram|temp> <num>` or `!test_cpu <num>` - Run diagnostic tests.\n"
+        "• `!alert <reboot|shutdown|update|interrupt> <mins>` - Broadcast preset alert to alert channel.\n"
+        "• `!alert <delay> <dur> \"text\"` - Broadcast custom alert to alert channel.\n"
+        "• `!reboot` - Restart the Raspberry Pi.\n"
+        "• `!shutdown` - Shut down the Raspberry Pi.\n"
+        "• `!help` - Display this menu."
     )
-    await target_chan.send(help_text)
+    await message.channel.send(help_text)
 
 COMMANDS = {
+    "ping": cmd_ping,
+    "sysinfo": cmd_sysinfo,
     "reboot": cmd_reboot,
     "shutdown": cmd_shutdown,
     "temp_report": cmd_temp_report,
+    "test": cmd_test,
     "test_cpu": cmd_test_cpu,
     "test_ram": cmd_test_ram,
     "test_temp": cmd_test_temp,
-    "test_security": cmd_test_security,
     "alert": cmd_alert,
     "help": cmd_help
 }
@@ -431,12 +402,29 @@ COMMANDS = {
 async def on_message(message):
     if message.author == client.user:
         return
-    if message.author.id != YOUR_DISCORD_USER_ID:
+
+    # Check permission: User ID OR matching any of the Allowed Roles
+    is_authorized = False
+    if USER_ID != 0 and message.author.id == USER_ID:
+        is_authorized = True
+    elif message.guild and hasattr(message.author, "roles"):
+        user_role_names = [r.name.lower() for r in message.author.roles]
+        if any(role in user_role_names for role in ALLOWED_ROLES):
+            is_authorized = True
+
+    if not is_authorized:
         return
+
+    # Restrict channel listening (allow Direct Messages)
+    if isinstance(message.channel, discord.TextChannel):
+        if message.channel.name.lower() != LISTEN_CHANNEL:
+            return
+
     if message.content.startswith("!"):
         parts = message.content[1:].split(" ", 1)
         cmd_name = parts[0].lower()
         args = parts[1].strip() if len(parts) > 1 else ""
+
         if cmd_name in COMMANDS:
             try:
                 await COMMANDS[cmd_name](message, args)
@@ -445,33 +433,23 @@ async def on_message(message):
         else:
             await message.channel.send(f"❌ Unknown command `!{cmd_name}`. Type `!help` for options.")
 
-client.run(config.get("BOT_TOKEN"))
+client.run(BOT_TOKEN)
 EOF
 
-chown "$CURRENT_USER:$CURRENT_USER" "$BOT_SCRIPT"
+chown "$CURRENT_USER:$CURRENT_USER" "$INSTALL_DIR/bot.py"
 
-# ==============================================================================
-# 6. SHORTCUTS, CRON & SYSTEMD SERVICE
-# ==============================================================================
-echo "⚡ Setting up terminal aliases in ~/.bashrc..."
-grep -qF "alias temp_report" "$REAL_HOME/.bashrc" || echo "alias temp_report='~/temp_monitor.sh temp_report'" >> "$REAL_HOME/.bashrc"
-grep -qF "alias test_cpu" "$REAL_HOME/.bashrc" || echo "alias test_cpu='~/temp_monitor.sh test_cpu'" >> "$REAL_HOME/.bashrc"
-grep -qF "alias test_ram" "$REAL_HOME/.bashrc" || echo "alias test_ram='~/temp_monitor.sh test_ram'" >> "$REAL_HOME/.bashrc"
-grep -qF "alias test_temp" "$REAL_HOME/.bashrc" || echo "alias test_temp='~/temp_monitor.sh test_temp'" >> "$REAL_HOME/.bashrc"
-
-echo "⏰ Scheduling automated cron job..."
-(crontab -l 2>/dev/null | grep -v "temp_monitor.sh"; echo "* * * * * ~/temp_monitor.sh > /dev/null 2>&1") | crontab -
-
-echo "⚙️ Setting up systemd service for Discord Bot..."
+# Step 6: Reload Systemd Service
 sudo bash -c "cat > /etc/systemd/system/$SERVICE_NAME.service" << EOL
 [Unit]
-Description=PiTweaks Discord Bot
-After=network.target
+Description=PiTweaks Discord Bot Daemon
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=$CURRENT_USER
-ExecStart=/usr/bin/python3 $BOT_SCRIPT
+WorkingDirectory=$INSTALL_DIR
+ExecStart=/usr/bin/python3 $INSTALL_DIR/bot.py
 Restart=always
 RestartSec=10
 
@@ -483,5 +461,4 @@ sudo systemctl daemon-reload
 sudo systemctl enable "$SERVICE_NAME.service"
 sudo systemctl restart "$SERVICE_NAME.service"
 
-echo ""
-echo "✅ Installation complete! Both the monitor script and Discord bot are ready and running."
+echo "✅ Discord Bot updated and service restarted successfully!"
