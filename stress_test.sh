@@ -1,14 +1,13 @@
 #!/bin/bash
 
-# Description: Live TUI stability testing suite with real-time hardware telemetry and throttle detection.
-
 # ==============================================================================
 # 🍓 PiTweaks TUI Installer - Throttle & Stability Diagnostic Suite
+# ==============================================================================
+# Description: Live TUI stability testing suite with real-time hardware telemetry and throttle detection.
 # ==============================================================================
 
 set -e
 
-# Resolve execution user and home directory
 if [ -n "$SUDO_USER" ]; then
     REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
     CURRENT_USER="$SUDO_USER"
@@ -18,6 +17,7 @@ else
 fi
 
 INSTALL_DIR="$REAL_HOME/PiTweaks"
+TARGET_SCRIPT="$INSTALL_DIR/pi_tui.py"
 mkdir -p "$INSTALL_DIR"
 
 echo "🔍 Checking system dependencies..."
@@ -31,9 +31,16 @@ if ! dpkg -s python3 stress-ng &> /dev/null; then
     sudo apt-get update -qq && sudo apt-get install -y python3 stress-ng -qq
 fi
 
-echo "📝 Generating PiTweaks TUI script..."
+# Check for existing installation to maintain backward compatibility & avoid extra disk usage
+UPDATE_MODE=false
+if [ -f "$TARGET_SCRIPT" ]; then
+    echo "🔄 Existing installation detected. Verifying and updating in place..."
+    UPDATE_MODE=true
+fi
 
-cat << 'EOF' > "$INSTALL_DIR/pi_tui.py"
+echo "📝 Writing PiTweaks TUI script..."
+
+cat << 'EOF' > "$TARGET_SCRIPT"
 #!/usr/bin/env python3
 import os
 import sys
@@ -60,9 +67,12 @@ def get_hardware_stats():
     temp = temp_raw.replace("temp=", "").replace("'C", "°C") if "temp=" in temp_raw else "N/A"
 
     freq_raw = run_cmd("vcgencmd measure_clock arm")
-    if "frequency=" in freq_raw:
-        freq_hz = int(freq_raw.split("=")[1])
-        freq = f"{freq_hz / 1000000:.0f} MHz"
+    if "=" in freq_raw:
+        try:
+            freq_hz = int(freq_raw.split("=")[1])
+            freq = f"{freq_hz / 1000000:.0f} MHz"
+        except Exception:
+            freq = "N/A"
     else:
         freq = "N/A"
 
@@ -81,59 +91,113 @@ def get_hardware_stats():
     else:
         ram = "N/A"
 
-    return temp, freq, volts, ram
+    load_raw = run_cmd("cat /proc/loadavg")
+    loads = load_raw.split()[:3] if load_raw else ["N/A", "N/A", "N/A"]
+    load_avg = f"{loads[0]} / {loads[1]} / {loads[2]}"
 
-def parse_throttle_status():
-    raw_hex = run_cmd("vcgencmd get_throttled")
+    return temp, freq, volts, ram, load_avg
+
+def parse_throttle_status(raw_hex):
     if "throttled=" not in raw_hex:
-        return f"{GREEN}🟢 OPTIMAL (No Throttling){RESET}"
+        return "OPTIMAL", []
     
     try:
         hex_str = raw_hex.split("=")[1].strip()
         dec_val = int(hex_str, 16)
     except Exception:
-        return f"{GREEN}🟢 OPTIMAL{RESET}"
+        return "OPTIMAL", []
 
     if dec_val == 0:
-        return f"{GREEN}🟢 OPTIMAL (No Throttling Detected){RESET}"
+        return "OPTIMAL", []
 
-    statuses = []
+    issues = []
+    has_active = False
     if (dec_val >> 0) & 1:
-        statuses.append(f"{RED}  🔴 [ACTIVE] Under-voltage detected! (Power supply issue){RESET}")
+        issues.append("[CRITICAL ACTIVE] Under-voltage detected (Power supply issue)")
+        has_active = True
     if (dec_val >> 1) & 1:
-        statuses.append(f"{RED}  🔴 [ACTIVE] ARM frequency capped due to thermal limits.{RESET}")
+        issues.append("[CRITICAL ACTIVE] ARM frequency capped due to thermal limits")
+        has_active = True
     if (dec_val >> 2) & 1:
-        statuses.append(f"{RED}  🔴 [ACTIVE] CPU actively being throttled!{RESET}")
+        issues.append("[CRITICAL ACTIVE] CPU actively being throttled")
+        has_active = True
     if (dec_val >> 3) & 1:
-        statuses.append(f"{RED}  🔴 [ACTIVE] Soft temperature limit active.{RESET}")
+        issues.append("[CRITICAL ACTIVE] Soft temperature limit active")
+        has_active = True
 
     if (dec_val >> 16) & 1:
-        statuses.append(f"{YELLOW}  🟡 [PAST] Under-voltage occurred since last reboot.{RESET}")
+        issues.append("[WARNING PAST] Under-voltage occurred since last reboot")
     if (dec_val >> 17) & 1:
-        statuses.append(f"{YELLOW}  🟡 [PAST] Frequency capping occurred since last reboot.{RESET}")
+        issues.append("[WARNING PAST] Frequency capping occurred since last reboot")
     if (dec_val >> 18) & 1:
-        statuses.append(f"{YELLOW}  🟡 [PAST] Throttling occurred since last reboot.{RESET}")
+        issues.append("[WARNING PAST] Throttling occurred since last reboot")
     if (dec_val >> 19) & 1:
-        statuses.append(f"{YELLOW}  🟡 [PAST] Soft temperature limit occurred since last reboot.{RESET}")
+        issues.append("[WARNING PAST] Soft temperature limit occurred since last reboot")
 
-    return "\n".join(statuses) if statuses else f"{GREEN}🟢 OPTIMAL{RESET}"
+    status_level = "CRITICAL" if has_active else "WARNING"
+    return status_level, issues
+
+def format_throttle_display(raw_hex):
+    level, issues = parse_throttle_status(raw_hex)
+    if not issues:
+        return f"{GREEN}[STATUS: OPTIMAL - NO THROTTLING DETECTED]{RESET}"
+    
+    formatted = []
+    for issue in issues:
+        if "CRITICAL" in issue:
+            formatted.append(f"{RED}  {issue}{RESET}")
+        else:
+            formatted.append(f"{YELLOW}  {issue}{RESET}")
+    return "\n".join(formatted)
 
 def start_stress_workload(test_type, duration):
     if test_type == "cpu":
         cmd = f"stress-ng --cpu 4 --timeout {duration}s"
     elif test_type == "ram":
-        cmd = f"stress-ng --vm 2 --vm-bytes 75% --timeout {duration}s"
+        # Comprehensive RAM test: stresses allocation blocks and page swaps heavily
+        cmd = f"stress-ng --vm 4 --vm-bytes 85% --vm-method all --timeout {duration}s"
     elif test_type == "gpu":
         subprocess.run("vcgencmd render_bar 1", shell=True, capture_output=True)
         time.sleep(duration)
         subprocess.run("vcgencmd render_bar 0", shell=True, capture_output=True)
         return
     elif test_type == "all":
-        cmd = f"stress-ng --cpu 4 --vm 1 --timeout {duration}s"
+        cmd = f"stress-ng --cpu 4 --vm 2 --vm-bytes 75% --timeout {duration}s"
     else:
         return
     
     subprocess.run(cmd, shell=True, capture_output=True)
+
+def show_diagnostic_page(test_type, elapsed_time, peak_temp, final_hex):
+    level, issues = parse_throttle_status(final_hex)
+    
+    # Determine Rating
+    if level == "OPTIMAL":
+        rating = f"{GREEN}EXCELLENT (Fully Stable){RESET}"
+    elif level == "WARNING":
+        rating = f"{YELLOW}MODERATE (Past throttling flags present, current run stable){RESET}"
+    else:
+        rating = f"{RED}POOR / UNSTABLE (Active thermal/power throttling occurred){RESET}"
+
+    os.system('clear')
+    print(f"{CYAN}=================================================={RESET}")
+    print(f"{CYAN} PiTweaks - Post-Test Diagnostic & Rundown Report {RESET}")
+    print(f"{CYAN}=================================================={RESET}")
+    print(f" Test Performed   : {test_type.upper()}")
+    print(f" Duration Run     : {elapsed_time} seconds")
+    print(f" Peak Temperature : {YELLOW}{peak_temp}{RESET}")
+    print(f" System Rating    : {rating}")
+    print("--------------------------------------------------")
+    print(" Diagnostic Findings:")
+    if not issues:
+        print(f"  {GREEN}• No active or historical stability issues logged during run.{RESET}")
+    else:
+        for issue in issues:
+            if "CRITICAL" in issue:
+                print(f"  {RED}• {issue}{RESET}")
+            else:
+                print(f"  {YELLOW}• {issue}{RESET}")
+    print("==================================================")
 
 def main_dashboard(test_type):
     duration = 45 
@@ -145,6 +209,10 @@ def main_dashboard(test_type):
     sys.stdout.write("\033[?25l")
     sys.stdout.flush()
 
+    peak_temp = "N/A"
+    final_hex = "throttled=0x0"
+    elapsed = 0
+
     try:
         while True:
             elapsed = int(time.time() - start_time)
@@ -153,21 +221,29 @@ def main_dashboard(test_type):
             if not stress_thread.is_alive() or remaining == 0:
                 break
 
-            temp, freq, volts, ram = get_hardware_stats()
-            throttle_info = parse_throttle_status()
+            temp, freq, volts, ram, load_avg = get_hardware_stats()
+            if temp != "N/A":
+                peak_temp = temp
+
+            raw_hex = run_cmd("vcgencmd get_throttled")
+            if raw_hex:
+                final_hex = raw_hex
+
+            throttle_info = format_throttle_display(raw_hex)
 
             os.system('clear')
             dashboard = f"""
 {CYAN}╔══════════════════════════════════════════════════════════════╗
-║                 🍓 PiTweaks STABILITY TESTER                 ║
+║                 PiTweaks STABILITY TESTER                    ║
 ╚══════════════════════════════════════════════════════════════╝{RESET}
  {BOLD}Active Test Mode:{RESET} {test_type.upper()}  |  {BOLD}Time Remaining:{RESET} {remaining}s
 
  {CYAN}┌─ HARDWARE TELEMETRY ────────────────────────────────────────┐{RESET}
-   🔥 CPU Temperature : {YELLOW}{temp}{RESET}
-   ⚡ CPU Frequency   : {freq}
-   🔋 Core Voltage    : {volts}
-   💾 RAM Usage       : {ram}
+   CPU Temperature : {YELLOW}{temp}{RESET}
+   CPU Frequency   : {freq}
+   Core Voltage    : {volts}
+   RAM Usage       : {ram}
+   Load Average    : {load_avg}
 
  {CYAN}┌─ ACTIVE THROTTLING & THERMAL WATCHER ───────────────────────┐{RESET}
 {throttle_info}
@@ -185,56 +261,77 @@ def main_dashboard(test_type):
         subprocess.run("vcgencmd render_bar 0 2>/dev/null", shell=True, capture_output=True)
         sys.stdout.write("\033[?25h")
         sys.stdout.flush()
-        print(f"\n{GREEN}✅ Test session ended successfully.{RESET}\n")
+        
+        # Show diagnostic rundown page
+        show_diagnostic_page(test_type, elapsed, peak_temp, final_hex)
 
 def menu_selector():
-    while True:
-        os.system('clear')
-        print(f"{CYAN}=================================================={RESET}")
-        print(f"{CYAN} 🍓 PiTweaks - Stability & Stress Test Suite      {RESET}")
-        print(f"{CYAN}=================================================={RESET}")
-        print(" Please select a benchmark test mode:")
-        print("   1) CPU Stress Test")
-        print("   2) RAM Memory Test")
-        print("   3) GPU Render Test")
-        print("   4) All-At-Once Comprehensive Test")
-        print("   5) Exit")
-        print("--------------------------------------------------")
-        
-        choice = input(" Select option [1-5]: ").strip()
+    try:
+        while True:
+            os.system('clear')
+            print(f"{CYAN}=================================================={RESET}")
+            print(f"{CYAN} PiTweaks - Stability & Stress Test Suite          {RESET}")
+            print(f"{CYAN}=================================================={RESET}")
+            print(" Please select a benchmark test mode:")
+            print("   1) CPU Stress Test")
+            print("   2) RAM Memory Test")
+            print("   3) GPU Render Test")
+            print("   4) All-At-Once Comprehensive Test")
+            print("   5) Exit")
+            print("--------------------------------------------------")
+            
+            try:
+                choice = input(" Select option [1-5]: ").strip()
+            except (KeyboardInterrupt, EOFError):
+                print("\nExiting PiTweaks. Goodbye!")
+                sys.exit(0)
 
-        if choice == "1":
-            main_dashboard("cpu")
-            input("Press [Enter] to continue...")
-        elif choice == "2":
-            main_dashboard("ram")
-            input("Press [Enter] to continue...")
-        elif choice == "3":
-            main_dashboard("gpu")
-            input("Press [Enter] to continue...")
-        elif choice == "4":
-            main_dashboard("all")
-            input("Press [Enter] to continue...")
-        elif choice == "5":
-            print("Exiting PiTweaks. Goodbye!")
-            sys.exit(0)
-        else:
-            print(f"{RED}Invalid choice. Please select 1-5.{RESET}")
-            time.sleep(1)
+            if choice == "1":
+                main_dashboard("cpu")
+                input("\nPress [Enter] to return to menu...")
+            elif choice == "2":
+                main_dashboard("ram")
+                input("\nPress [Enter] to continue...")
+            elif choice == "3":
+                main_dashboard("gpu")
+                input("\nPress [Enter] to continue...")
+            elif choice == "4":
+                main_dashboard("all")
+                input("\nPress [Enter] to continue...")
+            elif choice == "5":
+                print("Exiting PiTweaks. Goodbye!")
+                sys.exit(0)
+            else:
+                print(f"{RED}Invalid choice. Please select 1-5.{RESET}")
+                time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nExiting PiTweaks. Goodbye!")
+        sys.exit(0)
 
 if __name__ == "__main__":
     menu_selector()
 EOF
 
-chown "$CURRENT_USER:$CURRENT_USER" "$INSTALL_DIR/pi_tui.py"
-chmod +x "$INSTALL_DIR/pi_tui.py"
-
-# Create a convenient global shortcut command 'pitweaks-tui'
-sudo ln -sf "$INSTALL_DIR/pi_tui.py" /usr/local/bin/pitweaks-tui
+chown "$CURRENT_USER:$CURRENT_USER" "$TARGET_SCRIPT"
+chmod +x "$TARGET_SCRIPT"
+sudo ln -sf "$TARGET_SCRIPT" /usr/local/bin/pitweaks-tui
 
 echo "=================================================="
-echo " ✅ Installation Complete!"
+if [ "$UPDATE_MODE" = true ]; then
+    echo " ✅ PiTweaks TUI successfully updated in place!"
+else
+    echo " ✅ PiTweaks TUI successfully installed!"
+fi
 echo "=================================================="
-echo " You can now launch the TUI tester from anywhere by typing:"
-echo " 👉 pitweaks-tui"
-echo "==================================================]"
+
+# Ask user if they want to run it right now (y/n)
+read -p " Do you want to launch the stability tester now? (y/n): " RUN_CHOICE
+case "$RUN_CHOICE" in
+    [yY][eE][sS]|[yY])
+        echo "Launching pitweaks-tui..."
+        exec pitweaks-tui
+        ;;
+    *)
+        echo "Installation finalized. You can run it anytime by typing: pitweaks-tui"
+        ;;
+esac
