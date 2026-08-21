@@ -1,5 +1,5 @@
 discord_controller.sh|No description provided
-discord_monitor.sh|Raspberry Pi system resource monitor installer with forced TTY terminal input, auto-config preservation, and testing utilities.
+discord_monitor.sh|Raspberry Pi system resource monitor installer with manual prompt input, automated Discord alerts, priority temperature tracking, and testing utilities.
 disk_check.sh|No description provided
 net_auditor.sh|Enhanced network utility featuring an interactive menu for Ookla Speed Tests, open port auditing, ping checks, DNS tests, and Wi-Fi diagnostics.
 overclock.sh|Smart Raspberry Pi overclocking manager with live thermal monitoring and safe backups.
