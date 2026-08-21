@@ -1,5 +1,7 @@
 #!/bin/bash
-# Description: Revert 3
+
+# Description: Reverted again
+
 clear
 
 # ==============================================================================
@@ -30,9 +32,9 @@ echo ""
 MISSING_ITEMS=""
 PRESENT_ITEMS=""
 
-[ -f "$MONITOR_SCRIPT" ] && PRESENT_ITEMS="$PRESENT_ITEMS temp_monitor.sh" \vert{}\vert{} MISSING_ITEMS="$MISSING_ITEMS temp_monitor.sh"
-[ -f "$BOT_SCRIPT" ] && PRESENT_ITEMS="$PRESENT_ITEMS bot.py" \vert{}\vert{} MISSING_ITEMS="$MISSING_ITEMS bot.py"
-[ -f "$CONFIG_FILE" ] && PRESENT_ITEMS="$PRESENT_ITEMS config.env" \vert{}\vert{} MISSING_ITEMS="$MISSING_ITEMS config.env"
+[ -f "$MONITOR_SCRIPT" ] && PRESENT_ITEMS="$PRESENT_ITEMS temp_monitor.sh" || MISSING_ITEMS="$MISSING_ITEMS temp_monitor.sh"
+[ -f "$BOT_SCRIPT" ] && PRESENT_ITEMS="$PRESENT_ITEMS bot.py" || MISSING_ITEMS="$MISSING_ITEMS bot.py"
+[ -f "$CONFIG_FILE" ] && PRESENT_ITEMS="$PRESENT_ITEMS config.env" || MISSING_ITEMS="$MISSING_ITEMS config.env"
 
 if [ -n "$PRESENT_ITEMS" ]; then
     echo "🔍 **Status Check:** Found existing components:$PRESENT_ITEMS"
@@ -124,75 +126,75 @@ DIVIDER="---------------------------------------"
 # ---------------------
 
 get_top_cpu() {
-    ps -eo comm,%cpu,%mem --sort=-%cpu | head -n 4 | tail -n 3 | awk '{printf "  • %s: CPU %s%% | RAM %s%%\n", \$1, \$2, \$3}'
+    ps -eo comm,%cpu,%mem --sort=-%cpu | head -n 4 | tail -n 3 | awk '{printf "  • %s: CPU %s%% | RAM %s%%\n", $1, $2, $3}'
 }
 
 get_top_ram() {
-    ps -eo comm,%cpu,%mem --sort=-%mem | head -n 4 | tail -n 3 | awk '{printf "  • %s: RAM %s%% | CPU %s%%\n", \$1, \$3, \$2}'
+    ps -eo comm,%cpu,%mem --sort=-%mem | head -n 4 | tail -n 3 | awk '{printf "  • %s: RAM %s%% | CPU %s%%\n", $1, $3, $2}'
 }
 
-RAW_TEMP=\$(vcgencmd measure_temp | egrep -o '[0-9]*\.[0-9]*')
-TEMP=\${RAW_TEMP%.*}
+RAW_TEMP=$(vcgencmd measure_temp | egrep -o '[0-9]*\.[0-9]*')
+TEMP=${RAW_TEMP%.*}
 
-RAM_TOTAL=\$(free -m | awk '/Mem:/ {print \$2}')
-RAM_USED=\$(free -m | awk '/Mem:/ {print \$3}')
-RAM_PERC=\$(( RAM_USED * 100 / RAM_TOTAL ))
+RAM_TOTAL=$(free -m | awk '/Mem:/ {print $2}')
+RAM_USED=$(free -m | awk '/Mem:/ {print $3}')
+RAM_PERC=$(( RAM_USED * 100 / RAM_TOTAL ))
 
-CPU_IDLE=\$(top -bn1 | grep "%Cpu" | awk '{print \$8}' | cut -d'.' -f1)
-if [ -z "\$CPU_IDLE" ]; then
-    CPU_IDLE=\$(top -bn1 | awk '/Cpu\(s\)/ {print \$8}' | cut -d'.' -f1)
+CPU_IDLE=$(top -bn1 | grep "%Cpu" | awk '{print $8}' | cut -d'.' -f1)
+if [ -z "$CPU_IDLE" ]; then
+    CPU_IDLE=$(top -bn1 | awk '/Cpu\(s\)/ {print $8}' | cut -d'.' -f1)
 fi
-CPU_USAGE=\$(( 100 - CPU_IDLE ))
+CPU_USAGE=$(( 100 - CPU_IDLE ))
 
-if [ "\$1" = "temp_report" ]; then
-    TOP_PROCS=\$(get_top_cpu)
-    MSG="\${DIVIDER}
+if [ "$1" = "temp_report" ]; then
+    TOP_PROCS=$(get_top_cpu)
+    MSG="${DIVIDER}
 🟨 📝 **System Report**:
-• **Temp:** \${RAW_TEMP}°C | **CPU:** \${CPU_USAGE}% | **RAM:** \${RAM_PERC}% (\${RAM_USED}MB / \${RAM_TOTAL}MB)
+• **Temp:** ${RAW_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${RAM_PERC}% (${RAM_USED}MB / ${RAM_TOTAL}MB)
 
 **Top Processes (CPU):**
-\${TOP_PROCS}
-\${DIVIDER}"
-    echo "\$MSG"
+${TOP_PROCS}
+${DIVIDER}"
+    echo "$MSG"
     exit 0
 
-elif [ "\$1" = "test_cpu" ] && [ -n "\$2" ]; then
-    SIM_CPU=\$2
-    TOP_PROCS=\$(get_top_cpu)
-    MSG="\${DIVIDER}
-🟦 ⚡ **HIGH CPU ALERT (TEST SIMULATION)**: Load sustained at \${SIM_CPU}% for 3 mins!
-• **Temp:** \${RAW_TEMP}°C | **CPU:** \${SIM_CPU}% | **RAM:** \${RAM_PERC}%
+elif [ "$1" = "test_cpu" ] && [ -n "$2" ]; then
+    SIM_CPU=$2
+    TOP_PROCS=$(get_top_cpu)
+    MSG="${DIVIDER}
+🟦 ⚡ **HIGH CPU ALERT (TEST SIMULATION)**: Load sustained at ${SIM_CPU}% for 3 mins!
+• **Temp:** ${RAW_TEMP}°C | **CPU:** ${SIM_CPU}% | **RAM:** ${RAM_PERC}%
 
 **Top CPU Processes:**
-\${TOP_PROCS}
-\${DIVIDER}"
-    echo "\$MSG"
+${TOP_PROCS}
+${DIVIDER}"
+    echo "$MSG"
     exit 0
 
-elif [ "\$1" = "test_ram" ] && [ -n "\$2" ]; then
-    SIM_RAM=\$2
-    TOP_PROCS=\$(get_top_ram)
-    MSG="\${DIVIDER}
-🟦 📊 **HIGH RAM ALERT (TEST SIMULATION)**: Usage sustained at \${SIM_RAM}% for 3 mins!
-• **Temp:** \${RAW_TEMP}°C | **CPU:** \${CPU_USAGE}% | **RAM:** \${SIM_RAM}%
+elif [ "$1" = "test_ram" ] && [ -n "$2" ]; then
+    SIM_RAM=$2
+    TOP_PROCS=$(get_top_ram)
+    MSG="${DIVIDER}
+🟦 📊 **HIGH RAM ALERT (TEST SIMULATION)**: Usage sustained at ${SIM_RAM}% for 3 mins!
+• **Temp:** ${RAW_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${SIM_RAM}%
 
 **Top RAM Processes:**
-\${TOP_PROCS}
-\${DIVIDER}"
-    echo "\$MSG"
+${TOP_PROCS}
+${DIVIDER}"
+    echo "$MSG"
     exit 0
 
-elif [ "\$1" = "test_temp" ] && [ -n "\$2" ]; then
-    SIM_TEMP=\$2
-    TOP_PROCS=\$(get_top_cpu)
-    MSG="\${DIVIDER}
-🟦 🌡️ **TEMP WARNING (TEST SIMULATION)**: CPU reached \${SIM_TEMP}°C!
-• **Temp:** \${SIM_TEMP}°C | **CPU:** \${CPU_USAGE}% | **RAM:** \${RAM_PERC}%
+elif [ "$1" = "test_temp" ] && [ -n "$2" ]; then
+    SIM_TEMP=$2
+    TOP_PROCS=$(get_top_cpu)
+    MSG="${DIVIDER}
+🟦 🌡️ **TEMP WARNING (TEST SIMULATION)**: CPU reached ${SIM_TEMP}°C!
+• **Temp:** ${SIM_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${RAM_PERC}%
 
 **Top CPU Processes:**
-\${TOP_PROCS}
-\${DIVIDER}"
-    echo "\$MSG"
+${TOP_PROCS}
+${DIVIDER}"
+    echo "$MSG"
     exit 0
 fi
 SCRIPT
@@ -255,21 +257,15 @@ async def cmd_temp_report(message, args):
         output = result.stdout.strip() or result.stderr.strip() or "Report generated with no output."
         if len(output) > 1900:
             output = output[:1900] + "\n[Output truncated...]"
-        await target_chan.send(f"```text\n{output}\n```")
+        await target_chan.send(output)
     except Exception as e:
         await target_chan.send(f"❌ Error running command: `{e}`")
 
-async def cmd_test(message, args):
+async def run_test_command(message, test_type, args):
     target_chan = get_target_channel(message.guild, "raspi3b") or message.channel
-    parts = args.split(" ", 1)
-    if len(parts) < 2 or parts[0].lower() not in ["cpu", "ram", "temp"]:
-        await target_chan.send("❌ Usage: `!test <cpu|ram|temp> <num>` (e.g., `!test cpu 99`).")
-        return
-    
-    test_type = parts[0].lower()
-    val_str = parts[1].strip()
+    val_str = args.strip()
     if not val_str.isdigit():
-        await target_chan.send("❌ Please provide a valid numeric value.")
+        await target_chan.send(f"❌ Please provide a valid numeric value (e.g., `!test_{test_type} 99`).")
         return
         
     value = int(val_str)
@@ -281,9 +277,34 @@ async def cmd_test(message, args):
         output = result.stdout.strip() or result.stderr.strip() or "Command executed successfully with no output."
         if len(output) > 1500:
             output = output[:1500] + "\n[Output truncated...]"
-        await target_chan.send(f"✅ `test_{test_type} {value}` finished.\n```text\n{output}\n```")
+        await target_chan.send(output)
+        await message.channel.send(f"✅ `test_{test_type} {value}` finished.")
     except Exception as e:
         await target_chan.send(f"❌ Error executing terminal command: `{e}`")
+
+async def cmd_test_cpu(message, args):
+    await run_test_command(message, "cpu", args)
+
+async def cmd_test_ram(message, args):
+    await run_test_command(message, "ram", args)
+
+async def cmd_test_temp(message, args):
+    await run_test_command(message, "temp", args)
+
+async def cmd_test_security(message, args):
+    target_chan = get_target_channel(message.guild, "alert") or message.channel
+    await target_chan.send("🛡️ **Running Security Watchdog Test Simulations...**")
+    
+    simulated_alerts = [
+        "🚨 **SECURITY ALERT: Failed SSH Login (TEST)**\n• **User:** root\n• **Source IP:** 203.0.113.42\n• **Origin:** Test City, Testland (Test ISP)\n• **Time:** [Simulated]",
+        "⚠️ **SECURITY AUDIT: Sudo Command Executed (TEST)**\n• **User:** raspi3b\n• **Command:** `sudo apt-get upgrade`\n• **Time:** [Simulated]",
+        "🛡️ **FIREWALL BLOCK: External Probe Detected (TEST)**\n• **Blocked IP:** 198.51.100.14\n• **Target Port:** 22\n• **Time:** [Simulated]",
+        "🌐 **WEB ADMIN NOTICE: Pi-Hole Dashboard Activity (TEST)**\n• **Source IP:** 192.168.1.50\n• **Action:** Admin Panel Authentication / Request\n• **Time:** [Simulated]",
+        "📈 **TRAFFIC SPIKE WARNING (TEST)**\n• **Interface:** eth0\n• **Usage Rate:** ~150 MB/min (Threshold: 100 MB/min)\n• **Time:** [Simulated]"
+    ]
+    for alert in simulated_alerts:
+        await target_chan.send(alert)
+    await message.channel.send("✅ `!test_security` test suite finished successfully.")
 
 async def cmd_alert(message, args):
     target_chan = get_target_channel(message.guild, "alert") or message.channel
@@ -293,16 +314,18 @@ async def cmd_alert(message, args):
         parts = args.split()
         
     if not parts:
-        await message.channel.send("❌ Usage examples:\n`!alert reboot 5` (notice only)\n`!alert reboot 5 10` (notice + duration)\n`!alert 5 15 \"Custom notice\"`")
+        await message.channel.send("❌ Usage examples:\n`!alert reboot 5` (notice only)\n`!alert reboot 5 10` (notice + duration)\n`!alert 5 \"Custom notice\"` (notice only)\n`!alert 5 15 \"Custom notice\"` (notice + duration)")
         return
 
     now = datetime.datetime.now()
+    
+    # --- CASE 1: Preset Actions (reboot, shutdown, update, interrupt) ---
     if parts[0].lower() in ["reboot", "shutdown", "update", "interrupt"]:
         action = parts[0].lower()
         delay_mins = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 5
         
         has_duration = len(parts) > 2 and parts[2].isdigit()
-        duration_mins = int(parts[2]) if has_duration else 5
+        duration_mins = int(parts[2]) if has_duration else 0
         
         start_time = now + datetime.timedelta(minutes=delay_mins)
         end_time = start_time + datetime.timedelta(minutes=duration_mins)
@@ -334,10 +357,19 @@ async def cmd_alert(message, args):
         )
         await target_chan.send(output_msg)
         
+    # --- CASE 2: Custom Alerts starting with a number ---
     elif parts[0].isdigit():
         delay_mins = int(parts[0])
-        duration_mins = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 5
-        custom_text_parts = parts[2:] if len(parts) > 2 and parts[1].isdigit() else parts[1:]
+        
+        has_duration = len(parts) > 1 and parts[1].isdigit()
+        
+        if has_duration:
+            duration_mins = int(parts[1])
+            custom_text_parts = parts[2:]
+        else:
+            duration_mins = 0
+            custom_text_parts = parts[1:]
+            
         custom_text = " ".join(custom_text_parts).strip("\"'")
         if not custom_text:
             custom_text = "Scheduled maintenance notification."
@@ -350,9 +382,15 @@ async def cmd_alert(message, args):
             f"• **Custom Message:** {custom_text}\n"
             f"• **Notice Given At:** {now.strftime('%H:%M')}\n"
             f"• **Execution Time:** ~{start_time.strftime('%H:%M')} (In {delay_mins} mins)\n"
-            f"• **Expected Length:** {duration_mins} minute(s) (Expected back ~{end_time.strftime('%H:%M')})\n\n"
-            f"*Please save your work and log off if necessary.*"
         )
+        
+        if has_duration:
+            output_msg += f"• **Expected Length:** {duration_mins} minute(s) (Expected back ~{end_time.strftime('%H:%M')})\n"
+        else:
+            output_msg += f"• **Expected Length:** Unknown / Not Specified\n"
+            
+        output_msg += f"\n*Please save your work and log off if necessary.*"
+        
         await target_chan.send(output_msg)
     else:
         await message.channel.send("❌ Unknown alert command format.")
@@ -362,12 +400,15 @@ async def cmd_help(message, args):
     help_text = (
         "🤖 **Raspberry Pi Bot Commands:**\n"
         "• `!temp_report` - Run system temperature report.\n"
-        "• `!test <cpu|ram|temp> <num>` - Run hardware diagnostic tests.\n"
+        "• `!test_cpu <num>` - Run CPU diagnostic test.\n"
+        "• `!test_ram <num>` - Run RAM diagnostic test.\n"
+        "• `!test_temp <num>` - Run temperature diagnostic test.\n"
+        "• `!test_security` - Run simulated test suite for security watchdog.\n"
         "• `!alert reboot <delay> [dur]` - Broadcast preset reboot alert (duration optional).\n"
         "• `!alert shutdown <delay> [dur]` - Broadcast preset shutdown alert (duration optional).\n"
         "• `!alert update <delay> [dur]` - Broadcast preset update alert (duration optional).\n"
         "• `!alert interrupt <delay> [dur]` - Broadcast preset interruption alert (duration optional).\n"
-        "• `!alert <delay> <dur> \"text\"` - Broadcast a custom timed alert.\n"
+        "• `!alert <delay> [dur] \"text\"` - Broadcast a custom timed alert (duration optional).\n"
         "• `!reboot` - Safely restart the Raspberry Pi.\n"
         "• `!shutdown` - Safely shut down the Raspberry Pi.\n"
         "• `!help` - Display this command menu."
@@ -378,7 +419,10 @@ COMMANDS = {
     "reboot": cmd_reboot,
     "shutdown": cmd_shutdown,
     "temp_report": cmd_temp_report,
-    "test": cmd_test,
+    "test_cpu": cmd_test_cpu,
+    "test_ram": cmd_test_ram,
+    "test_temp": cmd_test_temp,
+    "test_security": cmd_test_security,
     "alert": cmd_alert,
     "help": cmd_help
 }
