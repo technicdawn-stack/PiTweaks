@@ -1,8 +1,5 @@
 #!/bin/bash
-# Description: Raspberry Pi system resource monitor installer with manual prompt input, automated Discord alerts, priority temperature tracking, and testing utilities.
-
-# Force interactive terminal input
-exec < /dev/tty
+# Description: Raspberry Pi system resource monitor with automated Discord alerts, priority temperature tracking, and testing utilities.
 
 # Clear screen
 clear
@@ -34,7 +31,8 @@ if [ -f "$HOME/temp_monitor.sh" ]; then
             exit 0
             ;;
         * ) 
-            echo "Proceeding with fresh configuration setup..."
+            echo "Cancelled. No changes were made."
+            exit 0
             ;;
     esac
 fi
