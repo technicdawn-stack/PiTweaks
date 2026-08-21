@@ -31,7 +31,6 @@ if ! dpkg -s python3 stress-ng &> /dev/null; then
     sudo apt-get update -qq && sudo apt-get install -y python3 stress-ng -qq
 fi
 
-# Check for existing installation to maintain backward compatibility & avoid extra disk usage
 UPDATE_MODE=false
 if [ -f "$TARGET_SCRIPT" ]; then
     echo "🔄 Existing installation detected. Verifying and updating in place..."
@@ -154,7 +153,6 @@ def start_stress_workload(test_type, duration):
     if test_type == "cpu":
         cmd = f"stress-ng --cpu 4 --timeout {duration}s"
     elif test_type == "ram":
-        # Comprehensive RAM test: stresses allocation blocks and page swaps heavily
         cmd = f"stress-ng --vm 4 --vm-bytes 85% --vm-method all --timeout {duration}s"
     elif test_type == "gpu":
         subprocess.run("vcgencmd render_bar 1", shell=True, capture_output=True)
@@ -171,7 +169,6 @@ def start_stress_workload(test_type, duration):
 def show_diagnostic_page(test_type, elapsed_time, peak_temp, final_hex):
     level, issues = parse_throttle_status(final_hex)
     
-    # Determine Rating
     if level == "OPTIMAL":
         rating = f"{GREEN}EXCELLENT (Fully Stable){RESET}"
     elif level == "WARNING":
@@ -261,8 +258,6 @@ def main_dashboard(test_type):
         subprocess.run("vcgencmd render_bar 0 2>/dev/null", shell=True, capture_output=True)
         sys.stdout.write("\033[?25h")
         sys.stdout.flush()
-        
-        # Show diagnostic rundown page
         show_diagnostic_page(test_type, elapsed, peak_temp, final_hex)
 
 def menu_selector():
@@ -318,20 +313,16 @@ sudo ln -sf "$TARGET_SCRIPT" /usr/local/bin/pitweaks-tui
 
 echo "=================================================="
 if [ "$UPDATE_MODE" = true ]; then
-    echo " ✅ PiTweaks TUI successfully updated in place!"
+    echo " PiTweaks TUI successfully updated in place!"
 else
-    echo " ✅ PiTweaks TUI successfully installed!"
+    echo " PiTweaks TUI successfully installed!"
 fi
 echo "=================================================="
 
-# Ask user if they want to run it right now (y/n)
-read -p " Do you want to launch the stability tester now? (y/n): " RUN_CHOICE
-case "$RUN_CHOICE" in
-    [yY][eE][sS]|[yY])
-        echo "Launching pitweaks-tui..."
-        exec pitweaks-tui
-        ;;
-    *)
-        echo "Installation finalized. You can run it anytime by typing: pitweaks-tui"
-        ;;
-esac
+read -p "Do you want to launch the stability tester now? (y/n): " RUN_CHOICE
+if [[ "$RUN_CHOICE" =~ ^[Yy]$ ]]; then
+    echo "Launching pitweaks-tui..."
+    exec pitweaks-tui
+else
+    echo "Installation finalized. You can run it anytime by typing: pitweaks-tui"
+fi
