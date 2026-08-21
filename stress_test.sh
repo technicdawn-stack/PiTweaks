@@ -1,24 +1,19 @@
 #!/bin/bash
 
 # ==============================================================================
-# 🍓 PiTweaks TUI Installer - Throttle & Stability Diagnostic Suite
-# ==============================================================================
-# Description: Whiptail-powered TUI stability testing suite for Raspberry Pi.
+# 🍓 PiTweaks TUI Installer - Throttle & Stability Diagnostic Suite (No-Sudo)
 # ==============================================================================
 
 set -e
 
-if [ -n "$SUDO_USER" ]; then
-    REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-    CURRENT_USER="$SUDO_USER"
-else
-    REAL_HOME="$HOME"
-    CURRENT_USER="$(whoami)"
-fi
-
+REAL_HOME="$HOME"
 INSTALL_DIR="$REAL_HOME/PiTweaks"
 TARGET_SCRIPT="$INSTALL_DIR/pi_tui.py"
+USER_BIN_DIR="$REAL_HOME/.local/bin"
+WRAPPER_SCRIPT="$USER_BIN_DIR/pitweaks-tui"
+
 mkdir -p "$INSTALL_DIR"
+mkdir -p "$USER_BIN_DIR"
 
 echo "🔍 Checking system dependencies..."
 if ! command -v vcgencmd &> /dev/null; then
@@ -26,14 +21,9 @@ if ! command -v vcgencmd &> /dev/null; then
     exit 1
 fi
 
-if ! dpkg -s python3 stress-ng whiptail &> /dev/null; then
-    echo "📦 Installing dependencies (python3, stress-ng, whiptail)..."
-    sudo apt-get update -qq && sudo apt-get install -y python3 stress-ng whiptail -qq
-fi
-
 UPDATE_MODE=false
 if [ -f "$TARGET_SCRIPT" ]; then
-    echo "🔄 Existing installation detected. Verifying and updating in place..."
+    echo "🔄 Existing installation detected. Updating in place..."
     UPDATE_MODE=true
 fi
 
@@ -221,12 +211,13 @@ if __name__ == "__main__":
         main_dashboard(sys.argv[1])
 EOF
 
-chown "$CURRENT_USER:$CURRENT_USER" "$TARGET_SCRIPT"
 chmod +x "$TARGET_SCRIPT"
 
-# Wrapper executable that brings up the Whiptail Menu cleanly
-cat << EOF > /usr/local/bin/pitweaks-tui
+echo "📝 Writing local user wrapper..."
+cat << EOF > "$WRAPPER_SCRIPT"
 #!/bin/bash
+TARGET_PY="$TARGET_SCRIPT"
+
 while true; do
     CHOICE=\$(whiptail --title "PiTweaks - Stability & Stress Test Suite" \\
         --menu "Please select a benchmark test mode:" 15 60 5 \\
@@ -244,15 +235,15 @@ while true; do
     fi
 
     case \$CHOICE in
-        1) python3 "$INSTALL_DIR/pi_tui.py" cpu ;;
-        2) python3 "$INSTALL_DIR/pi_tui.py" ram ;;
-        3) python3 "$INSTALL_DIR/pi_tui.py" gpu ;;
-        4) python3 "$INSTALL_DIR/pi_tui.py" all ;;
+        1) python3 "\$TARGET_PY" cpu ;;
+        2) python3 "\$TARGET_PY" ram ;;
+        3) python3 "\$TARGET_PY" gpu ;;
+        4) python3 "\$TARGET_PY" all ;;
     esac
 done
 EOF
 
-chmod +x /usr/local/bin/pitweaks-tui
+chmod +x "$WRAPPER_SCRIPT"
 
 echo "=================================================="
 if [ "$UPDATE_MODE" = true ]; then
@@ -261,11 +252,13 @@ else
     echo " ✅ PiTweaks TUI successfully installed!"
 fi
 echo "=================================================="
+echo "ℹ️ You can now run the menu anytime by typing: pitweaks-tui"
+echo "=================================================="
 
 read -p "Do you want to launch the stability tester now? (y/n): " RUN_CHOICE
 if [ "$RUN_CHOICE" = "y" ] || [ "$RUN_CHOICE" = "Y" ]; then
     echo "Launching pitweaks-tui..."
-    exec pitweaks-tui
+    exec "$WRAPPER_SCRIPT"
 else
-    echo "Installation finalized. You can run it anytime by typing: pitweaks-tui"
+    echo "Installation finalized."
 fi
