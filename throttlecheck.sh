@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# 🍓 PiTweaks - Whiptail Throttle Manager & Diagnostic Suite
+#Description: PiTweaks - Whiptail Throttle Manager & Diagnostic Suite
 # ==============================================================================
 
 # ANSI Colors for the Live Dashboard
@@ -132,7 +132,7 @@ elif [ "$1" == "test_all" ]; then
     exit 0
 fi
 
-# Whiptail Interactive Menu Loop
+# Whiptail Interactive Menu Loop (Runs when no arguments are passed)
 while true; do
     MAIN_CHOICE=$(whiptail --clear --backtitle "PiTweaks System Manager" \
         --title "Throttle & Diagnostic Manager" \
