@@ -1,82 +1,73 @@
 #!/bin/bash
-# Description: Raspberry Pi system resource monitor installer with forced TTY terminal input, auto-config preservation, and testing utilities.
+# Description: Raspberry Pi system resource monitor installer with manual prompt input, automated Discord alerts, priority temperature tracking, and testing utilities.
 
-# Force interactive terminal input even when piped via curl
+# Force interactive terminal input
 exec < /dev/tty
 
 # Clear screen
 clear
 
-DISCORD_URL=""
-
-# 1. IMMEDIATE CHECK: SAFETY GUARD & CONFIG PRESERVATION
+# 1. IMMEDIATE CHECK: SAFETY GUARD FOR EXISTING INSTALLATIONS
 if [ -f "$HOME/temp_monitor.sh" ]; then
     echo "================================================="
     echo "🔍 Existing installation detected at ~/temp_monitor.sh!"
     echo "================================================="
     echo ""
-    
-    # Try to auto-extract the existing Discord Webhook URL
-    EXISTING_URL=$(grep 'DISCORD_URL=' "$HOME/temp_monitor.sh" | head -n 1 | sed 's/.*DISCORD_URL=["\x27]\?//;s/["\x27]\?$//')
-    
-    if [ -n "$EXISTING_URL" ]; then
-        echo "✔ Successfully found your existing Discord Webhook configuration!"
-        echo ""
-        read -p "Would you like to keep and reuse your existing configuration values? (y/n): " KEEP_CONFIG
-        case "$KEEP_CONFIG" in 
-            [Yy]* ) 
-                DISCORD_URL="$EXISTING_URL"
-                echo "⚙️ Preserved existing webhook URL. Updating script, shortcuts, and cron..."
-                ;;
-            * ) 
-                echo ""
-                read -p "Enter your new Discord Webhook URL: " DISCORD_URL
-                ;;
-        esac
-    else
-        echo "⚠️ Existing installation found, but could not auto-extract old URL automatically."
-        echo "Please provide your Discord Webhook URL below to update the script safely:"
-        echo ""
-        read -p "Enter your Discord Webhook URL: " DISCORD_URL
-    fi
-else
-    # 2. CONFIRMATION PROMPT FOR NEW INSTALLATION
-    echo "=========================================="
-    echo " 🍓 Raspberry Pi Discord Monitor Setup"
-    echo "=========================================="
-    echo ""
-    read -p "Do you want to proceed with installation? (y/n): " PROCEED
-    case "$PROCEED" in 
-        [Yy]* ) ;;
-        * ) 
-            echo "Installation cancelled."
+    read -p "Would you like to repair/update shortcuts and cron without overwriting? (y/n): " REPAIR_CHOICE
+    case "$REPAIR_CHOICE" in 
+        [Yy]* ) 
+            echo ""
+            echo "⚙️ Checking and installing dependencies (jq)..."
+            sudo apt-get update -qq && sudo apt-get install -y jq -qq
+
+            echo "⚡ Setting up global aliases in ~/.bashrc..."
+            grep -qF "alias temp_report" ~/.bashrc || echo "alias temp_report='~/temp_monitor.sh temp_report'" >> ~/.bashrc
+            grep -qF "alias test_cpu" ~/.bashrc || echo "alias test_cpu='~/temp_monitor.sh test_cpu'" >> ~/.bashrc
+            grep -qF "alias test_ram" ~/.bashrc || echo "alias test_ram='~/temp_monitor.sh test_ram'" >> ~/.bashrc
+            grep -qF "alias test_temp" ~/.bashrc || echo "alias test_temp='~/temp_monitor.sh test_temp'" >> ~/.bashrc
+
+            echo "⏰ Ensuring cron job is active..."
+            (crontab -l 2>/dev/null | grep -v "temp_monitor.sh"; echo "* * * * * ~/temp_monitor.sh > /dev/null 2>&1") | crontab -
+
+            echo ""
+            echo "✅ Setup verified! Aliases and cron updated cleanly."
             exit 0
             ;;
+        * ) 
+            echo "Proceeding with fresh configuration setup..."
+            ;;
     esac
-
-    echo ""
-    read -p "Enter your Discord Webhook URL: " DISCORD_URL
 fi
 
-# Final safety net if it's still somehow empty
-if [ -z "$DISCORD_URL" ]; then
-    echo ""
-    echo "⚠️ Warning: Webhook URL was left blank."
-    read -p "Please enter your Discord Webhook URL now to continue: " DISCORD_URL
-fi
+# 2. CONFIRMATION PROMPT FOR NEW INSTALLATION
+echo "=========================================="
+echo " 🍓 Raspberry Pi Discord Monitor Setup"
+echo "=========================================="
+echo ""
+read -p "Do you want to proceed with a fresh installation? (y/n): " PROCEED
+case "$PROCEED" in 
+    [Yy]* ) ;;
+    * ) 
+        echo "Installation cancelled."
+        exit 0
+        ;;
+esac
+
+echo ""
+read -p "Enter your Discord Webhook URL: " DISCORD_URL
 
 if [ -z "$DISCORD_URL" ]; then
-    echo "❌ Error: Webhook URL cannot be empty. Installation aborted."
+    echo "❌ Error: Webhook URL cannot be empty."
     exit 1
 fi
 
 # 3. DEPENDENCY INSTALLATION
 echo ""
-echo "📦 Checking and installing dependencies (jq)..."
+echo "📦 Installing required dependencies (jq)..."
 sudo apt-get update -qq && sudo apt-get install -y jq -qq
 
 # 4. WRITE THE MONITORING SCRIPT
-echo "📝 Writing updated ~/temp_monitor.sh..."
+echo "📝 Writing ~/temp_monitor.sh..."
 cat << SCRIPT > ~/temp_monitor.sh
 #!/bin/bash
 
@@ -205,7 +196,7 @@ if [ "\$PRIORITY" -gt "\$LAST_PRIORITY" ]; then
 \${DIVIDER}"
     PAYLOAD=\$(jq -n --arg content "\$MSG" '{content: \$content}')
     curl -H "Content-Type: application/json" -X POST -d "\$PAYLOAD" "\$DISCORD_URL" > /dev/null 2>&1
-.fi
+fi
 LAST_PRIORITY=\$PRIORITY
 
 # 5. Check CPU Usage
