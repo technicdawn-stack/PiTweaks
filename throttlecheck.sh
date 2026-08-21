@@ -1,42 +1,53 @@
 #!/bin/bash
 
 # ==============================================================================
-# 🍓 PiTweaks - Raspberry Pi Throttle & Benchmark Monitor (ThrottleStop Style)
+# 🍓 PiTweaks - Interactive Throttle Manager & Diagnostic Suite
 # ==============================================================================
 
-# Ensure vcgencmd exists
+# ANSI Colors
+RED="\033[31m"
+YELLOW="\033[33m"
+GREEN="\033[32m"
+CYAN="\033[36m"
+RESET="\033[0m"
+
 if ! command -v vcgencmd &> /dev/null; then
-    echo "❌ Error: 'vcgencmd' not found. This must run on Raspberry Pi OS."
+    echo -e "${RED}❌ Error: 'vcgencmd' not found. This must run on Raspberry Pi OS.${RESET}"
     exit 1
 fi
 
-# Function to parse throttling bits into readable status
+# Function to parse throttling bits with color coding
 get_throttle_status() {
     local raw_hex=$(vcgencmd get_throttled 2>/dev/null | awk -F= '{print $2}')
     local dec_val=$((raw_hex))
     
     if [ "$dec_val" -eq 0 ]; then
-        echo "🟢 Status: OPTIMAL (No Throttling)"
+        echo -e "${GREEN}🟢 Status: OPTIMAL (No Throttling Detected)${RESET}"
         return
     fi
 
-    echo "⚠️ Status: THROTTLED / CAPPED"
-    [ $(( (dec_val >> 0) & 1 )) -eq 1 ] && echo "  🔴 Under-voltage NOW!"
-    [ $(( (dec_val >> 1) & 1 )) -eq 1 ] && echo "  🔴 Freq Capped (Thermal) NOW!"
-    [ $(( (dec_val >> 2) & 1 )) -eq 1 ] && echo "  🔴 Throttling Active NOW!"
-    [ $(( (dec_val >> 3) & 1 )) -eq 1 ] && echo "  🔴 Soft Limit Active NOW!"
-    [ $(( (dec_val >> 16) & 1 )) -eq 1 ] && echo "  🟡 Under-voltage (Past)"
-    [ $(( (dec_val >> 17) & 1 )) -eq 1 ] && echo "  🟡 Freq Capped (Past)"
-    [ $(( (dec_val >> 18) & 1 )) -eq 1 ] && echo "  🟡 Throttling (Past)"
+    echo -e "${RED}⚠️ Status: THROTTLED / CAPPED DETECTED${RESET}"
+    
+    # Active / Major flags (Red)
+    [ $(( (dec_val >> 0) & 1 )) -eq 1 ] && echo -e "${RED}  🔴 [MAJOR ACTIVE] Under-voltage detected! Check power supply.${RESET}"
+    [ $(( (dec_val >> 1) & 1 )) -eq 1 ] && echo -e "${RED}  🔴 [MAJOR ACTIVE] ARM frequency capped due to thermal limits.${RESET}"
+    [ $(( (dec_val >> 2) & 1 )) -eq 1 ] && echo -e "${RED}  🔴 [MAJOR ACTIVE] CPU actively being throttled!${RESET}"
+    [ $(( (dec_val >> 3) & 1 )) -eq 1 ] && echo -e "${RED}  🔴 [MAJOR ACTIVE] Soft temperature limit active.${RESET}"
+    
+    # Historical / Minor flags (Yellow)
+    [ $(( (dec_val >> 16) & 1 )) -eq 1 ] && echo -e "${YELLOW}  🟡 [MINOR / PAST] Under-voltage occurred since boot.${RESET}"
+    [ $(( (dec_val >> 17) & 1 )) -eq 1 ] && echo -e "${YELLOW}  🟡 [MINOR / PAST] Frequency capping occurred since boot.${RESET}"
+    [ $(( (dec_val >> 18) & 1 )) -eq 1 ] && echo -e "${YELLOW}  🟡 [MINOR / PAST] Throttling occurred since boot.${RESET}"
+    [ $(( (dec_val >> 19) & 1 )) -eq 1 ] && echo -e "${YELLOW}  🟡 [MINOR / PAST] Soft temperature limit occurred since boot.${RESET}"
 }
 
-# Run a live benchmark UI loop
+# Live UI Benchmark Function
 run_benchmark() {
     local test_type="$1"
-    local duration=30 # default test length in seconds
+    local duration=30 # Test duration in seconds
     local elapsed=0
 
-    # Start background stress workload based on selection
+    # Start background stress workload
     case "$test_type" in
         cpu)
             stress-ng --cpu 4 --timeout ${duration}s &> /dev/null &
@@ -45,7 +56,6 @@ run_benchmark() {
             stress-ng --vm 2 --vm-bytes 75% --timeout ${duration}s &> /dev/null &
             ;;
         gpu)
-            # Simulated GPU load or standard GPU stress if available
             vcgencmd render_bar 1 &> /dev/null
             sleep ${duration}
             vcgencmd render_bar 0 &> /dev/null &
@@ -53,78 +63,128 @@ run_benchmark() {
         all)
             stress-ng --cpu 4 --vm 1 --timeout ${duration}s &> /dev/null &
             ;;
-        *)
-            echo "Unknown test type."
-            exit 1
-            ;;
     esac
 
-    # Live UI Dashboard Loop
     while [ $elapsed -lt $duration ]; do
         clear
-        echo "=================================================="
-        echo " ⚡ PiTweaks Live Benchmark UI [Mode: ${test_type^^}]"
-        echo "=================================================="
+        echo -e "${CYAN}==================================================${RESET}"
+        echo -e "${CYAN} ⚡ PiTweaks Live Benchmark UI [Mode: ${test_type^^}]${RESET}"
+        echo -e "${CYAN}==================================================${RESET}"
         echo " Time Remaining: $((duration - elapsed))s"
         echo ""
         
-        # Live Stats
+        # Gather live system metrics
         TEMP=$(vcgencmd measure_temp | awk -F= '{print $2}')
         FREQ=$(vcgencmd measure_clock arm | awk -F= '{printf "%.0f MHz\n", $2/1000000}')
         VOLTS=$(vcgencmd measure_volts core | awk -F= '{print $2}')
         RAM_USAGE=$(free -h | awk '/Mem:/ {print $3 "/" $2}')
         
-        echo " 🔥 CPU Temperature : $TEMP"
-        echo " ⚡ CPU Frequency   : $FREQ"
-        echo " 🔋 Core Voltage    : $VOLTS"
-        echo " 💾 RAM Usage       : $RAM_USAGE"
+        echo -e " 🔥 CPU Temperature : ${YELLOW}$TEMP${RESET}"
+        echo -e " ⚡ CPU Frequency   : $FREQ"
+        echo -e " 🔋 Core Voltage    : $VOLTS"
+        echo -e " 💾 RAM Usage       : $RAM_USAGE"
         echo ""
         echo "--------------------------------------------------"
-        echo " 📊 Live Throttle & Thermal Watcher:"
+        echo " 📊 Active Throttle & Thermal Watcher:"
         echo "--------------------------------------------------"
         get_throttle_status
         echo "=================================================="
-        echo " Press [Ctrl+C] to abort test early."
+        echo -e "${CYAN} Press [Ctrl+C] to abort test early.${RESET}"
         
         sleep 2
         elapsed=$((elapsed + 2))
     done
 
-    # Clean up any lingering background stress tasks
     killall stress-ng 2>/dev/null || true
     echo ""
-    echo "✅ Benchmark completed successfully!"
+    echo -e "${GREEN}✅ Benchmark completed successfully!${RESET}"
 }
 
-# CLI Argument Router
-case "$1" in
-    temp_report)
-        clear
-        echo "=================================================="
-        echo " 🌡️ PiTweaks System Health Report"
-        echo "=================================================="
-        echo "🔥 Temperature: $(vcgencmd measure_temp | awk -F= '{print $2}')"
-        echo "⚡ Frequency:   $(vcgencmd measure_clock arm | awk -F= '{printf "%.0f MHz\n", $2/1000000}')"
-        echo "🔋 Voltage:     $(vcgencmd measure_volts core | awk -F= '{print $2}')"
-        echo ""
-        echo "--------------------------------------------------"
-        get_throttle_status
-        echo "=================================================="
-        ;;
-    test_cpu)
-        run_benchmark "cpu"
-        ;;
-    test_ram)
-        run_benchmark "ram"
-        ;;
-    test_temp|test_gpu)
-        run_benchmark "gpu"
-        ;;
-    test_all)
-        run_benchmark "all"
-        ;;
-    *)
-        clear
-        echo "Usage: bash temp_monitor.sh [temp_report | test_cpu | test_ram | test_gpu | test_all]"
-        ;;
-esac
+# Standalone Throttling Check View
+show_throttling_check() {
+    clear
+    echo "=================================================="
+    echo -e " 🌡️ ${CYAN}PiTweaks Hardware Health & Throttling Check${RESET}"
+    echo "=================================================="
+    echo ""
+    echo -e "🔥 Current CPU Temperature: ${YELLOW}$(vcgencmd measure_temp | awk -F= '{print $2}')${RESET}"
+    echo -e "⚡ Current CPU Frequency:   $(vcgencmd measure_clock arm | awk -F= '{printf "%.0f MHz\n", $2/1000000}')"
+    echo -e "🔋 Current Core Voltage:    $(vcgencmd measure_volts core | awk -F= '{print $2}')"
+    echo ""
+    echo "--------------------------------------------------"
+    echo " 📊 Throttling & Power Status Breakdown:"
+    echo "--------------------------------------------------"
+    get_throttle_status
+    echo "=================================================="
+}
+
+# Check if arguments were passed (for Discord Bot integration) or run interactive menu
+if [ "$1" == "temp_report" ]; then
+    show_throttling_check
+    exit 0
+elif [ "$1" == "test_cpu" ]; then
+    run_benchmark "cpu"
+    exit 0
+elif [ "$1" == "test_ram" ]; then
+    run_benchmark "ram"
+    exit 0
+elif [ "$1" == "test_gpu" ] || [ "$1" == "test_temp" ]; then
+    run_benchmark "gpu"
+    exit 0
+elif [ "$1" == "test_all" ]; then
+    run_benchmark "all"
+    exit 0
+fi
+
+# Interactive Terminal Menu
+while true; do
+    clear
+    echo -e "${CYAN}==================================================${RESET}"
+    echo -e "${CYAN} 🍓 PiTweaks - Throttle Manager & Diagnostic Menu${RESET}"
+    echo -e "${CYAN}==================================================${RESET}"
+    echo " 1) Check Throttling & Hardware Health"
+    echo " 2) Run Performance Benchmark / Diagnostic Test"
+    echo " 3) Exit"
+    echo "--------------------------------------------------"
+    read -p " Select an option [1-3]: " main_choice
+
+    case "$main_choice" in
+        1)
+            show_throttling_check
+            echo ""
+            read -p "Press [Enter] to return to menu..."
+            ;;
+        2)
+            clear
+            echo -e "${CYAN}==================================================${RESET}"
+            echo -e "${CYAN} 🧪 Select Diagnostic Test Type${RESET}"
+            echo -e "${CYAN}==================================================${RESET}"
+            echo " 1) CPU Stress Test"
+            echo " 2) RAM Memory Test"
+            echo " 3) GPU Render Test"
+            echo " 4) All-At-Once Comprehensive Test"
+            echo " 5) Back to Main Menu"
+            echo "--------------------------------------------------"
+            read -p " Select test mode [1-5]: " test_choice
+
+            case "$test_choice" in
+                1) run_benchmark "cpu";;
+                2) run_benchmark "ram";;
+                3) run_benchmark "gpu";;
+                4) run_benchmark "all";;
+                5) continue;;
+                *) echo -e "${RED}Invalid option.${RESET}"; sleep 1;;
+            esac
+            echo ""
+            read -p "Press [Enter] to return to menu..."
+            ;;
+        3)
+            echo "Exiting PiTweaks Throttle Manager. Goodbye!"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Invalid selection. Please choose 1, 2, or 3.${RESET}"
+            sleep 1
+            ;;
+    esac
+done
