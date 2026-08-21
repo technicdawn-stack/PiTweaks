@@ -19,7 +19,7 @@ if [ -f "$HOME/temp_monitor.sh" ]; then
     if [ -n "$EXISTING_URL" ]; then
         echo "✔ Successfully found your existing Discord Webhook configuration!"
         echo ""
-        read -p "Would you like to keep and reuse your existing configuration values? (y/n): " KEEP_CONFIG
+        read -p "Would you like to keep and reuse your existing configuration values? (y/n): " KEEP_CONFIG < /dev/tty
         case "$KEEP_CONFIG" in 
             [Yy]* ) 
                 DISCORD_URL="$EXISTING_URL"
@@ -27,12 +27,12 @@ if [ -f "$HOME/temp_monitor.sh" ]; then
                 ;;
             * ) 
                 echo ""
-                read -p "Enter your new Discord Webhook URL: " DISCORD_URL
+                read -p "Enter your new Discord Webhook URL: " DISCORD_URL < /dev/tty
                 ;;
         esac
     else
         echo "⚠️ Existing installation found, but could not auto-extract old URL."
-        read -p "Enter your Discord Webhook URL: " DISCORD_URL
+        read -p "Enter your Discord Webhook URL: " DISCORD_URL < /dev/tty
     fi
 else
     # 2. CONFIRMATION PROMPT FOR NEW INSTALLATION
@@ -40,7 +40,7 @@ else
     echo " 🍓 Raspberry Pi Discord Monitor Setup"
     echo "=========================================="
     echo ""
-    read -p "Do you want to proceed with a fresh installation? (y/n): " PROCEED
+    read -p "Do you want to proceed with a fresh installation? (y/n): " PROCEED < /dev/tty
     case "$PROCEED" in 
         [Yy]* ) ;;
         * ) 
@@ -50,7 +50,7 @@ else
     esac
 
     echo ""
-    read -p "Enter your Discord Webhook URL: " DISCORD_URL
+    read -p "Enter your Discord Webhook URL: " DISCORD_URL < /dev/tty
 fi
 
 if [ -z "$DISCORD_URL" ]; then
