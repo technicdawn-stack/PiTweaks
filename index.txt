@@ -1,3 +1,4 @@
+conspy_control.sh|Lightweight universal setup manager for Raspberry Pi Lite monitor & Discord alerts
 discord_controller.sh|No description provided
 discord_monitor.sh|Raspberry Pi system resource monitor installer
 disk_check.sh|No description provided
