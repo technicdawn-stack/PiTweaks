@@ -1,9 +1,6 @@
 #!/bin/bash
 # Description: Standalone Conspy screen mirroring controller and setup manager
 
-# Ensure script runs interactively even if piped
-exec < /dev/tty
-
 # Check for whiptail (install if missing)
 if ! command -v whiptail &> /dev/null; then
     sudo apt-get update -qq && sudo apt-get install -y whiptail -qq
