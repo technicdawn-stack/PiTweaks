@@ -1,4 +1,4 @@
-conspy_control.sh|Standalone Conspy screen mirroring controller and setup manager
+conspy_control.sh|Standalone Conspy screen mirroring controller and setup manager v1.1
 discord_controller.sh|No description provided
 discord_monitor.sh|Raspberry Pi system resource monitor installer
 disk_check.sh|No description provided
