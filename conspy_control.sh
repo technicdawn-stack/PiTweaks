@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Standalone Conspy screen mirroring controller and setup manager
+# Description: Standalone Conspy screen mirroring controller and setup manager v1.1
 
 # Check for whiptail (install if missing)
 if ! command -v whiptail &> /dev/null; then
