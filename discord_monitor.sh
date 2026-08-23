@@ -1,5 +1,6 @@
 #!/bin/bash
 # Description: Pre Ping working version of temperature alerts, alert scheduling and resource testing with Multi-Tiered Ladder & 3-Min Sustain Logic. V1.75
+# PERSISTENT: TRUE
 
 # --- CONFIGURATION & WEBHOOK SETUP ---
 STATUS_FILE="/tmp/pi_system_status.txt"
