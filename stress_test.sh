@@ -1,11 +1,11 @@
 #!/bin/bash
-# Description: PiTweaks All-in-One Continuous Stress Suite & Telemetry V1.8
+# Description: PiTweaks All-in-One Continuous Stress Suite & Telemetry V1.9
 # PERSISTENT: TRUE
 
 set -e
 
 INSTALL_DIR="$HOME/PiTweaks"
-TARGET_SCRIPT="$INSTALL_DIR/pi_tui.py"
+TARGET_SCRIPT="$INSTALL_DIR/stress_core.py"
 
 mkdir -p "$INSTALL_DIR"
 
@@ -20,10 +20,9 @@ if ! python3 -c "import psutil" &> /dev/null; then
     sudo apt-get install -y python3-psutil -qq
 fi
 
-# 2. Write the Python TUI & Stopwatch Telemetry Core if it doesn't exist
-if [ ! -f "$TARGET_SCRIPT" ]; then
-    echo "📝 Writing Stop-Watch Telemetry Core..."
-    cat << 'EOF' > "$TARGET_SCRIPT"
+# 2. Always write/update the Python Telemetry Core so changes never get stuck
+echo "📝 Writing/Updating Telemetry Core..."
+cat << 'EOF' > "$TARGET_SCRIPT"
 #!/usr/bin/env python3
 import os
 import sys
@@ -171,7 +170,6 @@ def main_dashboard(test_type):
     stress_thread.daemon = True
     stress_thread.start()
 
-    # Prime the psutil cpu percent calculation so it doesn't return empty on the first tick
     psutil.cpu_percent(interval=None, percpu=True)
     time.sleep(0.5)
 
@@ -204,7 +202,6 @@ def main_dashboard(test_type):
 
             throttle_info = format_throttle_display(raw_hex)
 
-            # Properly construct the core display block so it never vanishes
             core_display = ""
             if core_bars:
                 for core_id, usage in core_bars:
@@ -231,7 +228,7 @@ def main_dashboard(test_type):
    Load Average    : {load_avg}
 
  {CYAN}┌─ PER-CORE CPU UTILIZATION ──────────────────────────────────┐{RESET}
-{core_display.rstrip()}
+{core_display}
  {CYAN}┌─ LIVE THROTTLING & HEALTH WATCHER ──────────────────────────┐{RESET}
 {throttle_info}
 {CYAN}└─────────────────────────────────────────────────────────────┘{RESET}
@@ -251,8 +248,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         main_dashboard(sys.argv[1])
 EOF
-    chmod +x "$TARGET_SCRIPT"
-fi
+chmod +x "$TARGET_SCRIPT"
 
 # 3. Launch Whiptail menu immediately on execution
 while true; do
