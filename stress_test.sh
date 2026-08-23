@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: PiTweaks All-in-One Continuous Stress Suite & Telemetry V1.4
+# Description: PiTweaks All-in-One Continuous Stress Suite & Telemetry V1.5
 # PERSISTENT: TRUE
 
 set -e
@@ -201,7 +201,7 @@ def main_dashboard(test_type):
     sys.stdout.write("\033[?25l")
     sys.stdout.flush()
 
-    peak_temp_val = 0.0
+    peak_temp_val = -1.0
     peak_temp_str = "N/A"
     final_hex = "throttled=0x0"
     elapsed = 0
@@ -214,7 +214,7 @@ def main_dashboard(test_type):
 
             temp_str, temp_val, freq, gpu_freq, volts, sdram_c, sdram_io, sdram_p, ram_str, ram_perc, load_avg, core_bars = get_hardware_stats()
             
-            # Robust peak temperature tracking
+            # Reliable peak temperature tracking
             if temp_val > peak_temp_val:
                 peak_temp_val = temp_val
                 peak_temp_str = temp_str
@@ -225,7 +225,7 @@ def main_dashboard(test_type):
 
             throttle_info = format_throttle_display(raw_hex)
 
-            # Properly formatted per-core bars block
+            # Build per-core visual text bars block
             core_display = ""
             if core_bars:
                 for core_id, usage in core_bars:
