@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: PiTweaks All-in-One Continuous Stress Suite & Telemetry V1.5
+# Description: PiTweaks All-in-One Continuous Stress Suite & Telemetry V1.7
 # PERSISTENT: TRUE
 
 set -e
@@ -9,10 +9,15 @@ TARGET_SCRIPT="$INSTALL_DIR/pi_tui.py"
 
 mkdir -p "$INSTALL_DIR"
 
-# 1. Self-install core packages if missing
+# 1. Self-install core packages & python modules if missing
 if ! command -v stress-ng &> /dev/null || ! command -v whiptail &> /dev/null; then
-    echo "📦 Installing required packages (stress-ng, whiptail)..."
+    echo "📦 Installing required system packages (stress-ng, whiptail)..."
     sudo apt-get update -qq && sudo apt-get install -y stress-ng whiptail -qq
+fi
+
+if ! python3 -c "import psutil" &> /dev/null; then
+    echo "📦 Installing required Python module (psutil)..."
+    sudo apt-get install -y python3-psutil -qq
 fi
 
 # 2. Write the Python TUI & Stopwatch Telemetry Core if it doesn't exist
@@ -25,6 +30,7 @@ import sys
 import time
 import subprocess
 import threading
+import psutil
 
 RED = "\033[91m"
 YELLOW = "\033[93m"
@@ -40,7 +46,7 @@ def run_cmd(command):
     except Exception:
         return "N/A"
 
-def make_bar(percentage, width=20):
+def make_bar(percentage, width=18):
     try:
         p = max(0.0, min(100.0, float(percentage)))
     except:
@@ -48,28 +54,10 @@ def make_bar(percentage, width=20):
     filled = int(width * p / 100)
     bar = "█" * filled + "░" * (width - filled)
     color = GREEN if p < 70 else (YELLOW if p < 90 else RED)
-    return f"{color}[{bar}]{RESET} {p:.1f}%"
-
-def get_per_core_cpu():
-    try:
-        with open("/proc/stat", "r") as f:
-            lines = f.readlines()
-        cores = []
-        for line in lines:
-            if line.startswith("cpu") and len(line) > 4 and line[3].isdigit():
-                parts = line.split()
-                vals = [int(v) for v in parts[1:]]
-                idle = vals[3] + vals[4]
-                total = sum(vals)
-                cores.append((idle, total))
-        return cores
-    except:
-        return []
-
-last_cpu_stats = get_per_core_cpu()
+    return f"{color}[{bar}]{RESET} {p:5.1f}%"
 
 def get_hardware_stats():
-    global last_cpu_stats
+    # Temperature
     temp_raw = run_cmd("vcgencmd measure_temp")
     temp_str = temp_raw.replace("temp=", "").replace("'C", "°C") if "temp=" in temp_raw else "N/A"
     
@@ -80,6 +68,7 @@ def get_hardware_stats():
         except:
             pass
 
+    # Clocks & Volts
     freq_raw = run_cmd("vcgencmd measure_clock arm")
     freq = f"{int(freq_raw.split('=')[1]) / 1000000:.0f} MHz" if "=" in freq_raw else "N/A"
 
@@ -91,33 +80,18 @@ def get_hardware_stats():
     sdram_io = run_cmd("vcgencmd measure_volts sdram_i").replace("volt=", "")
     sdram_p = run_cmd("vcgencmd measure_volts sdram_p").replace("volt=", "")
 
-    ram_raw = run_cmd("free -m | awk '/Mem:/ {print $3, $2}'")
-    ram_perc = 0.0
-    ram_str = "N/A"
-    if ram_raw and "N/A" not in ram_raw:
-        parts = ram_raw.split()
-        if len(parts) == 2:
-            used, total = int(parts[0]), int(parts[1])
-            ram_perc = (used / total) * 100
-            ram_str = f"{used}MB / {total}MB"
+    # RAM via psutil
+    mem = psutil.virtual_memory()
+    ram_perc = mem.percent
+    ram_str = f"{int(mem.used / 1024 / 1024)}MB / {int(mem.total / 1024 / 1024)}MB"
 
-    load_raw = run_cmd("cat /proc/loadavg")
-    loads = load_raw.split()[:3] if load_raw else ["N/A", "N/A", "N/A"]
-    load_avg = f"{loads[0]} / {loads[1]} / {loads[2]}"
+    # Load Average
+    load_avg_vals = os.getloadavg()
+    load_avg = f"{load_avg_vals[0]:.2f} / {load_avg_vals[1]:.2f} / {load_avg_vals[2]:.2f}"
 
-    current_cpu_stats = get_per_core_cpu()
-    core_bars = []
-    if last_cpu_stats and current_cpu_stats and len(last_cpu_stats) == len(current_cpu_stats):
-        for i, (curr_idle, curr_total) in enumerate(current_cpu_stats):
-            prev_idle, prev_total = last_cpu_stats[i]
-            idle_delta = curr_idle - prev_idle
-            total_delta = curr_total - prev_total
-            if total_delta > 0:
-                usage = 100.0 * (1.0 - float(idle_delta) / float(total_delta))
-            else:
-                usage = 0.0
-            core_bars.append((i, usage))
-    last_cpu_stats = current_cpu_stats
+    # Per-Core CPU percentages using psutil
+    core_usages = psutil.cpu_percent(interval=None, percpu=True)
+    core_bars = [(i, usage) for i, usage in enumerate(core_usages)]
 
     return temp_str, temp_val, freq, gpu_freq, volts, sdram_c, sdram_io, sdram_p, ram_str, ram_perc, load_avg, core_bars
 
@@ -197,6 +171,9 @@ def main_dashboard(test_type):
     stress_thread.daemon = True
     stress_thread.start()
 
+    psutil.cpu_percent(interval=None, percpu=True)
+    time.sleep(0.5)
+
     start_time = time.time()
     sys.stdout.write("\033[?25l")
     sys.stdout.flush()
@@ -206,6 +183,8 @@ def main_dashboard(test_type):
     final_hex = "throttled=0x0"
     elapsed = 0
 
+    os.system('clear')
+
     try:
         while True:
             elapsed = int(time.time() - start_time)
@@ -214,7 +193,6 @@ def main_dashboard(test_type):
 
             temp_str, temp_val, freq, gpu_freq, volts, sdram_c, sdram_io, sdram_p, ram_str, ram_perc, load_avg, core_bars = get_hardware_stats()
             
-            # Reliable peak temperature tracking
             if temp_val > peak_temp_val:
                 peak_temp_val = temp_val
                 peak_temp_str = temp_str
@@ -225,7 +203,6 @@ def main_dashboard(test_type):
 
             throttle_info = format_throttle_display(raw_hex)
 
-            # Build per-core visual text bars block
             core_display = ""
             if core_bars:
                 for core_id, usage in core_bars:
@@ -233,7 +210,9 @@ def main_dashboard(test_type):
             else:
                 core_display = "   Initializing core metrics...\n"
 
-            os.system('clear')
+            sys.stdout.write("\033[H")
+            sys.stdout.flush()
+
             print(f"""
 {CYAN}╔══════════════════════════════════════════════════════════════╗
 ║        PiTweaks CONTINUOUS TELEMETRY & STRESS SUITE          ║
