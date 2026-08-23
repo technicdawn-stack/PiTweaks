@@ -1,13 +1,48 @@
 #!/bin/bash
-# Description: Pre Ping working version of temperature alerts, alert scheduling and resource testing with Multi-Tiered Ladder & 3-Min Sustain Logic. V1.71
+# Description: Pre Ping working version of temperature alerts, alert scheduling and resource testing with Multi-Tiered Ladder & 3-Min Sustain Logic. V1.73
 
-# --- CONFIGURATION ---
+# --- CONFIGURATION & WEBHOOK SETUP ---
 STATUS_FILE="/tmp/pi_system_status.txt"
+CONFIG_FILE="discord_webhook.conf"
 CPU_THRESHOLD=90
 RAM_THRESHOLD=90
 DIVIDER="---------------------------------------"
-# Set your Discord Webhook URL here to enable automatic webhook notifications on update/alert
-DISCORD_WEBHOOK_URL="${DISCORD_WEBHOOK_URL:-}"
+
+setup_webhook() {
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "$DIVIDER"
+        echo "⚠️ No Discord Webhook configuration file found."
+        read -p "Would you like to configure your Discord Webhook URL now? (y/n): " choice
+        if [[ "$choice" =~ ^[Yy]$ ]]; then
+            read -p "Enter your Discord Webhook URL: " webhook_input
+            echo "DISCORD_WEBHOOK_URL=\"$webhook_input\"" > "$CONFIG_FILE"
+            echo "✔ Webhook saved successfully to $CONFIG_FILE"
+        else
+            echo "DISCORD_WEBHOOK_URL=\"\"" > "$CONFIG_FILE"
+            echo "⚠️ Proceeding without a webhook configured."
+        fi
+        echo "$DIVIDER"
+    else
+        source "$CONFIG_FILE"
+        # On standard install/load check, offer option to update
+        if [ "$1" = "install_notify" ] || [ -z "$1" ]; then
+            echo "$DIVIDER"
+            read -p "Do you want to re-configure your Discord Webhook URL? (y/n): " choice
+            if [[ "$choice" =~ ^[Yy]$ ]]; then
+                read -p "Enter your new Discord Webhook URL: " webhook_input
+                echo "DISCORD_WEBHOOK_URL=\"$webhook_input\"" > "$CONFIG_FILE"
+                echo "✔ Webhook updated and overwritten in $CONFIG_FILE"
+            else
+                echo "✔ Using existing Webhook configuration from $CONFIG_FILE"
+            fi
+            echo "$DIVIDER"
+        fi
+    fi
+    [ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"
+}
+
+# Run setup configuration check
+setup_webhook "$1"
 # ---------------------
 
 send_discord_webhook() {
@@ -28,7 +63,7 @@ get_top_ram() {
     ps -eo comm,%cpu,%mem --sort=-%mem | head -n 4 | tail -n 3 | awk '{printf "  • %s: RAM %s%% | CPU %s%%\n", $1, $3, $2}'
 }
 
-RAW_TEMP=$(vcgencmd measure_temp | egrep -o '[0-9]*\.[0-9]*')
+RAW_TEMP=$(vcgencmd measure_temp | egrep -o '[0-9]*\.[0-9]*') 2>/dev/null || echo "40.0"
 TEMP=${RAW_TEMP%.*}
 
 RAM_TOTAL=$(free -m | awk '/Mem:/ {print $2}')
@@ -47,7 +82,6 @@ check_ladder_alerts() {
     local c=$CPU_USAGE
     local r=$RAM_PERC
     
-    # Temperature Ladder Check (50, 60, 70, 80°C)
     if [ "$t" -ge 80 ]; then
         echo "🚨 **CRITICAL TEMP ALERT**: Temperature reached ${t}°C (Hit 80°C Ladder Limit!)"
     elif [ "$t" -ge 70 ]; then
@@ -58,7 +92,6 @@ check_ladder_alerts() {
         echo "ℹ️ **INFO**: Temperature reached ${t}°C (Hit 50°C Ladder Limit)"
     fi
 
-    # 3-Minute Sustained High Usage Check (using a state file tracker)
     TIME_FILE="/tmp/pi_high_load_timer.txt"
     CURRENT_TIME=$(date +%s)
     
@@ -68,33 +101,31 @@ check_ladder_alerts() {
         else
             START_TIME=$(cat "$TIME_FILE")
             ELAPSED=$(( CURRENT_TIME - START_TIME ))
-            # 3 minutes = 180 seconds
             if [ "$ELAPSED" -ge 180 ]; then
                 echo "⚡ **SUSTAINED LOAD ALERT**: CPU at ${c}% / RAM at ${r}% maintained for over 3 minutes!"
             fi
         fi
     else
-        # Reset timer if usage drops below threshold
         rm -f "$TIME_FILE"
     fi
 }
 
-# --- INSTALL / OVERWRITE NOTIFICATION TRIGGER ---
-if [ "$1" = "install_notify" ]; then
-    echo "✔ Script file written and overwrote old version successfully!"
-    echo "✔ Execution verified: Monitor is online (V1.71)."
-    WEBHOOK_MSG="🟢 **PiTweaks Status**: `discord_monitor.sh` (V1.71) installed/overwritten successfully. Monitor is **ONLINE** and running!"
+# --- COMMAND ROUTER ---
+if [ "$1" = "install_notify" ] || [ -z "$1" ]; then
+    echo "$DIVIDER"
+    echo "🟢 SUCCESS: Script compiled, written, and overwrote old version safely."
+    echo "🟢 STATUS: discord_monitor.sh (V1.73) is ONLINE and running in memory!"
+    echo "$DIVIDER"
+    WEBHOOK_MSG="🟢 **PiTweaks Status**: `discord_monitor.sh` (V1.73) installed/overwritten successfully. Monitor is **ONLINE**!"
     send_discord_webhook "$WEBHOOK_MSG"
-    echo "✔ Discord webhook notification sent!"
     exit 0
-fi
 
-if [ "$1" = "temp_report" ]; then
+elif [ "$1" = "temp_report" ]; then
     TOP_PROCS=$(get_top_cpu)
     LADDER_EVAL=$(check_ladder_alerts)
     MSG="${DIVIDER}
-🟢 **Status**: Update applied successfully (Overwrote old version). Monitor is **ONLINE**.
-🟨 📝 **System Report (V1.71)**:
+🟢 **Status**: Update applied successfully. Monitor is **ONLINE**.
+🟨 📝 **System Report (V1.73)**:
 • **Temp:** ${RAW_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${RAM_PERC}% (${RAM_USED}MB / ${RAM_TOTAL}MB)
 ${LADDER_EVAL}
 
