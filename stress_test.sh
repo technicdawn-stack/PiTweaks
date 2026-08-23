@@ -1,5 +1,6 @@
 #!/bin/bash
-# Description: PiTweaks All-in-One Continuous Stress Suite & Telemetry V1.2.1
+# Description: PiTweaks All-in-One Continuous Stress Suite & Telemetry V1.3
+# PERSISTENT: TRUE
 
 set -e
 
@@ -39,27 +40,55 @@ def run_cmd(command):
     except Exception:
         return "N/A"
 
+def make_bar(percentage, width=20):
+    try:
+        p = max(0.0, min(100.0, float(percentage)))
+    except:
+        p = 0.0
+    filled = int(width * p / 100)
+    bar = "█" * filled + "░" * (width - filled)
+    color = GREEN if p < 70 else (YELLOW if p < 90 else RED)
+    return f"{color}[{bar}]{RESET} {p:.1f}%"
+
+def get_per_core_cpu():
+    # Reads /proc/stat to calculate per-core CPU usage percentages
+    try:
+        with open("/proc/stat", "r") as f:
+            lines = f.readlines()
+        cores = []
+        for line in lines:
+            if line.startswith("cpu") and line[3:].strip() and not line.startswith("cpu "):
+                parts = line.split()
+                # user, nice, system, idle, iowait, irq, softirq, steal
+                vals = [int(v) for v in parts[1:]]
+                idle = vals[3] + vals[4]
+                total = sum(vals)
+                cores.append((idle, total))
+        return cores
+    except:
+        return []
+
+# Helper to compute CPU usage difference between two snapshots for smooth per-core stats
+last_cpu_stats = get_per_core_cpu()
+
 def get_hardware_stats():
+    global last_cpu_stats
     temp_raw = run_cmd("vcgencmd measure_temp")
-    temp = temp_raw.replace("temp=", "").replace("'C", "°C") if "temp=" in temp_raw else "N/A"
+    temp_str = temp_raw.replace("temp=", "").replace("'C", "°C") if "temp=" in temp_raw else "N/A"
+    
+    # Extract numerical temp for calculations
+    temp_val = 0.0
+    if "°C" in temp_str:
+        try:
+            temp_val = float(temp_str.replace("°C", ""))
+        except:
+            pass
 
     freq_raw = run_cmd("vcgencmd measure_clock arm")
-    if "=" in freq_raw:
-        try:
-            freq = f"{int(freq_raw.split('=')[1]) / 1000000:.0f} MHz"
-        except:
-            freq = "N/A"
-    else:
-        freq = "N/A"
+    freq = f"{int(freq_raw.split('=')[1]) / 1000000:.0f} MHz" if "=" in freq_raw else "N/A"
 
     gpu_freq_raw = run_cmd("vcgencmd measure_clock core")
-    if "=" in gpu_freq_raw:
-        try:
-            gpu_freq = f"{int(gpu_freq_raw.split('=')[1]) / 1000000:.0f} MHz"
-        except:
-            gpu_freq = "N/A"
-    else:
-        gpu_freq = "N/A"
+    gpu_freq = f"{int(gpu_freq_raw.split('=')[1]) / 1000000:.0f} MHz" if "=" in gpu_freq_raw else "N/A"
 
     volts = run_cmd("vcgencmd measure_volts core").replace("volt=", "")
     sdram_c = run_cmd("vcgencmd measure_volts sdram_c").replace("volt=", "")
@@ -67,21 +96,35 @@ def get_hardware_stats():
     sdram_p = run_cmd("vcgencmd measure_volts sdram_p").replace("volt=", "")
 
     ram_raw = run_cmd("free -m | awk '/Mem:/ {print $3, $2}'")
+    ram_perc = 0.0
+    ram_str = "N/A"
     if ram_raw and "N/A" not in ram_raw:
         parts = ram_raw.split()
         if len(parts) == 2:
             used, total = int(parts[0]), int(parts[1])
-            ram = f"{used}MB / {total}MB ({(used/total)*100:.1f}%)"
-        else:
-            ram = "N/A"
-    else:
-        ram = "N/A"
+            ram_perc = (used / total) * 100
+            ram_str = f"{used}MB / {total}MB"
 
     load_raw = run_cmd("cat /proc/loadavg")
     loads = load_raw.split()[:3] if load_raw else ["N/A", "N/A", "N/A"]
     load_avg = f"{loads[0]} / {loads[1]} / {loads[2]}"
 
-    return temp, freq, gpu_freq, volts, sdram_c, sdram_io, sdram_p, ram, load_avg
+    # Calculate per-core usages
+    current_cpu_stats = get_per_core_cpu()
+    core_bars = []
+    if last_cpu_stats and current_cpu_stats and len(last_cpu_stats) == len(current_cpu_stats):
+        for i, (curr_idle, curr_total) in enumerate(current_cpu_stats):
+            prev_idle, prev_total = last_cpu_stats[i]
+            idle_delta = curr_idle - prev_idle
+            total_delta = curr_total - prev_total
+            if total_delta > 0:
+                usage = 100.0 * (1.0 - float(idle_delta) / float(total_delta))
+            else:
+                usage = 0.0
+            core_bars.append((i, usage))
+    last_cpu_stats = current_cpu_stats
+
+    return temp_str, temp_val, freq, gpu_freq, volts, sdram_c, sdram_io, sdram_p, ram_str, ram_perc, load_avg, core_bars
 
 def parse_throttle_status(raw_hex):
     if "throttled=" not in raw_hex:
@@ -141,14 +184,14 @@ def start_stress_workload(test_type):
         return
     subprocess.run(cmd, shell=True)
 
-def show_diagnostic_page(test_type, elapsed_time, peak_temp, final_hex):
+def show_diagnostic_page(test_type, elapsed_time, peak_temp_str, final_hex):
     level, issues = parse_throttle_status(final_hex)
     rating = "EXCELLENT (Fully Stable)" if level == "OPTIMAL" else ("MODERATE (Past Warnings)" if level == "WARNING" else "POOR / UNSTABLE")
     mins, secs = divmod(elapsed_time, 60)
     
     report = f"Test Performed   : {test_type.upper()}\n"
     report += f"Total Time Ran   : {mins:02d}m {secs:02d}s\n"
-    report += f"Peak Temperature : {peak_temp}\n"
+    report += f"Peak Temperature : {peak_temp_str}\n"
     report += f"System Rating    : {rating}\n--------------------------------------------------\nFindings:\n"
     report += " • No issues logged." if not issues else "\n".join([f" • {i}" for i in issues])
 
@@ -163,7 +206,8 @@ def main_dashboard(test_type):
     sys.stdout.write("\033[?25l")
     sys.stdout.flush()
 
-    peak_temp = "N/A"
+    peak_temp_val = 0.0
+    peak_temp_str = "N/A"
     final_hex = "throttled=0x0"
     elapsed = 0
 
@@ -173,15 +217,23 @@ def main_dashboard(test_type):
             mins, secs = divmod(elapsed, 60)
             time_formatted = f"{mins:02d}:{secs:02d}"
 
-            temp, freq, gpu_freq, volts, sdram_c, sdram_io, sdram_p, ram, load_avg = get_hardware_stats()
-            if temp != "N/A":
-                peak_temp = temp
+            temp_str, temp_val, freq, gpu_freq, volts, sdram_c, sdram_io, sdram_p, ram_str, ram_perc, load_avg, core_bars = get_hardware_stats()
+            
+            # Correct peak temperature tracking logic
+            if temp_val > peak_temp_val:
+                peak_temp_val = temp_val
+                peak_temp_str = temp_str
 
             raw_hex = run_cmd("vcgencmd get_throttled")
             if raw_hex:
                 final_hex = raw_hex
 
             throttle_info = format_throttle_display(raw_hex)
+
+            # Build core usage strings dynamically
+            core_display = ""
+            for core_id, usage in core_bars:
+                core_display += f"   Core {core_id}          : {make_bar(usage, 18)}\n"
 
             os.system('clear')
             print(f"""
@@ -191,13 +243,16 @@ def main_dashboard(test_type):
  {BOLD}Active Test:{RESET} {test_type.upper()}  |  {BOLD}Stop-Watch Time:{RESET} {YELLOW}{time_formatted}{RESET}
 
  {CYAN}┌─ ADVANCED HARDWARE TELEMETRY ───────────────────────────────┐{RESET}
-   CPU Temperature : {YELLOW}{temp}{RESET}  (Peak: {peak_temp})
+   CPU Temperature : {YELLOW}{temp_str}{RESET}  (Peak: {peak_temp_str})
    CPU Clock Speed : {freq}
    GPU / Core Clock: {gpu_freq}
    Core Voltage    : {volts}
    SDRAM Volts     : Core: {sdram_c} | I/O: {sdram_io} | Phy: {sdram_p}
-   RAM Usage       : {ram}
+   RAM Usage       : {make_bar(ram_perc, 18)} ({ram_str})
    Load Average    : {load_avg}
+
+ {CYAN}┌─ PER-CORE CPU UTILIZATION ──────────────────────────────────┐{RESET}
+{core_display.rstrip()}
 
  {CYAN}┌─ LIVE THROTTLING & HEALTH WATCHER ──────────────────────────┐{RESET}
 {throttle_info}
@@ -212,7 +267,7 @@ def main_dashboard(test_type):
         subprocess.run("vcgencmd render_bar 0 2>/dev/null", shell=True, capture_output=True)
         sys.stdout.write("\033[?25h")
         sys.stdout.flush()
-        show_diagnostic_page(test_type, elapsed, peak_temp, final_hex)
+        show_diagnostic_page(test_type, elapsed, peak_temp_str, final_hex)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
