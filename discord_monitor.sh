@@ -64,7 +64,7 @@ check_ladder_alerts() {
     else
         # Reset timer if usage drops below threshold
         rm -f "$TIME_FILE"
-    }
+    fi
 }
 
 if [ "$1" = "temp_report" ]; then
