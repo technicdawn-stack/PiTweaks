@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Pre Ping working version of temperature alerts, alert scheduling and resource testing with Multi-Tiered Ladder & 3-Min Sustain Logic. V1.67
+# Description: Pre Ping working version of temperature alerts, alert scheduling and resource testing with Multi-Tiered Ladder & 3-Min Sustain Logic. V1.69
 
 # --- CONFIGURATION ---
 STATUS_FILE="/tmp/pi_system_status.txt"
