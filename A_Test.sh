@@ -1,3 +1,6 @@
+# Description: Loops the install url for faster and easier refreshing.
+# PERSISTENT: FALSE
+
 while true; do
     clear
     bash <(curl -fsSL "https://raw.githubusercontent.com/technicdawn-stack/PiTweaks/main/install.sh")
