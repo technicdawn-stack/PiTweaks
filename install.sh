@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# 🍓 PI TWEAKS INSTALLER (100% IN-MEMORY / ZERO DISK SPACE)
+# 🍓 PI TWEAKS INSTALLER (100% IN-MEMORY / ZERO DISK SPACE / INSTANT CACHE BYPASS)
 # ==============================================================================
 set -eo pipefail
 
@@ -19,8 +19,8 @@ if ! command -v whiptail &>/dev/null; then
     sudo apt-get update -qq && sudo apt-get install -y whiptail -qq
 fi
 
-# 1. Fetch index.txt straight into RAM (Variable) — 0 bytes written to disk
-INDEX_DATA=$(curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/index.txt" 2>/dev/null) || {
+# 1. Fetch index.txt straight into RAM with a cache-buster parameter
+INDEX_DATA=$(curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/index.txt?cb=$(date +%s)" 2>/dev/null) || {
     echo "❌ Could not load index.txt from GitHub."
     exit 1
 }
@@ -61,5 +61,5 @@ echo "🚀 Running ${SELECTED} in memory..."
 echo "=========================================="
 echo ""
 
-# 5. Stream chosen script straight into RAM for execution — 0 bytes written to disk
-curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/${SELECTED}" | bash
+# 5. Stream chosen script straight into RAM with a cache-buster parameter for instant execution
+curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/${SELECTED}?cb=$(date +%s)" | bash
