@@ -1,4 +1,5 @@
 #!/bin/bash
+# Description: Pre Ping working version of temperature alerts, alert scheduling and resource testing.
 
 # --- CONFIGURATION ---
 STATUS_FILE="/tmp/pi_system_status.txt"
