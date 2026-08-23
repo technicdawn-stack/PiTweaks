@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Pre Ping working version of temperature alerts, alert scheduling and resource testing with Multi-Tiered Ladder & 3-Min Sustain Logic. V1.75
+# Description: Pre Ping working version of temperature alerts, alert scheduling and resource testing with Instant Watchdog Triggers. V1.76
 # PERSISTENT: TRUE
 
 # --- CONFIGURATION & WEBHOOK SETUP ---
@@ -41,12 +41,10 @@ setup_webhook() {
     [ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"
 }
 
-# Setup cron job to run monitoring automatically every minute
 setup_cron() {
     local script_path
     script_path="$(realpath "$0")"
     
-    # Check if cron job already exists
     if ! crontab -l 2>/dev/null | grep -q "$script_path temp_report"; then
         echo "$DIVIDER"
         read -p "Would you like to setup an automatic background cron job to monitor stats every minute? (y/n): " cron_choice
@@ -60,10 +58,8 @@ setup_cron() {
     fi
 }
 
-# Run setup configuration check
 setup_webhook "$1"
 [ -z "$1" ] || [ "$1" = "install_notify" ] && setup_cron
-# ---------------------
 
 send_discord_webhook() {
     local message="$1"
@@ -71,12 +67,7 @@ send_discord_webhook() {
         curl -H "Content-Type: application/json" \
              -X POST \
              -d "{\"content\": \"$message\"}" \
-             "$DISCORD_WEBHOOK_URL" &>/dev/null | {
-                 # If webhook sends successfully, also pipe output to Discord if report is run via cron
-                 if [ -n "$2" ]; then
-                     curl -H "Content-Type: application/json" -X POST -d "{\"content\": \"$2\"}" "$DISCORD_WEBHOOK_URL" &>/dev/null
-                 fi
-             }
+             "$DISCORD_WEBHOOK_URL" &>/dev/null
     fi
 }
 
@@ -101,22 +92,26 @@ if [ -z "$CPU_IDLE" ]; then
 fi
 CPU_USAGE=$(( 100 - CPU_IDLE ))
 
-# --- MULTI-TIERED TEMPERATURE LADDER & SUSTAINED CHECK LOGIC ---
-check_ladder_alerts() {
+# --- INSTANT WATCHDOG & THRESHOLD CHECK LOGIC ---
+check_watchdog_alerts() {
     local t=$TEMP
     local c=$CPU_USAGE
     local r=$RAM_PERC
-    
+    local alert_sent=false
+
+    # Temperature Ladder Checks (Immediate Trigger)
     if [ "$t" -ge 80 ]; then
-        echo "🚨 **CRITICAL TEMP ALERT**: Temperature reached ${t}°C (Hit 80°C Ladder Limit!)"
+        send_discord_webhook "🚨 **CRITICAL TEMP ALERT**: Temperature reached ${t}°C (Hit 80°C Ladder Limit!)"
+        alert_sent=true
     elif [ "$t" -ge 70 ]; then
-        echo "⚠️ **HIGH TEMP WARNING**: Temperature reached ${t}°C (Hit 70°C Ladder Limit)"
+        send_discord_webhook "⚠️ **HIGH TEMP WARNING**: Temperature reached ${t}°C (Hit 70°C Ladder Limit)"
+        alert_sent=true
     elif [ "$t" -ge 60 ]; then
-        echo "🟨 **ELEVATED TEMP NOTICE**: Temperature reached ${t}°C (Hit 60°C Ladder Limit)"
-    elif [ "$t" -ge 50 ]; then
-        echo "ℹ️ **INFO**: Temperature reached ${t}°C (Hit 50°C Ladder Limit)"
+        send_discord_webhook "🟨 **ELEVATED TEMP NOTICE**: Temperature reached ${t}°C (Hit 60°C Ladder Limit)"
+        alert_sent=true
     fi
 
+    # Sustained Load Checks (3-Minute Timer Logic)
     TIME_FILE="/tmp/pi_high_load_timer.txt"
     CURRENT_TIME=$(date +%s)
     
@@ -127,7 +122,8 @@ check_ladder_alerts() {
             START_TIME=$(cat "$TIME_FILE")
             ELAPSED=$(( CURRENT_TIME - START_TIME ))
             if [ "$ELAPSED" -ge 180 ]; then
-                echo "⚡ **SUSTAINED LOAD ALERT**: CPU at ${c}% / RAM at ${r}% maintained for over 3 minutes!"
+                send_discord_webhook "⚡ **SUSTAINED LOAD ALERT**: CPU at ${c}% / RAM at ${r}% maintained for over 3 minutes!"
+                alert_sent=true
             fi
         fi
     else
@@ -139,27 +135,17 @@ check_ladder_alerts() {
 if [ "$1" = "install_notify" ] || [ -z "$1" ]; then
     echo "$DIVIDER"
     echo "🟢 SUCCESS: Script compiled, config saved, and executed safely."
-    echo "🟢 STATUS: discord_monitor.sh (V1.75) setup complete!"
+    echo "🟢 STATUS: discord_monitor.sh (V1.76) setup complete!"
     echo "$DIVIDER"
-    WEBHOOK_MSG="🟢 **PiTweaks Status**: `discord_monitor.sh` (V1.75) installed successfully. Cron & Config active!"
+    WEBHOOK_MSG="🟢 **PiTweaks Status**: `discord_monitor.sh` (V1.76) installed successfully. Instant Watchdog active!"
     send_discord_webhook "$WEBHOOK_MSG"
     exit 0
 
 elif [ "$1" = "temp_report" ]; then
-    TOP_PROCS=$(get_top_cpu)
-    LADDER_EVAL=$(check_ladder_alerts)
-    MSG="${DIVIDER}
-🟢 **Status**: System report generated. Monitor is **ONLINE**.
-🟨 📝 **System Report (V1.75)**:
-• **Temp:** ${RAW_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${RAM_PERC}% (${RAM_USED}MB / ${RAM_TOTAL}MB)
-${LADDER_EVAL}
-
-**Top Processes (CPU):**
-${TOP_PROCS}
-${DIVIDER}"
-    echo "$MSG"
-    # If running from cron, automatically fire to webhook if alerts or reports are triggered
-    send_discord_webhook "$MSG"
+    # Run the background watchdog check (fires instant alerts if thresholds breached)
+    check_watchdog_alerts
+    
+    # Optional: If you still want a periodic status recap or log entry, it handles normally here
     exit 0
 
 elif [ "$1" = "test_cpu" ] && [ -n "$2" ]; then
@@ -172,6 +158,7 @@ elif [ "$1" = "test_cpu" ] && [ -n "$2" ]; then
 **Top CPU Processes:**
 ${TOP_PROCS}
 ${DIVIDER}"
+    send_discord_webhook "$MSG"
     echo "$MSG"
     exit 0
 
@@ -185,6 +172,7 @@ elif [ "$1" = "test_ram" ] && [ -n "$2" ]; then
 **Top RAM Processes:**
 ${TOP_PROCS}
 ${DIVIDER}"
+    send_discord_webhook "$MSG"
     echo "$MSG"
     exit 0
 
@@ -198,6 +186,7 @@ elif [ "$1" = "test_temp" ] && [ -n "$2" ]; then
 **Top CPU Processes:**
 ${TOP_PROCS}
 ${DIVIDER}"
+    send_discord_webhook "$MSG"
     echo "$MSG"
     exit 0
 fi
