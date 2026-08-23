@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Pre Ping working version of temperature alerts, alert scheduling and resource testing with Multi-Tiered Ladder & 3-Min Sustain Logic. V1.69
+# Description: Pre Ping working version of temperature alerts, alert scheduling and resource testing with Multi-Tiered Ladder & 3-Min Sustain Logic. V1.70
 
 # --- CONFIGURATION ---
 STATUS_FILE="/tmp/pi_system_status.txt"
@@ -71,7 +71,8 @@ if [ "$1" = "temp_report" ]; then
     TOP_PROCS=$(get_top_cpu)
     LADDER_EVAL=$(check_ladder_alerts)
     MSG="${DIVIDER}
-🟨 📝 **System Report**:
+🟢 **Status**: Update applied successfully (Overwrote old version). Monitor is **ONLINE**.
+🟨 📝 **System Report (V1.69)**:
 • **Temp:** ${RAW_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${RAM_PERC}% (${RAM_USED}MB / ${RAM_TOTAL}MB)
 ${LADDER_EVAL}
 
