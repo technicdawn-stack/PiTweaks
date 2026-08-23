@@ -1,29 +1,6 @@
 #!/bin/bash
-# Description: Raspberry Pi system resource monitor installer
-
-clear
-
-echo "=========================================="
-echo " 🍓 Raspberry Pi Discord Monitor Setup"
-echo "=========================================="
-echo ""
-read -p "Enter your Discord Webhook URL: " DISCORD_URL
-
-if [ -z "$DISCORD_URL" ]; then
-    echo "❌ Error: Webhook URL cannot be empty. Setup aborted."
-    exit 1
-fi
-
-echo ""
-echo "📦 Installing required dependencies (jq)..."
-sudo apt-get update -qq && sudo apt-get install -y jq -qq
-
-echo "📝 Writing ~/temp_monitor.sh..."
-cat << 'SCRIPT' > ~/temp_monitor.sh
-#!/bin/bash
 
 # --- CONFIGURATION ---
-DISCORD_URL="REPLACE_WITH_WEBHOOK"
 STATUS_FILE="/tmp/pi_system_status.txt"
 CPU_THRESHOLD=90
 RAM_THRESHOLD=90
@@ -60,141 +37,45 @@ if [ "$1" = "temp_report" ]; then
 **Top Processes (CPU):**
 ${TOP_PROCS}
 ${DIVIDER}"
-    PAYLOAD=$(jq -n --arg content "$MSG" '{content: $content}')
-    curl -H "Content-Type: application/json" -X POST -d "$PAYLOAD" "$DISCORD_URL" > /dev/null 2>&1
+    echo "$MSG"
     exit 0
 
 elif [ "$1" = "test_cpu" ] && [ -n "$2" ]; then
     SIM_CPU=$2
     TOP_PROCS=$(get_top_cpu)
     MSG="${DIVIDER}
-🟦 ⚡ **HIGH CPU ALERT (TEST)**: Load at ${SIM_CPU}%!
+🟦 ⚡ **HIGH CPU ALERT (TEST SIMULATION)**: Load sustained at ${SIM_CPU}% for 3 mins!
 • **Temp:** ${RAW_TEMP}°C | **CPU:** ${SIM_CPU}% | **RAM:** ${RAM_PERC}%
 
 **Top CPU Processes:**
 ${TOP_PROCS}
 ${DIVIDER}"
-    PAYLOAD=$(jq -n --arg content "$MSG" '{content: $content}')
-    curl -H "Content-Type: application/json" -X POST -d "$PAYLOAD" "$DISCORD_URL" > /dev/null 2>&1
-    echo "Simulated CPU alert sent."
+    echo "$MSG"
     exit 0
 
 elif [ "$1" = "test_ram" ] && [ -n "$2" ]; then
     SIM_RAM=$2
     TOP_PROCS=$(get_top_ram)
     MSG="${DIVIDER}
-🟦 📊 **HIGH RAM ALERT (TEST)**: Usage at ${SIM_RAM}%!
+🟦 📊 **HIGH RAM ALERT (TEST SIMULATION)**: Usage sustained at ${SIM_RAM}% for 3 mins!
 • **Temp:** ${RAW_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${SIM_RAM}%
 
 **Top RAM Processes:**
 ${TOP_PROCS}
 ${DIVIDER}"
-    PAYLOAD=$(jq -n --arg content "$MSG" '{content: $content}')
-    curl -H "Content-Type: application/json" -X POST -d "$PAYLOAD" "$DISCORD_URL" > /dev/null 2>&1
-    echo "Simulated RAM alert sent."
+    echo "$MSG"
     exit 0
 
 elif [ "$1" = "test_temp" ] && [ -n "$2" ]; then
     SIM_TEMP=$2
     TOP_PROCS=$(get_top_cpu)
     MSG="${DIVIDER}
-🟦 🌡️ **TEMP WARNING (TEST)**: Reached ${SIM_TEMP}°C!
+🟦 🌡️ **TEMP WARNING (TEST SIMULATION)**: CPU reached ${SIM_TEMP}°C!
 • **Temp:** ${SIM_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${RAM_PERC}%
 
 **Top CPU Processes:**
 ${TOP_PROCS}
 ${DIVIDER}"
-    PAYLOAD=$(jq -n --arg content "$MSG" '{content: $content}')
-    curl -H "Content-Type: application/json" -X POST -d "$PAYLOAD" "$DISCORD_URL" > /dev/null 2>&1
-    echo "Simulated Temp alert sent."
+    echo "$MSG"
     exit 0
 fi
-
-if [ -f "$STATUS_FILE" ]; then
-    LAST_PRIORITY=$(sed -n '1p' "$STATUS_FILE")
-    CPU_COUNT=$(sed -n '2p' "$STATUS_FILE")
-    RAM_COUNT=$(sed -n '3p' "$STATUS_FILE")
-else
-    LAST_PRIORITY=0
-    CPU_COUNT=0
-    RAM_COUNT=0
-fi
-
-LAST_PRIORITY=${LAST_PRIORITY:-0}
-CPU_COUNT=${CPU_COUNT:-0}
-RAM_COUNT=${RAM_COUNT:-0}
-
-if [ "$TEMP" -ge 80 ]; then PRIORITY=4
-elif [ "$TEMP" -ge 70 ]; then PRIORITY=3
-elif [ "$TEMP" -ge 60 ]; then PRIORITY=2
-elif [ "$TEMP" -ge 50 ]; then PRIORITY=1
-else PRIORITY=0; fi
-
-if [ "$PRIORITY" -gt "$LAST_PRIORITY" ]; then
-    TOP_PROCS=$(get_top_cpu)
-    MSG="${DIVIDER}
-🟥 🌡️ **TEMP WARNING**: CPU reached ${RAW_TEMP}°C!
-• **Temp:** ${RAW_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${RAM_PERC}%
-
-**Top CPU Processes:**
-${TOP_PROCS}
-${DIVIDER}"
-    PAYLOAD=$(jq -n --arg content "$MSG" '{content: $content}')
-    curl -H "Content-Type: application/json" -X POST -d "$PAYLOAD" "$DISCORD_URL" > /dev/null 2>&1
-fi
-LAST_PRIORITY=$PRIORITY
-
-if [ "$CPU_USAGE" -ge "$CPU_THRESHOLD" ]; then
-    CPU_COUNT=$((CPU_COUNT + 1))
-    if [ "$CPU_COUNT" -eq 3 ]; then
-        TOP_PROCS=$(get_top_cpu)
-        MSG="${DIVIDER}
-🟥 ⚡ **HIGH CPU ALERT**: Load sustained at ${CPU_USAGE}% for 3 mins!
-• **Temp:** ${RAW_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${RAM_PERC}%
-
-**Top CPU Processes:**
-${TOP_PROCS}
-${DIVIDER}"
-        PAYLOAD=$(jq -n --arg content "$MSG" '{content: $content}')
-        curl -H "Content-Type: application/json" -X POST -d "$PAYLOAD" "$DISCORD_URL" > /dev/null 2>&1
-    fi
-else
-    CPU_COUNT=0
-fi
-
-if [ "$RAM_PERC" -ge "$RAM_THRESHOLD" ]; then
-    RAM_COUNT=$((RAM_COUNT + 1))
-    if [ "$RAM_COUNT" -eq 3 ]; then
-        TOP_PROCS=$(get_top_ram)
-        MSG="${DIVIDER}
-🟥 📊 **HIGH RAM ALERT**: Usage sustained at ${RAM_PERC}% (${RAM_USED}MB) for 3 mins!
-• **Temp:** ${RAW_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${RAM_PERC}%
-
-**Top RAM Processes:**
-${TOP_PROCS}
-${DIVIDER}"
-        PAYLOAD=$(jq -n --arg content "$MSG" '{content: $content}')
-        curl -H "Content-Type: application/json" -X POST -d "$PAYLOAD" "$DISCORD_URL" > /dev/null 2>&1
-    fi
-else
-    RAM_COUNT=0
-fi
-
-printf "%s\n%s\n%s\n" "$LAST_PRIORITY" "$CPU_COUNT" "$RAM_COUNT" > "$STATUS_FILE"
-SCRIPT
-
-# Safely inject the user's webhook URL into the newly created monitor script
-sed -i "s|DISCORD_URL=\"REPLACE_WITH_WEBHOOK\"|DISCORD_URL=\"$DISCORD_URL\"|g" ~/temp_monitor.sh
-chmod +x ~/temp_monitor.sh
-
-echo "⚡ Setting up shortcuts..."
-grep -qF "alias temp_report" ~/.bashrc || echo "alias temp_report='~/temp_monitor.sh temp_report'" >> ~/.bashrc
-grep -qF "alias test_cpu" ~/.bashrc || echo "alias test_cpu='~/temp_monitor.sh test_cpu'" >> ~/.bashrc
-grep -qF "alias test_ram" ~/.bashrc || echo "alias test_ram='~/temp_monitor.sh test_ram'" >> ~/.bashrc
-grep -qF "alias test_temp" ~/.bashrc || echo "alias test_temp='~/temp_monitor.sh test_temp'" >> ~/.bashrc
-
-echo "⏰ Scheduling automated cron job..."
-(crontab -l 2>/dev/null | grep -v "temp_monitor.sh"; echo "* * * * * ~/temp_monitor.sh > /dev/null 2>&1") | crontab -
-
-echo ""
-echo "✅ Installation complete! Run 'source ~/.bashrc' or restart your terminal to use commands like 'temp_report'."
