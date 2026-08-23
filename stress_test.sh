@@ -3,14 +3,9 @@
 
 set -e
 
-REAL_HOME="$HOME"
-INSTALL_DIR="$REAL_HOME/PiTweaks"
+INSTALL_DIR="$PWD"
 TARGET_SCRIPT="$INSTALL_DIR/pi_tui.py"
-USER_BIN_DIR="$REAL_HOME/.local/bin"
-WRAPPER_SCRIPT="$USER_BIN_DIR/pitweaks-tui"
-
-mkdir -p "$INSTALL_DIR"
-mkdir -p "$USER_BIN_DIR"
+WRAPPER_SCRIPT="$INSTALL_DIR/stress_test.sh"
 
 echo "📦 Installing required packages..."
 sudo apt-get update -qq && sudo apt-get install -y stress-ng whiptail -qq
@@ -232,11 +227,11 @@ TARGET_PY="$TARGET_SCRIPT"
 while true; do
     CHOICE=\$(whiptail --title "PiTweaks - Continuous Stress Suite" \\
         --menu "Select a test mode (Press Ctrl+C to stop anytime):" 15 65 5 \\
-        "1" "CPU Stress Test (Continuous)" \\
-        "2" "RAM Memory Stress Test (Continuous)" \\
-        "3" "GPU Render Stress Test (Continuous)" \\
-        "4" "All-At-Once Comprehensive Test" \\
-        "5" "Exit" 3>&1 1>&2 2>&3)
+        --"1" "CPU Stress Test (Continuous)" \\
+        --"2" "RAM Memory Stress Test (Continuous)" \\
+        --"3" "GPU Render Stress Test (Continuous)" \\
+        --"4" "All-At-Once Comprehensive Test" \\
+        --"5" "Exit" 3>&1 1>&2 2>&3)
     
     if [ \$? != 0 ] || [ "\$CHOICE" = "5" ]; then
         clear
@@ -256,7 +251,7 @@ EOF
 chmod +x "$WRAPPER_SCRIPT"
 
 echo "=================================================="
-echo " ✅ Clean installation complete!"
+echo " ✅ Installation complete!"
 echo "=================================================="
-echo "ℹ️ Run your fresh tool via: pitweaks-tui"
+echo "ℹ️ Run your menu directly via: ./stress_test.sh"
 echo "=================================================="
