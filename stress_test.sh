@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: PiTweaks All-in-One Continuous Stress Suite & Telemetry V1.7
+# Description: PiTweaks All-in-One Continuous Stress Suite & Telemetry V1.8
 # PERSISTENT: TRUE
 
 set -e
@@ -171,6 +171,7 @@ def main_dashboard(test_type):
     stress_thread.daemon = True
     stress_thread.start()
 
+    # Prime the psutil cpu percent calculation so it doesn't return empty on the first tick
     psutil.cpu_percent(interval=None, percpu=True)
     time.sleep(0.5)
 
@@ -203,12 +204,13 @@ def main_dashboard(test_type):
 
             throttle_info = format_throttle_display(raw_hex)
 
+            # Properly construct the core display block so it never vanishes
             core_display = ""
             if core_bars:
                 for core_id, usage in core_bars:
-                    core_display += f"   Core {core_id}          : {make_bar(usage, 18)}\n"
+                    core_display += f"   Core {core_id:<2}         : {make_bar(usage, 18)}\n"
             else:
-                core_display = "   Initializing core metrics...\n"
+                core_display = "   Loading core metrics...\n"
 
             sys.stdout.write("\033[H")
             sys.stdout.flush()
@@ -225,7 +227,7 @@ def main_dashboard(test_type):
    GPU / Core Clock: {gpu_freq}
    Core Voltage    : {volts}
    SDRAM Volts     : Core: {sdram_c} | I/O: {sdram_io} | Phy: {sdram_p}
-   RAM Usage       : {make_bar(ram_perc, 18)} ({ram_str})
+   RAM Usage       : {make_bar(ram_perc, 18)}  ({ram_str})
    Load Average    : {load_avg}
 
  {CYAN}┌─ PER-CORE CPU UTILIZATION ──────────────────────────────────┐{RESET}
