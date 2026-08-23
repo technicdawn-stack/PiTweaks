@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Pre Ping working version of temperature alerts, alert scheduling and resource testing.
+# Description: Pre Ping working version of temperature alerts, alert scheduling and resource testing with Multi-Tiered Ladder & 3-Min Sustain Logic. V1.67
 
 # --- CONFIGURATION ---
 STATUS_FILE="/tmp/pi_system_status.txt"
@@ -29,11 +29,51 @@ if [ -z "$CPU_IDLE" ]; then
 fi
 CPU_USAGE=$(( 100 - CPU_IDLE ))
 
+# --- MULTI-TIERED TEMPERATURE LADDER & SUSTAINED CHECK LOGIC ---
+check_ladder_alerts() {
+    local t=$TEMP
+    local c=$CPU_USAGE
+    local r=$RAM_PERC
+    
+    # Temperature Ladder Check (50, 60, 70, 80°C)
+    if [ "$t" -ge 80 ]; then
+        echo "🚨 **CRITICAL TEMP ALERT**: Temperature reached ${t}°C (Hit 80°C Ladder Limit!)"
+    elif [ "$t" -ge 70 ]; then
+        echo "⚠️ **HIGH TEMP WARNING**: Temperature reached ${t}°C (Hit 70°C Ladder Limit)"
+    elif [ "$t" -ge 60 ]; then
+        echo "🟨 **ELEVATED TEMP NOTICE**: Temperature reached ${t}°C (Hit 60°C Ladder Limit)"
+    elif [ "$t" -ge 50 ]; then
+        echo "ℹ️ **INFO**: Temperature reached ${t}°C (Hit 50°C Ladder Limit)"
+    fi
+
+    # 3-Minute Sustained High Usage Check (using a state file tracker)
+    TIME_FILE="/tmp/pi_high_load_timer.txt"
+    CURRENT_TIME=$(date +%s)
+    
+    if [ "$c" -ge "$CPU_THRESHOLD" ] || [ "$r" -ge "$RAM_THRESHOLD" ]; then
+        if [ ! -f "$TIME_FILE" ]; then
+            echo "$CURRENT_TIME" > "$TIME_FILE"
+        else
+            START_TIME=$(cat "$TIME_FILE")
+            ELAPSED=$(( CURRENT_TIME - START_TIME ))
+            # 3 minutes = 180 seconds
+            if [ "$ELAPSED" -ge 180 ]; then
+                echo "⚡ **SUSTAINED LOAD ALERT**: CPU at ${c}% / RAM at ${r}% maintained for over 3 minutes!"
+            fi
+        fi
+    else
+        # Reset timer if usage drops below threshold
+        rm -f "$TIME_FILE"
+    }
+}
+
 if [ "$1" = "temp_report" ]; then
     TOP_PROCS=$(get_top_cpu)
+    LADDER_EVAL=$(check_ladder_alerts)
     MSG="${DIVIDER}
 🟨 📝 **System Report**:
 • **Temp:** ${RAW_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${RAM_PERC}% (${RAM_USED}MB / ${RAM_TOTAL}MB)
+${LADDER_EVAL}
 
 **Top Processes (CPU):**
 ${TOP_PROCS}
