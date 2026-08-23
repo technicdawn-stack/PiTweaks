@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: PiTweaks All-in-One Continuous Stress Suite & Telemetry V1.3
+# Description: PiTweaks All-in-One Continuous Stress Suite & Telemetry V1.4
 # PERSISTENT: TRUE
 
 set -e
@@ -51,15 +51,13 @@ def make_bar(percentage, width=20):
     return f"{color}[{bar}]{RESET} {p:.1f}%"
 
 def get_per_core_cpu():
-    # Reads /proc/stat to calculate per-core CPU usage percentages
     try:
         with open("/proc/stat", "r") as f:
             lines = f.readlines()
         cores = []
         for line in lines:
-            if line.startswith("cpu") and line[3:].strip() and not line.startswith("cpu "):
+            if line.startswith("cpu") and len(line) > 4 and line[3].isdigit():
                 parts = line.split()
-                # user, nice, system, idle, iowait, irq, softirq, steal
                 vals = [int(v) for v in parts[1:]]
                 idle = vals[3] + vals[4]
                 total = sum(vals)
@@ -68,7 +66,6 @@ def get_per_core_cpu():
     except:
         return []
 
-# Helper to compute CPU usage difference between two snapshots for smooth per-core stats
 last_cpu_stats = get_per_core_cpu()
 
 def get_hardware_stats():
@@ -76,11 +73,10 @@ def get_hardware_stats():
     temp_raw = run_cmd("vcgencmd measure_temp")
     temp_str = temp_raw.replace("temp=", "").replace("'C", "°C") if "temp=" in temp_raw else "N/A"
     
-    # Extract numerical temp for calculations
     temp_val = 0.0
     if "°C" in temp_str:
         try:
-            temp_val = float(temp_str.replace("°C", ""))
+            temp_val = float(temp_str.replace("°C", "").replace("c", ""))
         except:
             pass
 
@@ -109,7 +105,6 @@ def get_hardware_stats():
     loads = load_raw.split()[:3] if load_raw else ["N/A", "N/A", "N/A"]
     load_avg = f"{loads[0]} / {loads[1]} / {loads[2]}"
 
-    # Calculate per-core usages
     current_cpu_stats = get_per_core_cpu()
     core_bars = []
     if last_cpu_stats and current_cpu_stats and len(last_cpu_stats) == len(current_cpu_stats):
@@ -219,7 +214,7 @@ def main_dashboard(test_type):
 
             temp_str, temp_val, freq, gpu_freq, volts, sdram_c, sdram_io, sdram_p, ram_str, ram_perc, load_avg, core_bars = get_hardware_stats()
             
-            # Correct peak temperature tracking logic
+            # Robust peak temperature tracking
             if temp_val > peak_temp_val:
                 peak_temp_val = temp_val
                 peak_temp_str = temp_str
@@ -230,10 +225,13 @@ def main_dashboard(test_type):
 
             throttle_info = format_throttle_display(raw_hex)
 
-            # Build core usage strings dynamically
+            # Properly formatted per-core bars block
             core_display = ""
-            for core_id, usage in core_bars:
-                core_display += f"   Core {core_id}          : {make_bar(usage, 18)}\n"
+            if core_bars:
+                for core_id, usage in core_bars:
+                    core_display += f"   Core {core_id}          : {make_bar(usage, 18)}\n"
+            else:
+                core_display = "   Initializing core metrics...\n"
 
             os.system('clear')
             print(f"""
@@ -253,7 +251,6 @@ def main_dashboard(test_type):
 
  {CYAN}┌─ PER-CORE CPU UTILIZATION ──────────────────────────────────┐{RESET}
 {core_display.rstrip()}
-
  {CYAN}┌─ LIVE THROTTLING & HEALTH WATCHER ──────────────────────────┐{RESET}
 {throttle_info}
 {CYAN}└─────────────────────────────────────────────────────────────┘{RESET}
