@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: PiTweaks Advanced Continuous Telemetry Suite Installer
+# Description: PiTweaks Advanced Continuous Telemetry Suite Installer V1.1
 
 set -e
 
