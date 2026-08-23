@@ -1,4 +1,4 @@
-A_Test.sh|Loops the install url for faster and easier refreshing.
+A_Test.sh|Loops the install url for faster and easier refreshing. V1.1
 conspy_control.sh|Standalone Conspy screen mirroring controller and setup manager v1.1
 discord_controller.sh|No description provided
 discord_monitor.sh|Pre Ping working version of temperature alerts, alert scheduling and resource testing with Instant Watchdog Triggers. V2.0
