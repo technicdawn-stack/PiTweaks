@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# 🍓 PI TWEAKS INSTALLER (LOCAL EXECUTION & CONFIG SETUP / CLEANUP)
+# 🍓 PI TWEAKS INSTALLER (SMART PERSISTENCE & AUTO-OVERWRITE)
 # ==============================================================================
 set -eo pipefail
 
@@ -61,18 +61,29 @@ echo "🚀 Downloading and preparing ${SELECTED}..."
 echo "=========================================="
 echo ""
 
-# 5. Download script to disk temporarily using raw URL (No API limits, allows interactive prompts)
+# 5. Download script to disk using raw URL (automatically overwrites old versions safely)
 curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/${SELECTED}?cb=$(date +%s)" -o "${SELECTED}"
 
 # 6. Make it executable
 chmod +x "${SELECTED}"
 
-# 7. Run locally so user inputs (like webhook configuration prompts) work correctly
+# 7. Check if the script requires persistence (e.g., contains `# PERSISTENT: TRUE` or 'monitor' in name)
+IS_PERSISTENT=false
+if grep -qi "# PERSISTENT: TRUE" "${SELECTED}" || [[ "${SELECTED}" == *"monitor"* ]]; then
+    IS_PERSISTENT=true
+fi
+
+# 8. Run locally so interactive prompts (like webhooks or configurations) work properly
 ./"${SELECTED}"
 
-# 8. Clean up the script file afterward, leaving only config files intact
-rm -f "${SELECTED}"
-
-echo ""
-echo "=========================================="
-echo "✔ Cleanup complete. Script removed, config preserved."
+# 9. Smart Cleanup: Delete only if it's NOT a persistent background tool
+if [ "$IS_PERSISTENT" = false ]; then
+    rm -f "${SELECTED}"
+    echo ""
+    echo "=========================================="
+    echo "✔ Temporary script executed and cleaned up."
+else
+    echo ""
+    echo "=========================================="
+    echo "✔ Persistent script installed and saved to disk (Cron/Daemon ready)!"
+fi
