@@ -1,4 +1,4 @@
-# Description: Loops the install url for faster and easier refreshing.
+# Description: Loops the install url for faster and easier refreshing. V1.1
 # PERSISTENT: FALSE
 
 clear
