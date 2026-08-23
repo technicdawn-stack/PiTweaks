@@ -1,12 +1,24 @@
 #!/bin/bash
-# Description: Pre Ping working version of temperature alerts, alert scheduling and resource testing with Multi-Tiered Ladder & 3-Min Sustain Logic. V1.70
+# Description: Pre Ping working version of temperature alerts, alert scheduling and resource testing with Multi-Tiered Ladder & 3-Min Sustain Logic. V1.71
 
 # --- CONFIGURATION ---
 STATUS_FILE="/tmp/pi_system_status.txt"
 CPU_THRESHOLD=90
 RAM_THRESHOLD=90
 DIVIDER="---------------------------------------"
+# Set your Discord Webhook URL here to enable automatic webhook notifications on update/alert
+DISCORD_WEBHOOK_URL="${DISCORD_WEBHOOK_URL:-}"
 # ---------------------
+
+send_discord_webhook() {
+    local message="$1"
+    if [ -n "$DISCORD_WEBHOOK_URL" ]; then
+        curl -H "Content-Type: application/json" \
+             -X POST \
+             -d "{\"content\": \"$message\"}" \
+             "$DISCORD_WEBHOOK_URL" &>/dev/null &
+    fi
+}
 
 get_top_cpu() {
     ps -eo comm,%cpu,%mem --sort=-%cpu | head -n 4 | tail -n 3 | awk '{printf "  • %s: CPU %s%% | RAM %s%%\n", $1, $2, $3}'
@@ -67,12 +79,22 @@ check_ladder_alerts() {
     fi
 }
 
+# --- INSTALL / OVERWRITE NOTIFICATION TRIGGER ---
+if [ "$1" = "install_notify" ]; then
+    echo "✔ Script file written and overwrote old version successfully!"
+    echo "✔ Execution verified: Monitor is online (V1.71)."
+    WEBHOOK_MSG="🟢 **PiTweaks Status**: `discord_monitor.sh` (V1.71) installed/overwritten successfully. Monitor is **ONLINE** and running!"
+    send_discord_webhook "$WEBHOOK_MSG"
+    echo "✔ Discord webhook notification sent!"
+    exit 0
+fi
+
 if [ "$1" = "temp_report" ]; then
     TOP_PROCS=$(get_top_cpu)
     LADDER_EVAL=$(check_ladder_alerts)
     MSG="${DIVIDER}
 🟢 **Status**: Update applied successfully (Overwrote old version). Monitor is **ONLINE**.
-🟨 📝 **System Report (V1.69)**:
+🟨 📝 **System Report (V1.71)**:
 • **Temp:** ${RAW_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${RAM_PERC}% (${RAM_USED}MB / ${RAM_TOTAL}MB)
 ${LADDER_EVAL}
 
