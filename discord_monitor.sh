@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Pre Ping working version of temperature alerts, alert scheduling and resource testing with Multi-Tiered Ladder & 3-Min Sustain Logic. V1.73
+# Description: Pre Ping working version of temperature alerts, alert scheduling and resource testing with Multi-Tiered Ladder & 3-Min Sustain Logic. V1.75
 
 # --- CONFIGURATION & WEBHOOK SETUP ---
 STATUS_FILE="/tmp/pi_system_status.txt"
@@ -24,7 +24,6 @@ setup_webhook() {
         echo "$DIVIDER"
     else
         source "$CONFIG_FILE"
-        # On standard install/load check, offer option to update
         if [ "$1" = "install_notify" ] || [ -z "$1" ]; then
             echo "$DIVIDER"
             read -p "Do you want to re-configure your Discord Webhook URL? (y/n): " choice
@@ -41,8 +40,28 @@ setup_webhook() {
     [ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"
 }
 
+# Setup cron job to run monitoring automatically every minute
+setup_cron() {
+    local script_path
+    script_path="$(realpath "$0")"
+    
+    # Check if cron job already exists
+    if ! crontab -l 2>/dev/null | grep -q "$script_path temp_report"; then
+        echo "$DIVIDER"
+        read -p "Would you like to setup an automatic background cron job to monitor stats every minute? (y/n): " cron_choice
+        if [[ "$cron_choice" =~ ^[Yy]$ ]]; then
+            (crontab -l 2>/dev/null; echo "* * * * * /bin/bash $script_path temp_report >> /tmp/pi_monitor.log 2>&1") | crontab -
+            echo "✔ Cron job installed successfully! Monitoring every 1 minute."
+        else
+            echo "⚠️ Skipped cron job setup."
+        fi
+        echo "$DIVIDER"
+    fi
+}
+
 # Run setup configuration check
 setup_webhook "$1"
+[ -z "$1" ] || [ "$1" = "install_notify" ] && setup_cron
 # ---------------------
 
 send_discord_webhook() {
@@ -51,7 +70,12 @@ send_discord_webhook() {
         curl -H "Content-Type: application/json" \
              -X POST \
              -d "{\"content\": \"$message\"}" \
-             "$DISCORD_WEBHOOK_URL" &>/dev/null &
+             "$DISCORD_WEBHOOK_URL" &>/dev/null | {
+                 # If webhook sends successfully, also pipe output to Discord if report is run via cron
+                 if [ -n "$2" ]; then
+                     curl -H "Content-Type: application/json" -X POST -d "{\"content\": \"$2\"}" "$DISCORD_WEBHOOK_URL" &>/dev/null
+                 fi
+             }
     fi
 }
 
@@ -113,10 +137,10 @@ check_ladder_alerts() {
 # --- COMMAND ROUTER ---
 if [ "$1" = "install_notify" ] || [ -z "$1" ]; then
     echo "$DIVIDER"
-    echo "🟢 SUCCESS: Script compiled, written, and overwrote old version safely."
-    echo "🟢 STATUS: discord_monitor.sh (V1.73) is ONLINE and running in memory!"
+    echo "🟢 SUCCESS: Script compiled, config saved, and executed safely."
+    echo "🟢 STATUS: discord_monitor.sh (V1.75) setup complete!"
     echo "$DIVIDER"
-    WEBHOOK_MSG="🟢 **PiTweaks Status**: `discord_monitor.sh` (V1.73) installed/overwritten successfully. Monitor is **ONLINE**!"
+    WEBHOOK_MSG="🟢 **PiTweaks Status**: `discord_monitor.sh` (V1.75) installed successfully. Cron & Config active!"
     send_discord_webhook "$WEBHOOK_MSG"
     exit 0
 
@@ -124,8 +148,8 @@ elif [ "$1" = "temp_report" ]; then
     TOP_PROCS=$(get_top_cpu)
     LADDER_EVAL=$(check_ladder_alerts)
     MSG="${DIVIDER}
-🟢 **Status**: Update applied successfully. Monitor is **ONLINE**.
-🟨 📝 **System Report (V1.73)**:
+🟢 **Status**: System report generated. Monitor is **ONLINE**.
+🟨 📝 **System Report (V1.75)**:
 • **Temp:** ${RAW_TEMP}°C | **CPU:** ${CPU_USAGE}% | **RAM:** ${RAM_PERC}% (${RAM_USED}MB / ${RAM_TOTAL}MB)
 ${LADDER_EVAL}
 
@@ -133,6 +157,8 @@ ${LADDER_EVAL}
 ${TOP_PROCS}
 ${DIVIDER}"
     echo "$MSG"
+    # If running from cron, automatically fire to webhook if alerts or reports are triggered
+    send_discord_webhook "$MSG"
     exit 0
 
 elif [ "$1" = "test_cpu" ] && [ -n "$2" ]; then
