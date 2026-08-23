@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Pre Ping working version of temperature alerts, alert scheduling and resource testing with Instant Watchdog Triggers. V1.76
+# Description: Pre Ping working version of temperature alerts, alert scheduling and resource testing with Instant Watchdog Triggers. V2.0
 # PERSISTENT: TRUE
 
 # --- CONFIGURATION & WEBHOOK SETUP ---
