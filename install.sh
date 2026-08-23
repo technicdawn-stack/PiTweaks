@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# 🍓 PI TWEAKS INSTALLER (100% IN-MEMORY / ZERO DISK SPACE / INSTANT CACHE BYPASS)
+# 🍓 PI TWEAKS INSTALLER (LOCAL EXECUTION & CONFIG SETUP / CLEANUP)
 # ==============================================================================
 set -eo pipefail
 
@@ -57,9 +57,22 @@ SELECTED=$(whiptail --clear \
     }
 
 clear
-echo "🚀 Running ${SELECTED} in memory..."
+echo "🚀 Downloading and preparing ${SELECTED}..."
 echo "=========================================="
 echo ""
 
-# 5. Stream chosen script straight into RAM with a cache-buster parameter for instant execution
-curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/${SELECTED}?cb=$(date +%s)" | bash
+# 5. Download script to disk temporarily using raw URL (No API limits, allows interactive prompts)
+curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/${SELECTED}?cb=$(date +%s)" -o "${SELECTED}"
+
+# 6. Make it executable
+chmod +x "${SELECTED}"
+
+# 7. Run locally so user inputs (like webhook configuration prompts) work correctly
+./"${SELECTED}"
+
+# 8. Clean up the script file afterward, leaving only config files intact
+rm -f "${SELECTED}"
+
+echo ""
+echo "=========================================="
+echo "✔ Cleanup complete. Script removed, config preserved."
