@@ -5,7 +5,7 @@ disk_check.sh|No description provided
 net_auditor.sh|Enhanced network utility featuring an interactive menu for Ookla Speed Tests, open port auditing, ping checks, DNS tests, and Wi-Fi diagnostics.
 overclock.sh|Smart Raspberry Pi overclocking manager with live thermal monitoring and safe backups.
 security_module_upgrade.sh|No description provided
-stress_test.sh|PiTweaks Advanced Continuous Telemetry Suite Installer
+stress_test.sh|PiTweaks Advanced Continuous Telemetry Suite Installer V1.1
 swap_manager.sh|Smart memory and swap manager with auto-detection and recommendations
 sys_info.sh|Measures network speed using official native Ookla Speedtest
 throttlecheck.sh|No description provided
