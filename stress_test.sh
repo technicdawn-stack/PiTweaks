@@ -1,11 +1,11 @@
 #!/bin/bash
-# Description: PiTweaks All-in-One Continuous Stress Suite & Telemetry V1.9
+# Description: PiTweaks All-in-One Continuous Stress Suite & Telemetry V2.0
 # PERSISTENT: TRUE
 
 set -e
 
 INSTALL_DIR="$HOME/PiTweaks"
-TARGET_SCRIPT="$INSTALL_DIR/stress_core.py"
+TARGET_SCRIPT="$INSTALL_DIR/stress_test.sh"
 
 mkdir -p "$INSTALL_DIR"
 
@@ -15,15 +15,16 @@ if ! command -v stress-ng &> /dev/null || ! command -v whiptail &> /dev/null; th
     sudo apt-get update -qq && sudo apt-get install -y stress-ng whiptail -qq
 fi
 
+# Fix typo from screenshot: CPU Clock Speed double 'zz' check
 if ! python3 -c "import psutil" &> /dev/null; then
     echo "📦 Installing required Python module (psutil)..."
     sudo apt-get install -y python3-psutil -qq
 fi
 
-# 2. Always write/update the Python Telemetry Core so changes never get stuck
-echo "📝 Writing/Updating Telemetry Core..."
-cat << 'EOF' > "$TARGET_SCRIPT"
-#!/usr/bin/env python3
+# Check if we are running the embedded Python payload or the outer bash wrapper
+if [ "$1" = "_run_python_dashboard" ]; then
+    shift
+    python3 - "$@" << 'EOF'
 import os
 import sys
 import time
@@ -56,7 +57,6 @@ def make_bar(percentage, width=18):
     return f"{color}[{bar}]{RESET} {p:5.1f}%"
 
 def get_hardware_stats():
-    # Temperature
     temp_raw = run_cmd("vcgencmd measure_temp")
     temp_str = temp_raw.replace("temp=", "").replace("'C", "°C") if "temp=" in temp_raw else "N/A"
     
@@ -67,7 +67,6 @@ def get_hardware_stats():
         except:
             pass
 
-    # Clocks & Volts
     freq_raw = run_cmd("vcgencmd measure_clock arm")
     freq = f"{int(freq_raw.split('=')[1]) / 1000000:.0f} MHz" if "=" in freq_raw else "N/A"
 
@@ -79,16 +78,13 @@ def get_hardware_stats():
     sdram_io = run_cmd("vcgencmd measure_volts sdram_i").replace("volt=", "")
     sdram_p = run_cmd("vcgencmd measure_volts sdram_p").replace("volt=", "")
 
-    # RAM via psutil
     mem = psutil.virtual_memory()
     ram_perc = mem.percent
     ram_str = f"{int(mem.used / 1024 / 1024)}MB / {int(mem.total / 1024 / 1024)}MB"
 
-    # Load Average
     load_avg_vals = os.getloadavg()
     load_avg = f"{load_avg_vals[0]:.2f} / {load_avg_vals[1]:.2f} / {load_avg_vals[2]:.2f}"
 
-    # Per-Core CPU percentages using psutil
     core_usages = psutil.cpu_percent(interval=None, percpu=True)
     core_bars = [(i, usage) for i, usage in enumerate(core_usages)]
 
@@ -248,9 +244,17 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         main_dashboard(sys.argv[1])
 EOF
-chmod +x "$TARGET_SCRIPT"
+    exit 0
+fi
 
-# 3. Launch Whiptail menu immediately on execution
+# Automatically overwrite self to ensure updates apply instantly on execution
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+if [ "$SCRIPT_SOURCE" != "$TARGET_SCRIPT" ]; then
+    cp "$SCRIPT_SOURCE" "$TARGET_SCRIPT"
+    chmod +x "$TARGET_SCRIPT"
+fi
+
+# Launch Whiptail menu
 while true; do
     CHOICE=$(whiptail --title "PiTweaks - Continuous Stress Suite" \
         --menu "Select a test mode (Press Ctrl+C to stop anytime):" 15 65 5 \
@@ -267,9 +271,9 @@ while true; do
     fi
 
     case $CHOICE in
-        1) python3 "$TARGET_SCRIPT" cpu ;;
-        2) python3 "$TARGET_SCRIPT" ram ;;
-        3) python3 "$TARGET_SCRIPT" gpu ;;
-        4) python3 "$TARGET_SCRIPT" all ;;
+        1) bash "$TARGET_SCRIPT" _run_python_dashboard cpu ;;
+        2) bash "$TARGET_SCRIPT" _run_python_dashboard ram ;;
+        3) bash "$TARGET_SCRIPT" _run_python_dashboard gpu ;;
+        4) bash "$TARGET_SCRIPT" _run_python_dashboard all ;;
     esac
 done
