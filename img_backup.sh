@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Modular Pi Imager Utility with Dynamic USB Detection and Network Streaming V1.3
+# Description: Modular Pi Imager Utility with Dynamic USB Detection and Network Streaming V1.31
 # PERSISTENT: FALSE
 
 # Ensure script is run as root
@@ -99,4 +99,4 @@ fi
 echo "🚀 Streaming backup over network to $REMOTE_HOST..."
 dd if="$ROOT_DEV" bs=4M status=progress | gzip -c | ssh "$REMOTE_HOST" "cat > ~/$REMOTE_PATH"
 
-whiptail --title "Success!" --msgbox "Network backup stream complete!\nSaved to remote Downloads folder as:\n$FILENAME" 12 60
+whiptail --title="Success!" --msgbox "Network backup stream complete!\nSaved to remote Downloads folder as:\n$FILENAME" 12 60
