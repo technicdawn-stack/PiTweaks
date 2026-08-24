@@ -13,4 +13,4 @@ swap_manager.sh|Smart memory and swap manager with auto-detection and recommenda
 sys_info.sh|System information and telemtry, condensed.
 throttlecheck.sh|No description provided
 unbound.sh|Automated installer and configurer for Unbound (Recursive DNS) with Port Conflict Check
-wireguard.sh|Dynamic installer and configurer for WireGuard and WireGuard-UI (Bare Metal) V1.0
+wireguard.sh|Fully automated installer and configurer for WireGuard and WireGuard-UI (Bare Metal) V1.1
