@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# # Description: Automated installer and configurer for Unbound (Recursive DNS)
+# # Description: Automated installer and configurer for Unbound (Recursive DNS) with Port Conflict Check
 # # PERSISTENT: TRUE
 # ==============================================================================
 set -eo pipefail
@@ -12,19 +12,43 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
+# --- 1. Port Conflict Check ---
+TARGET_PORT="5335"
+echo "[+] Checking if port $TARGET_PORT is already in use..."
+
+if command -v ss &>/dev/null; then
+    PORT_CHECK=$(ss -tuln | grep ":$TARGET_PORT " || true)
+else
+    PORT_CHECK=$(netstat -tuln | grep ":$TARGET_PORT " || true)
+fi
+
+if [ -n "$PORT_CHECK" ]; then
+    echo "⚠️ WARNING: Port $TARGET_PORT is already in use on this system!"
+    echo "$PORT_CHECK"
+    read -p "Do you want to continue anyway? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "[-] Installation aborted by user due to port conflict."
+        exit 1
+    fi
+else
+    echo "[✓] Port $TARGET_PORT is free."
+fi
+
+# --- 2. Installation ---
 echo "[+] Updating package lists and installing Unbound..."
 apt-get update -qq
 apt-get install -y unbound dns-root-data -qq
 
-# Create the optimized Pi-hole configuration file for Unbound
+# --- 3. Configuration ---
 CONFIG_FILE="/etc/unbound/unbound.conf.d/pi-hole.conf"
-echo "[+] Writing custom configuration to $CONFIG_FILE..."
+echo "[+] Writing explicit configuration (127.0.0.1:$TARGET_PORT) to $CONFIG_FILE..."
 
-cat << 'EOF' > "$CONFIG_FILE"
+cat << EOF > "$CONFIG_FILE"
 server:
     verbosity: 1
     interface: 127.0.0.1
-    port: 5335
+    port: $TARGET_PORT
     do-ip4: yes
     do-udp: yes
     do-tcp: yes
@@ -52,5 +76,5 @@ echo "[+] Enabling and restarting Unbound service..."
 systemctl enable unbound
 systemctl restart unbound
 
-echo "[+] Success! Unbound is now running locally on port 5335."
-echo "[*] Next step: Go to your Pi-hole web interface -> Settings -> DNS, uncheck public upstreams, and set Custom 1 (IPv4) to: 127.0.0.1#5335"
+echo "[+] Success! Unbound is now running locally at 127.0.0.1:$TARGET_PORT."
+echo "[*] Next step: Go to your Pi-hole web interface -> Settings -> DNS, uncheck public upstreams, and set Custom 1 (IPv4) to: 127.0.0.1#$TARGET_PORT"
