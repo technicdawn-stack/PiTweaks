@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# ==============================================================================
-# # Description: Automated installer and configurer for Unbound (Recursive DNS) with Port Conflict Check
-# # PERSISTENT: TRUE
-# ==============================================================================
+
+# Description: Automated installer and configurer for Unbound (Recursive DNS) with Port Conflict Check
+# PERSISTENT: TRUE
+
 set -eo pipefail
 
 # Ensure script is run as root
