@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Modular Pi Imager Utility with Dynamic USB Detection and Network Streaming V1.3.2
+# Description: Modular Pi Imager Utility with Dynamic USB Detection and Network Streaming V1.3.3
 # PERSISTENT: FALSE
 
 # Ensure script is run as root
