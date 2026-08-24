@@ -9,5 +9,5 @@ overclock.sh|Smart Raspberry Pi overclocking manager with live thermal monitorin
 security_module_upgrade.sh|No description provided
 stress_test.sh|PiTweaks All-in-One Continuous Stress Suite & Telemetry V2.0
 swap_manager.sh|Smart memory and swap manager with auto-detection and recommendations
-sys_info.sh|Measures network speed using official native Ookla Speedtest
+sys_info.sh|System information and telemtry, condensed.
 throttlecheck.sh|No description provided
