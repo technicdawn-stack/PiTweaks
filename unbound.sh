@@ -2,7 +2,7 @@
 
 
 # Description: Automated installer and configurer for Unbound (Recursive DNS) with Port Conflict Check
-# PERSISTENT: TRUE
+# PERSISTENT: FALSE
 
 set -eo pipefail
 
