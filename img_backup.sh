@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Modular Pi Imager Utility with Dynamic USB Detection and Network Streaming V1.31
+# Description: Modular Pi Imager Utility with Dynamic USB Detection and Network Streaming V1.3.2
 # PERSISTENT: FALSE
 
 # Ensure script is run as root
@@ -20,9 +20,17 @@ DEST_TYPE=$(whiptail --title "Select Backup Destination" --menu "Choose where to
 
 [ $? -ne 0 ] && { echo "❌ Cancelled."; exit 0; }
 
-# Determine Root Device Dynamically
-ROOT_DEV=$(findmnt / -o source -n | sed 's/[0-9]//g')
-[ -z "$ROOT_DEV" ] && ROOT_DEV="/dev/mmcblk0"
+# Determine Root Device Dynamically (Safely)
+ROOT_DEV=$(findmnt / -o source -n 2>/dev/null | sed 's/[0-9]//g')
+if [ -z "$ROOT_DEV" ] || [ ! -b "$ROOT_DEV" ]; then
+    if [ -b /dev/mmcblk0p2 ]; then
+        ROOT_DEV="/dev/mmcblk0"
+    elif [ -b /dev/sda2 ]; then
+        ROOT_DEV="/dev/sda"
+    else
+        ROOT_DEV="/dev/mmcblk0"
+    fi
+fi
 
 # --- OPTION 1: USB / EXTERNAL DRIVE (DYNAMIC) ---
 if [ "$DEST_TYPE" = "1" ]; then
@@ -32,7 +40,7 @@ if [ "$DEST_TYPE" = "1" ]; then
         if [[ "/dev/$name" != "$ROOT_DEV" ]]; then
             DRIVE_LIST+=("/dev/$name" "Size: $size [Mounted: ${mountpoint:-Not Mounted}]")
         fi
-    done < <(lsblk -dpn -o NAME,SIZE,MOUNTPOINT | grep -v "loop" | awk '{print $1, $2, $3}')
+    done < <(lsblk -dpn -o NAME,SIZE,MOUNTPOINT 2>/dev/null | grep -v "loop" | awk '{print $1, $2, $3}')
 
     if [ ${#DRIVE_LIST[@]} -eq 0 ]; then
         whiptail --title "Error" --msgbox "No external USB drives or SD cards detected!" 10 60
@@ -45,7 +53,7 @@ if [ "$DEST_TYPE" = "1" ]; then
     [ $? -ne 0 ] && exit 0
 
     # Auto-mount or locate mount point
-    TARGET_DIR=$(lsblk -no MOUNTPOINT "$SELECTED_DRIVE" | head -n 1)
+    TARGET_DIR=$(lsblk -no MOUNTPOINT "$SELECTED_DRIVE" 2>/dev/null | head -n 1)
     if [ -z "$TARGET_DIR" ]; then
         TARGET_DIR="/mnt/pi_backup_usb"
         mkdir -p "$TARGET_DIR"
@@ -78,7 +86,7 @@ NET_MODE=$(whiptail --title "Network Configuration" --menu "Choose how to config
 if [ "$NET_MODE" = "1" ]; then
     CLIENT_IP=$(echo "$SSH_CLIENT" | awk '{print $1}')
     if [ -z "$CLIENT_IP" ]; then
-        whiptail --title "Error" --msgbox "Could not auto-detect SSH client IP. Try Manual mode." 10 60
+        whiptail --title "Error" --msgbox "Could not auto-detect SSH client IP (likely due to sudo). Please use Manual mode." 10 60
         exit 1
     fi
     REMOTE_USER=$(whiptail --inputbox "Enter username for remote host ($CLIENT_IP):" 10 60 "$USER" 3>&1 1>&2 2>&3)
@@ -99,4 +107,4 @@ fi
 echo "🚀 Streaming backup over network to $REMOTE_HOST..."
 dd if="$ROOT_DEV" bs=4M status=progress | gzip -c | ssh "$REMOTE_HOST" "cat > ~/$REMOTE_PATH"
 
-whiptail --title="Success!" --msgbox "Network backup stream complete!\nSaved to remote Downloads folder as:\n$FILENAME" 12 60
+whiptail --title "Success!" --msgbox "Network backup stream complete!\nSaved to remote Downloads folder as:\n$FILENAME" 12 60
