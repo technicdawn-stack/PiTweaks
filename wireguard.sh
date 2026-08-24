@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: Dynamic installer and configurer for WireGuard and WireGuard-UI (Bare Metal)
+# Description: Dynamic installer and configurer for WireGuard and WireGuard-UI (Bare Metal) V1.0
 # PERSISTENT: FALSE
 
 # Ensure script is run as root
@@ -56,11 +56,24 @@ else
     mkdir -p /opt/wireguard-ui
     cd /opt/wireguard-ui
 
-    # Detect system architecture
+    # Detect system architecture and map to Github release naming
     ARCH=$(uname -m)
     echo "[*] Detected architecture: $ARCH"
+    
+    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+      WG_UI_ARCH="linux-arm64"
+    else
+      WG_UI_ARCH="linux-arm"
+    fi
 
-    echo "[*] Creating systemd service file with persistent keepalive options..."
+    echo "[*] Downloading WireGuard-UI binary for $WG_UI_ARCH..."
+    wget -O wireguard-ui.tar.gz "https://github.com/ngoduykhanh/wireguard-ui/releases/download/v0.6.2/wireguard-ui-v0.6.2-${WG_UI_ARCH}.tar.gz"
+    
+    echo "[*] Extracting files..."
+    tar -xzvf wireguard-ui.tar.gz
+    rm wireguard-ui.tar.gz
+
+    echo "[*] Creating systemd service file..."
     cat << 'EOF' > /etc/systemd/system/wireguard-ui.service
 [Unit]
 Description=WireGuard-UI Management Dashboard
@@ -86,7 +99,8 @@ EOF
 
     systemctl daemon-reload
     systemctl enable wireguard-ui.service
-    echo "[+] WireGuard-UI service enabled! It will start automatically on boot."
+    systemctl start wireguard-ui.service
+    echo "[+] WireGuard-UI installed, enabled, and started successfully!"
   else
     echo "[*] Skipping WireGuard-UI installation."
   fi
