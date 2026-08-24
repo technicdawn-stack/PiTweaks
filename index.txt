@@ -3,7 +3,7 @@ conspy_control.sh|Standalone Conspy screen mirroring controller and setup manage
 discord_controller.sh|No description provided
 discord_monitor.sh|Pre Ping working version of temperature alerts, alert scheduling and resource testing with Instant Watchdog Triggers. V2.0
 disk_check.sh|No description provided
-img_backup.sh|Modular Pi Imager Utility with USB/Network Routing and Whiptail TUI
+img_backup.sh|Modular Pi Imager Utility with Dynamic USB Detection and Network Streaming
 net_auditor.sh|Enhanced network utility featuring an interactive menu for Ookla Speed Tests, open port auditing, ping checks, DNS tests, and Wi-Fi diagnostics.
 overclock.sh|Smart Raspberry Pi overclocking manager with live thermal monitoring and safe backups.
 security_module_upgrade.sh|No description provided
