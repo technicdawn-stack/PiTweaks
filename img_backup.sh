@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Modular Pi Imager Utility with Dynamic USB Detection and Network Streaming V1.2
+# Description: Modular Pi Imager Utility with Dynamic USB Detection and Network Streaming V1.3
 # PERSISTENT: FALSE
 
 # Ensure script is run as root
@@ -60,30 +60,6 @@ if [ "$DEST_TYPE" = "1" ]; then
     if ! whiptail --title "Final Confirmation" --yesno "Ready to write local image to:\n$BACKUP_FILE\n\nContinue?" 12 60; then
         exit 0
     fi
-
-    echo "🚀 Writing local backup image to external drive..."
-    dd if="$ROOT_DEV" bs=4M status=progress of="$BACKUP_FILE"
-    sync
-    whiptail --title "Success!" --msgbox "Backup completed successfully!\nSaved to: $BACKUP_FILE" 10 60
-    exit 0
-fi
-
-    # Auto-mount or locate mount point
-    TARGET_DIR=$(lsblk -no MOUNTPOINT "$SELECTED_DRIVE" | head -n 1)
-    if [ -z "$TARGET_DIR" ]; then
-        TARGET_DIR="/mnt/pi_backup_usb"
-        mkdir -p "$TARGET_DIR"
-        mount "$SELECTED_DRIVE" "$TARGET_DIR" || {
-            whiptail --title "Error" --msgbox "Failed to mount $SELECTED_DRIVE." 10 60
-            exit 1
-        }
-    }
-
-    BACKUP_FILE="$TARGET_DIR/pi_backup_$(date +%Y%m%d_%H%M%S).img"
-
-    if ! whiptail --title "Final Confirmation" --yesno "Ready to write local image to:\n$BACKUP_FILE\n\nContinue?" 12 60; then
-        exit 0
-    }
 
     echo "🚀 Writing local backup image to external drive..."
     dd if="$ROOT_DEV" bs=4M status=progress of="$BACKUP_FILE"
