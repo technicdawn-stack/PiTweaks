@@ -74,13 +74,22 @@ if [ "${#MENU_OPTIONS[@]}" -eq 0 ]; then
     exit 1
 fi
 
-# 4. Get terminal size for responsive menu
-TERM_HEIGHT=$(stty size 2>/dev/null | awk '{print $1}' || echo 20)
-TERM_WIDTH=$(stty size 2>/dev/null | awk '{print $2}' || echo 80)
+# 4. Get terminal size for responsive menu with safety defaults
+TERM_HEIGHT=$(stty size 2>/dev/null | awk '{print $1}')
+TERM_WIDTH=$(stty size 2>/dev/null | awk '{print $2}')
+
+# Fallback if stty size fails or returns empty
+[ -z "$TERM_HEIGHT" ] && TERM_HEIGHT=24
+[ -z "$TERM_WIDTH" ] && TERM_WIDTH=80
 
 BOX_HEIGHT=$(( TERM_HEIGHT - 4 ))
 BOX_WIDTH=$(( TERM_WIDTH - 6 ))
 MENU_HEIGHT=$(( BOX_HEIGHT - 8 ))
+
+# Ensure box sizes never drop below a safe minimum threshold
+[ "$BOX_HEIGHT" -lt 10 ] && BOX_HEIGHT=10
+[ "$BOX_WIDTH" -lt 40 ] && BOX_WIDTH=40
+[ "$MENU_HEIGHT" -lt 5 ] && MENU_HEIGHT=5
 
 # 5. Launch Whiptail TUI loop to handle header and divider selections gracefully
 while true; do
