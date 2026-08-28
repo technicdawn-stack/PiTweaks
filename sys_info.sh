@@ -2,7 +2,8 @@
 clear
 
 # Description: System information and telemtry, condensed.
-#PERSISTENT: FALSE
+# PERSISTENT: FALSE
+# Category: Tools
 
 echo "=========================================="
 echo " 📊 Raspberry Pi System Information"
