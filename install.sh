@@ -68,7 +68,7 @@ for cat in $sorted_categories; do
     
     while IFS='|' read -r script desc; do
         [[ -z "$script" ]] && continue
-        MENU_OPTIONS+=("$script" "    └─ ${desc:-No description provided}")
+        MENU_OPTIONS+=("└─ $script" "- ${desc:-No description provided}")
     done <<< "$sorted_scripts"
 done
 
@@ -102,6 +102,9 @@ while true; do
         whiptail --title "Notice" --msgbox "Please select an actual script, not a header or separator line." 8 50
         continue
     fi
+
+    # Clean up the └─ prefix from the user's selection so it matches the raw filename on GitHub
+    SELECTED=$(echo "$SELECTED" | sed 's/^└─ *//')
 
     break
 done
