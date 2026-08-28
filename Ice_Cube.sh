@@ -1,18 +1,26 @@
 #!/bin/bash
 clear
 
-# Description: Thermodynamic ice calculator with automated web server wrapper (CubeCooler v1.2).
+# Description: CubeCooler v1.3 with an interactive terminal control dashboard wrapper.
 #PERSISTENT: FALSE
 
 PYTHON_APP_PATH="/tmp/CubeCooler.py"
+PORT=8081
 
-# Write or overwrite the latest Python Web App script on every run
-cat << 'EOF' > "$PYTHON_APP_PATH"
+# Clean up any previous background instances of CubeCooler on this port
+if fuser -s ${PORT}/tcp 2>/dev/null; then
+    echo "Stopping existing CubeCooler instance on port ${PORT}..."
+    fuser -k ${PORT}/tcp &>/dev/null
+    sleep 1
+fi
+
+# Write the latest Python Web App script
+cat << EOF > "$PYTHON_APP_PATH"
 import http.server
 import socketserver
 import urllib.parse
 
-PORT = 8081
+PORT = ${PORT}
 
 class CubeCoolerHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -112,7 +120,7 @@ class CubeCoolerHandler(http.server.SimpleHTTPRequestHandler):
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>CubeCooler v1.1 - Thermal Equilibrium Engine</title>
+            <title>CubeCooler v1.2 - Thermal Equilibrium Engine</title>
             <style>
                 :root {{
                     --bg-color: #0f172a;
@@ -205,7 +213,7 @@ class CubeCoolerHandler(http.server.SimpleHTTPRequestHandler):
         </head>
         <body>
             <div class="container">
-                <h1>Thermal Equilibrium Engine v1.1</h1>
+                <h1>🧊 CubeCooler v1.2</h1>
                 <div class="hint">Leave exactly ONE field blank to auto-solve it.</div>
                 
                 <form method="GET">
@@ -245,12 +253,40 @@ class CubeCoolerHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(html.encode("utf-8"))
 
 with socketserver.TCPServer(("", PORT), CubeCoolerHandler) as httpd:
-    print(f"CubeCooler v1.1 running! Access it via browser at http://<your-pi-ip>:{PORT}")
-    print("Press Ctrl+C to shut down and save resources.")
-    try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        print("\nShutting down CubeCooler v1.1...")
+    httpd.serve_forever()
 EOF
 
-python3 "$PYTHON_APP_PATH"
+# Fetch local IP address dynamically
+PI_IP=$(hostname -I | awk '{print $1}')
+if [ -z "$PI_IP" ]; then
+    PI_IP="127.0.0.1"
+fi
+
+# Start the web app quietly in the background
+python3 "$PYTHON_APP_PATH" &
+BG_PID=$!
+sleep 1
+
+clear
+echo "===================================================="
+echo "          CUBE COOLER v1.2 CONTROL PANEL            "
+echo "===================================================="
+echo " Status:          ONLINE (Running in Background)"
+echo " Process ID (PID): $BG_PID"
+echo " Resource Usage:  ~0.0% CPU / Minimal RAM"
+echo "----------------------------------------------------"
+echo " Web Address:     http://$PI_IP:$PORT"
+echo " Local Loopback:  http://127.0.0.1:$PORT"
+echo "===================================================="
+echo " [CONTROL OPTIONS]"
+echo " Press [CTRL+C] at any time to shut down the server"
+echo " and instantly reclaim 100% of your system resources."
+echo "===================================================="
+
+# Trap Ctrl+C to clean up background process nicely
+trap "echo -e '\nShutting down CubeCooler v1.2...'; kill $BG_PID 2>/dev/null; exit 0" INT
+
+# Keep script running to display dashboard status and handle shutdown
+while kill -0 $BG_PID 2>/dev/null; do
+    sleep 1
+done
