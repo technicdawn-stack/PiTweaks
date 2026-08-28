@@ -1,26 +1,20 @@
 #!/bin/bash
-clear
 
-# Description: CubeCooler v1.3 with an interactive terminal control dashboard wrapper.
-#PERSISTENT: FALSE
+# Description: CubeCooler v1.4 Management Console with Persistent Service Control
+# Author: Raspberry Pi Collaborator
 
-PYTHON_APP_PATH="/tmp/CubeCooler.py"
+APP_DIR="/home/$(whoami)"
+PYTHON_APP_PATH="$APP_DIR/CubeCooler.py"
 PORT=8081
 
-# Clean up any previous background instances of CubeCooler on this port
-if fuser -s ${PORT}/tcp 2>/dev/null; then
-    echo "Stopping existing CubeCooler instance on port ${PORT}..."
-    fuser -k ${PORT}/tcp &>/dev/null
-    sleep 1
-fi
-
-# Write the latest Python Web App script
-cat << EOF > "$PYTHON_APP_PATH"
+# Ensure Python app script exists on disk persistently
+create_app() {
+    cat << 'EOF' > "$PYTHON_APP_PATH"
 import http.server
 import socketserver
 import urllib.parse
 
-PORT = ${PORT}
+PORT = 8081
 
 class CubeCoolerHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -120,7 +114,7 @@ class CubeCoolerHandler(http.server.SimpleHTTPRequestHandler):
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>CubeCooler v1.2 - Thermal Equilibrium Engine</title>
+            <title>CubeCooler v1.4 - Thermal Equilibrium Engine</title>
             <style>
                 :root {{
                     --bg-color: #0f172a;
@@ -213,7 +207,7 @@ class CubeCoolerHandler(http.server.SimpleHTTPRequestHandler):
         </head>
         <body>
             <div class="container">
-                <h1>🧊 CubeCooler v1.2</h1>
+                <h1>🧊 CubeCooler v1.4</h1>
                 <div class="hint">Leave exactly ONE field blank to auto-solve it.</div>
                 
                 <form method="GET">
@@ -255,38 +249,61 @@ class CubeCoolerHandler(http.server.SimpleHTTPRequestHandler):
 with socketserver.TCPServer(("", PORT), CubeCoolerHandler) as httpd:
     httpd.serve_forever()
 EOF
+}
 
-# Fetch local IP address dynamically
+create_app
+
 PI_IP=$(hostname -I | awk '{print $1}')
-if [ -z "$PI_IP" ]; then
-    PI_IP="127.0.0.1"
-fi
+[ -z "$PI_IP" ] && PI_IP="127.0.0.1"
 
-# Start the web app quietly in the background
-python3 "$PYTHON_APP_PATH" &
-BG_PID=$!
-sleep 1
+while true; do
+    clear
+    echo "=================================================="
+    echo "           CUBE COOLER v1.4 MANAGEMENT            "
+    echo "=================================================="
+    echo " Web URL: http://$PI_IP:$PORT"
+    echo "--------------------------------------------------"
+    echo " [1] Start Server (Interactive / Foreground)"
+    echo " [2] Enable Always-On (Add @reboot Cron Job)"
+    echo " [3] Disable Always-On (Remove Cron Job)"
+    echo " [4] Uninstall / Delete All Traces"
+    echo " [5] Exit Menu"
+    echo "=================================================="
+    read -p "Select an option [1-5]: " choice
 
-clear
-echo "===================================================="
-echo "          CUBE COOLER v1.2 CONTROL PANEL            "
-echo "===================================================="
-echo " Status:          ONLINE (Running in Background)"
-echo " Process ID (PID): $BG_PID"
-echo " Resource Usage:  ~0.0% CPU / Minimal RAM"
-echo "----------------------------------------------------"
-echo " Web Address:     http://$PI_IP:$PORT"
-echo " Local Loopback:  http://127.0.0.1:$PORT"
-echo "===================================================="
-echo " [CONTROL OPTIONS]"
-echo " Press [CTRL+C] at any time to shut down the server"
-echo " and instantly reclaim 100% of your system resources."
-echo "===================================================="
-
-# Trap Ctrl+C to clean up background process nicely
-trap "echo -e '\nShutting down CubeCooler v1.2...'; kill $BG_PID 2>/dev/null; exit 0" INT
-
-# Keep script running to display dashboard status and handle shutdown
-while kill -0 $BG_PID 2>/dev/null; do
-    sleep 1
+    case $choice in
+        1)
+            echo "Starting server on port $PORT. Press Ctrl+C to exit."
+            python3 "$PYTHON_APP_PATH"
+            ;;
+        2)
+            # Add to crontab if not already present
+            CRON_CMD="@reboot python3 $PYTHON_APP_PATH &"
+            (crontab -l 2>/dev/null | grep -v -F "$PYTHON_APP_PATH"; echo "$CRON_CMD") | crontab -
+            echo "Success: Always-on cron job enabled! It will start automatically on reboot."
+            read -p "Press Enter to continue..."
+            ;;
+        3)
+            # Remove from crontab
+            (crontab -l 2>/dev/null | grep -v -F "$PYTHON_APP_PATH") | crontab -
+            echo "Success: Always-on cron job disabled."
+            read -p "Press Enter to continue..."
+            ;;
+        4)
+            # Stop any running process on port, remove cron, delete script
+            fuser -k ${PORT}/tcp &>/dev/null
+            (crontab -l 2>/dev/null | grep -v -F "$PYTHON_APP_PATH") | crontab -
+            rm -f "$PYTHON_APP_PATH"
+            echo "Success: All traces of CubeCooler v1.4 have been removed."
+            exit 0
+            ;;
+        5)
+            echo "Exiting menu."
+            exit 0
+            ;;
+        *)
+            echo "Invalid option. Please choose between 1 and 5."
+            sleep 2
+            ;;
+    esac
 done
