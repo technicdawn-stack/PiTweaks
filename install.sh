@@ -46,26 +46,21 @@ while IFS='|' read -r category script desc; do
     CATEGORIES["$category"]+="$script|$desc"$'\n'
 done <<< "$INDEX_DATA"
 
-# 3. Build whiptail menu options with prominent category titles and clean descriptions
+# 3. Build whiptail menu options with matching header structure and indented descriptions
 MENU_OPTIONS=()
 
 sorted_categories=$(printf "%s\n" "${!CATEGORIES[@]}" | sort)
 
 for cat in $sorted_categories; do
-    # Add prominent separator lines before categories (except the first one)
-    if [ "${#MENU_OPTIONS[@]}" -gt 0 ]; then
-        MENU_OPTIONS+=("========================================" "")
-    fi
-
-    # Highly prominent uppercase category title header block
-    MENU_OPTIONS+=("► [ ${cat^^} ]" "")
+    # Add category header matching the safety check format
+    MENU_OPTIONS+=("=== ${cat^^} ===" "")
     
     sorted_scripts=$(printf "%s" "${CATEGORIES[$cat]}" | sort)
     
     while IFS='|' read -r script desc; do
         [[ -z "$script" ]] && continue
-        # Clean working tag name, description formatted with a dash
-        MENU_OPTIONS+=("$script" "- ${desc:-No description provided}")
+        # Clean working tag name, indented tree branch description
+        MENU_OPTIONS+=("$script" "    └─ ${desc:-No description provided}")
     done <<< "$sorted_scripts"
 done
 
@@ -94,9 +89,9 @@ while true; do
             exit 0
         }
 
-    # Prevent selection of category titles or prominent breaks
-    if [[ "$SELECTED" == "►"* || "$SELECTED" == "="* ]]; then
-        whiptail --title "Notice" --msgbox "Please select an actual script file, not a category header line." 8 55
+    # Prevent selection of category headers matching the '===' prefix pattern
+    if [[ "$SELECTED" == "==="%* ]]; then
+        whiptail --title "Notice" --msgbox "Please select a script below the category headers, not the header itself." 8 45
         continue
     fi
 
