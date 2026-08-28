@@ -36,7 +36,6 @@ while IFS='|' read -r category script desc; do
 
     [[ -z "$script" || "$script" =~ ^# ]] && continue
 
-    # If the format only provided 2 columns (Script|Desc), shift values and use fallback
     if [[ -z "$desc" && -n "$script" ]]; then
         desc="$script"
         script="$category"
@@ -45,26 +44,28 @@ while IFS='|' read -r category script desc; do
         category="Uncategorized"
     fi
 
-    # Append to the category's item pool
     CATEGORIES["$category"]+="$script|$desc"$'\n'
 done <<< "$INDEX_DATA"
 
-# 3. Build whiptail menu options with dynamic headers sorted alphabetically
+# 3. Build whiptail menu options with enhanced visual headers and spacing
 MENU_OPTIONS=()
 
-# Sort categories alphabetically, ensuring 'Uncategorized' comes last if desired, or pure alphabetical
 sorted_categories=$(printf "%s\n" "${!CATEGORIES[@]}" | sort)
 
 for cat in $sorted_categories; do
-    # Add a disabled/informative header item in whiptail
-    MENU_OPTIONS+=("=== ${cat^^} ===" "")
+    # Add visual spacing before categories (except the first one)
+    if [ "${#MENU_OPTIONS[@]}" -gt 0 ]; then
+        MENU_OPTIONS+=("----------------------------------------" "")
+    fi
+
+    # Enhanced category header with block styling for better prominence
+    MENU_OPTIONS+=("► [ ${cat^^} ]" "")
     
-    # Sort scripts within this category alphabetically
     sorted_scripts=$(printf "%s" "${CATEGORIES[$cat]}" | sort)
     
     while IFS='|' read -r script desc; do
         [[ -z "$script" ]] && continue
-        MENU_OPTIONS+=("$script" "   └─ ${desc:-No description provided}")
+        MENU_OPTIONS+=("$script" "    └─ ${desc:-No description provided}")
     done <<< "$sorted_scripts"
 done
 
@@ -81,7 +82,7 @@ BOX_HEIGHT=$(( TERM_HEIGHT - 4 ))
 BOX_WIDTH=$(( TERM_WIDTH - 6 ))
 MENU_HEIGHT=$(( BOX_HEIGHT - 8 ))
 
-# 5. Launch Whiptail TUI loop to handle category header selections gracefully
+# 5. Launch Whiptail TUI loop to handle header and divider selections gracefully
 while true; do
     SELECTED=$(whiptail --clear \
         --backtitle "PiTweaks Script Manager" \
@@ -93,9 +94,9 @@ while true; do
             exit 0
         }
 
-    # Prevent selection of category headers (which start with '===')
-    if [[ "$SELECTED" == "==="%* ]]; then
-        whiptail --title "Notice" --msgbox "Please select a script below the category headers, not the header itself." 8 45
+    # Prevent selection of category headers or dividers
+    if [[ "$SELECTED" == "►"* || "$SELECTED" == "---"* ]]; then
+        whiptail --title "Notice" --msgbox "Please select an actual script, not a category header or divider line." 8 50
         continue
     fi
 
@@ -107,7 +108,7 @@ echo "🚀 Downloading and preparing ${SELECTED}..."
 echo "=========================================="
 echo ""
 
-# 6. Download script to disk using raw URL (automatically overwrites old versions safely)
+# 6. Download script to disk using raw URL
 curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/${SELECTED}?cb=$(date +%s)" -o "${SELECTED}"
 
 # 7. Make it executable
