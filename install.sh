@@ -29,12 +29,14 @@ INDEX_DATA=$(curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRA
 declare -A CATEGORIES
 
 while IFS='|' read -r category script desc; do
-    category=$(echo "$category" | tr -d '\r' | xargs)
-    script=$(echo "$script" | tr -d '\r' | xargs)
-    desc=$(echo "$desc" | tr -d '\r' | xargs)
+    # Strip leading/trailing whitespaces
+    category=$(echo "$category" | xargs)
+    script=$(echo "$script" | xargs)
+    desc=$(echo "$desc" | xargs)
 
     [[ -z "$script" || "$script" =~ ^# ]] && continue
 
+    # If the format only provided 2 columns (Script|Desc), shift values and use fallback
     if [[ -z "$desc" && -n "$script" ]]; then
         desc="$script"
         script="$category"
@@ -43,26 +45,26 @@ while IFS='|' read -r category script desc; do
         category="Uncategorized"
     fi
 
+    # Append to the category's item pool
     CATEGORIES["$category"]+="$script|$desc"$'\n'
 done <<< "$INDEX_DATA"
 
-# 3. Build whiptail menu options with prominent visual breaks and headers
+# 3. Build whiptail menu options with dynamic headers sorted alphabetically
 MENU_OPTIONS=()
 
+# Sort categories alphabetically, ensuring 'Uncategorized' comes last if desired, or pure alphabetical
 sorted_categories=$(printf "%s\n" "${!CATEGORIES[@]}" | sort)
 
 for cat in $sorted_categories; do
-    if [ "${#MENU_OPTIONS[@]}" -gt 0 ]; then
-        MENU_OPTIONS+=("========================================" "")
-    fi
-
-    MENU_OPTIONS+=("▶ [ ${cat^^} ]" "")
+    # Add a disabled/informative header item in whiptail
+    MENU_OPTIONS+=("=== ${cat^^} ===" "")
     
+    # Sort scripts within this category alphabetically
     sorted_scripts=$(printf "%s" "${CATEGORIES[$cat]}" | sort)
     
     while IFS='|' read -r script desc; do
         [[ -z "$script" ]] && continue
-        MENU_OPTIONS+=("└─ $script" "- ${desc:-No description provided}")
+        MENU_OPTIONS+=("$script" "   └─ ${desc:-No description provided}")
     done <<< "$sorted_scripts"
 done
 
@@ -91,12 +93,12 @@ while true; do
             exit 0
         }
 
-    if [[ "$SELECTED" == "▶"* || "$SELECTED" == "="* ]]; then
-        whiptail --title "Notice" --msgbox "Please select an actual script, not a header or separator line." 8 50
+    # Prevent selection of category headers (which start with '===')
+    if [[ "$SELECTED" == "==="%* ]]; then
+        whiptail --title "Notice" --msgbox "Please select a script below the category headers, not the header itself." 8 45
         continue
     fi
 
-    SELECTED="${SELECTED#└─ }"
     break
 done
 
@@ -105,7 +107,7 @@ echo "🚀 Downloading and preparing ${SELECTED}..."
 echo "=========================================="
 echo ""
 
-# 6. Download script to disk using raw URL
+# 6. Download script to disk using raw URL (automatically overwrites old versions safely)
 curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/${SELECTED}?cb=$(date +%s)" -o "${SELECTED}"
 
 # 7. Make it executable
@@ -117,7 +119,7 @@ if grep -qi "# PERSISTENT: TRUE" "${SELECTED}" || [[ "${SELECTED}" == *"monitor"
     IS_PERSISTENT=true
 fi
 
-# 9. Run locally
+# 9. Run locally so interactive prompts work properly
 ./"${SELECTED}"
 
 # 10. Smart Cleanup
