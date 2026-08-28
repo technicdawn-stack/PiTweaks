@@ -2,6 +2,7 @@
 
 # Description: Fully automated installer and configurer for WireGuard and WireGuard-UI (Bare Metal) V1.1
 # PERSISTENT: FALSE
+# Category: Scripts
 
 # Ensure script is run as root
 if [ "$EUID" -ne 0 ]; then
