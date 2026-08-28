@@ -14,4 +14,4 @@ Tools|swap_manager.sh|Smart memory and swap manager with auto-detection and reco
 Tools|sys_info.sh|System information and telemtry, condensed.
 Tools|throttlecheck.sh|Pi throttle checker
 Scripts|unbound.sh|Automated installer and configurer for Unbound (Recursive DNS) with Port Conflict Check
-General|wireguard.sh|Fully automated installer and configurer for WireGuard and WireGuard-UI (Bare Metal) V1.1
+Scripts|wireguard.sh|Fully automated installer and configurer for WireGuard and WireGuard-UI (Bare Metal) V1.1
