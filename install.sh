@@ -29,10 +29,10 @@ INDEX_DATA=$(curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRA
 declare -A CATEGORIES
 
 while IFS='|' read -r category script desc; do
-    # Strip leading/trailing whitespaces
-    category=$(echo "$category" | xargs)
-    script=$(echo "$script" | xargs)
-    desc=$(echo "$desc" | xargs)
+    # Strip leading/trailing whitespaces and hidden carriage returns from windows line endings
+    category=$(echo "$category" | tr -d '\r' | xargs)
+    script=$(echo "$script" | tr -d '\r' | xargs)
+    desc=$(echo "$desc" | tr -d '\r' | xargs)
 
     [[ -z "$script" || "$script" =~ ^# ]] && continue
 
@@ -91,13 +91,13 @@ MENU_HEIGHT=$(( BOX_HEIGHT - 8 ))
 [ "$BOX_WIDTH" -lt 40 ] && BOX_WIDTH=40
 [ "$MENU_HEIGHT" -lt 5 ] && MENU_HEIGHT=5
 
-# 5. Launch Whiptail TUI loop to handle header and divider selections gracefully
+# 5. Launch Whiptail TUI loop with proper /dev/tty redirection for pipe execution
 while true; do
     SELECTED=$(whiptail --clear \
         --backtitle "PiTweaks Script Manager" \
         --title "Script Selection Menu" \
         --menu "Select a script to execute:" "$BOX_HEIGHT" "$BOX_WIDTH" "$MENU_HEIGHT" \
-        "${MENU_OPTIONS[@]}" 3>&1 1>&2 2>&3) || {
+        "${MENU_OPTIONS[@]}" 3>&1 1>&2 2>&3 </dev/tty >/dev/tty) || {
             clear
             echo "Cancelled."
             exit 0
@@ -105,7 +105,7 @@ while true; do
 
     # Prevent selection of category headers or dividers
     if [[ "$SELECTED" == "►"* || "$SELECTED" == "---"* ]]; then
-        whiptail --title "Notice" --msgbox "Please select an actual script, not a category header or divider line." 8 50
+        whiptail --title "Notice" --msgbox "Please select an actual script, not a category header or divider line." 8 50 </dev/tty >/dev/tty
         continue
     fi
 
