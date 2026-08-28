@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# Description: Security and network watchdog setup adn installer
+# PERSISTENT: FALSE
+# Category: Scripts
+
 clear
 
 # ==============================================================================
