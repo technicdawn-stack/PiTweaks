@@ -28,9 +28,11 @@ INDEX_DATA=$(curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRA
 SEARCH_QUERY=""
 
 while true; do
-    # 2. Parse index.txt and group items alphabetically by Category
+    # Clear the associative array on each loop iteration to prevent item duplication
+    unset CATEGORIES
     declare -A CATEGORIES
 
+    # 2. Parse index.txt and group items alphabetically by Category
     while IFS='|' read -r category script desc; do
         category=$(echo "$category" | tr -d '\r' | xargs)
         script=$(echo "$script" | tr -d '\r' | xargs)
