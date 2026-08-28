@@ -1,5 +1,7 @@
 #!/bin/bash
 # Description: Smart memory and swap manager with auto-detection and recommendations
+# Category: Tools
+
 set -eo pipefail
 
 BOLD='\033[1m'
