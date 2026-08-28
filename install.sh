@@ -46,7 +46,7 @@ while IFS='|' read -r category script desc; do
     CATEGORIES["$category"]+="$script|$desc"$'\n'
 done <<< "$INDEX_DATA"
 
-# 3. Build whiptail menu options with super prominent category title headers and indented scripts
+# 3. Build whiptail menu options with prominent category titles and clean descriptions
 MENU_OPTIONS=()
 
 sorted_categories=$(printf "%s\n" "${!CATEGORIES[@]}" | sort)
@@ -64,8 +64,8 @@ for cat in $sorted_categories; do
     
     while IFS='|' read -r script desc; do
         [[ -z "$script" ]] && continue
-        # Filename tag with clean arrow indent, description mapped with a dash
-        MENU_OPTIONS+=("└─ $script" "- ${desc:-No description provided}")
+        # Clean working tag name, description formatted with a dash
+        MENU_OPTIONS+=("$script" "- ${desc:-No description provided}")
     done <<< "$sorted_scripts"
 done
 
@@ -99,9 +99,6 @@ while true; do
         whiptail --title "Notice" --msgbox "Please select an actual script file, not a category header line." 8 55
         continue
     fi
-
-    # Strip the visual tree branch prefix so curl receives the exact raw filename
-    SELECTED="${SELECTED#└─ }"
 
     break
 done
