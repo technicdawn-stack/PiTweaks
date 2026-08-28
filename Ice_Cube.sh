@@ -12,7 +12,7 @@ import http.server
 import socketserver
 import urllib.parse
 
-PORT = 8080
+PORT = 8081
 
 class CubeCoolerHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
