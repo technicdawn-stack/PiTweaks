@@ -1,6 +1,7 @@
 #!/bin/bash
 # Description: Pre Ping working version of temperature alerts, alert scheduling and resource testing with Instant Watchdog Triggers. V2.0
 # PERSISTENT: TRUE
+# Category: Discord
 
 # --- CONFIGURATION & WEBHOOK SETUP ---
 STATUS_FILE="/tmp/pi_system_status.txt"
