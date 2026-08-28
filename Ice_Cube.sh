@@ -1,7 +1,7 @@
 #!/bin/bash
 clear
 
-# Description: Thermodynamic ice calculator with automated web server wrapper (CubeCooler v1.1).
+# Description: Thermodynamic ice calculator with automated web server wrapper (CubeCooler v1.2).
 #PERSISTENT: FALSE
 
 PYTHON_APP_PATH="/tmp/CubeCooler.py"
