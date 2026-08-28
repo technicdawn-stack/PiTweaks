@@ -1,4 +1,4 @@
-Tools|A_Test.sh|Loops the install url for faster and easier refreshing. V1.1
+1st_Set|A_Test.sh|Loops the install url for faster and easier refreshing. V1.1
 Scripts|Ice_Cube.sh|CubeCooler v1.4.2 Management Console with Persistent Service Control aand install manager.
 Tools|conspy_control.sh|Standalone Conspy screen mirroring controller and setup manager v1.1
 Scripts|discord_controller.sh|Discord bot installer
