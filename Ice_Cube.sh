@@ -1,10 +1,20 @@
 #!/bin/bash
 clear
 
-# Description: Thermodynamic ice calculator with a dynamic graphical UI and auto-solving reverse calculations.
+# Description: Thermodynamic ice calculator with automated Tkinter installation wrapper.
 #PERSISTENT: FALSE
 
 PYTHON_APP_PATH="/tmp/ice_calculator_ui.py"
+
+# Check and install python3-tk dependency automatically on Debian/Raspberry Pi OS
+if ! python3 -c "import tkinter" &> /dev/null; then
+    echo "Tkinter not found. Installing python3-tk automatically..."
+    sudo apt-get update -y && sudo apt-get install -y python3-tk
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to install python3-tk automatically. Please run: sudo apt install python3-tk"
+        exit 1
+    fi
+fi
 
 # Write or overwrite the latest Python UI script on every run
 cat << 'EOF' > "$PYTHON_APP_PATH"
@@ -66,7 +76,7 @@ class IceCalculatorApp:
         self.status_lbl.pack(pady=5)
 
     def solve_thermodynamics(self):
-        # Reset colors
+        # Reset text color for all fields to normal white
         for key, ent in self.entries.items():
             ent.config(fg="#f8fafc")
 
@@ -86,7 +96,7 @@ class IceCalculatorApp:
                 if empty_key is None:
                     empty_key = key
                 else:
-                    self.status_lbl.config(text="Error: Leave exactly ONE field blank to reverse-calculate.", fg="#f43f5e")
+                    self.status_lbl.config(text="Error: Leave exactly ONE field blank.", fg="#f43f5e")
                     return
             else:
                 try:
@@ -100,24 +110,12 @@ class IceCalculatorApp:
             return
 
         try:
-            # 1. Solve for Final Temp given Water Vol, Init Temp, Ice Weight
+            # 1. Solve for Final Temp
             if empty_key == "final_temp":
                 v = data["water_vol"] * 1000.0
                 ti = data["init_temp"]
                 m_ice = data["ice_weight"]
                 
-                # Heat balance: Heat lost by water = Heat gained by ice melting + warming
-                # Simplified equilibrium approximation
-                heat_available = v * 4.184 * ti
-                energy_per_g_ice = 334.0
-                
-                # Iterative or analytical estimation for final temp equilibrium
-                # Q_water_sensible = m_w * c * (Ti - Tf)
-                # Q_ice_total = m_i * Lf + m_i * c * Tf
-                # v * 4.184 * (ti - tf) = m_ice * 334 + m_ice * 4.184 * max(0, tf) -> assuming tf >= 0
-                
-                # Let's solve linear segment assuming final temp >= 0
-                # v*4.184*ti - v*4.184*tf = m_ice*334 + m_ice*4.184*tf * eff
                 numerator = (v * 4.184 * ti) - (m_ice * 334.0 * eff)
                 denominator = (v * 4.184) + (m_ice * 4.184 * eff)
                 tf = numerator / denominator
@@ -126,7 +124,7 @@ class IceCalculatorApp:
                 self.entries["final_temp"].config(fg="#34d399") # Highlight solved field in mint green
                 self.status_lbl.config(text="Successfully solved Final Temperature!", fg="#34d399")
 
-            # 2. Solve for Ice Weight given Water Vol, Init Temp, Final Temp
+            # 2. Solve for Ice Weight
             elif empty_key == "ice_weight":
                 v = data["water_vol"] * 1000.0
                 ti = data["init_temp"]
@@ -183,11 +181,5 @@ if __name__ == "__main__":
     app = IceCalculatorApp(root)
     root.mainloop()
 EOF
-
-# Ensure python3 and tkinter are ready, then run the UI
-if ! command -v python3 &> /dev/null; then
-    echo "Python3 is required to run the UI."
-    exit 1
-fi
 
 python3 "$PYTHON_APP_PATH"
