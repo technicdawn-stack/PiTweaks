@@ -28,6 +28,12 @@ jobs:
             [ -e "$script" ] || continue
             [ "$script" = "install.sh" ] && continue
 
+            # Extract '# Category:' line (Fallback to 'General' if missing)
+            CAT=$(grep -m1 -i '^# Category:' "$script" | cut -d':' -f2- | xargs || true)
+            if [ -z "$CAT" ]; then
+              CAT="General"
+            fi
+
             # Extract '# Description:' line
             DESC=$(grep -m1 -i '^# Description:' "$script" | cut -d':' -f2- | xargs || true)
             
@@ -36,7 +42,7 @@ jobs:
               DESC="No description provided"
             fi
 
-            echo "${script}|${DESC}" >> index.txt
+            echo "${CAT}|${script}|${DESC}" >> index.txt
           done
 
       - name: Commit and Push index.txt
@@ -46,6 +52,6 @@ jobs:
           
           git add index.txt
           if ! git diff --staged --quiet; then
-            git commit -m "auto: update index.txt script manifest"
+            git commit -m "auto: update index.txt script manifest with categories"
             git push
           fi
