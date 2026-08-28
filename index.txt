@@ -11,7 +11,7 @@ General|overclock.sh|Smart Raspberry Pi overclocking manager with live thermal m
 General|security_module_upgrade.sh|No description provided
 General|stress_test.sh|PiTweaks All-in-One Continuous Stress Suite & Telemetry V2.0
 General|swap_manager.sh|Smart memory and swap manager with auto-detection and recommendations
-General|sys_info.sh|System information and telemtry, condensed.
+Tools|sys_info.sh|System information and telemtry, condensed.
 General|throttlecheck.sh|No description provided
 General|unbound.sh|Automated installer and configurer for Unbound (Recursive DNS) with Port Conflict Check
 General|wireguard.sh|Fully automated installer and configurer for WireGuard and WireGuard-UI (Bare Metal) V1.1
