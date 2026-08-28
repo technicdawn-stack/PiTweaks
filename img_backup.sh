@@ -1,6 +1,7 @@
 #!/bin/bash
 # Description: Modular Pi Imager Utility with Dynamic USB Detection and Network Streaming V1.3.3
 # PERSISTENT: FALSE
+# Category: Tools
 
 # Ensure script is run as root
 if [ "$EUID" -ne 0 ]; then
