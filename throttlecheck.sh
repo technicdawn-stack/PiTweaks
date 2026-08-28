@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# Description: Pi throttle checker
+# PERSISTENT: FALSE
+# Category: Tools
+
 # ==============================================================================
 # 🍓 PiTweaks - Raspberry Pi Throttling & Temperature Monitor
 # ==============================================================================
