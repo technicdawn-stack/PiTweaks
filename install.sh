@@ -25,23 +25,36 @@ INDEX_DATA=$(curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRA
     exit 1
 }
 
-# 2. Parse index.txt and group items alphabetically by Category (Fallback: Uncategorized)
+# 2. Parse index.txt (supporting Category|Script|Desc or legacy Script|Desc)
 declare -A CATEGORIES
 
-while IFS='|' read -r category script desc; do
-    # Strip leading/trailing whitespaces and hidden carriage returns from windows line endings
-    category=$(echo "$category" | tr -d '\r' | xargs)
-    script=$(echo "$script" | tr -d '\r' | xargs)
-    desc=$(echo "$desc" | tr -d '\r' | xargs)
+while IFS='|' read -r col1 col2 col3; do
+    col1=$(echo "$col1" | tr -d '\r' | xargs)
+    col2=$(echo "$col2" | tr -d '\r' | xargs)
+    col3=$(echo "$col3" | tr -d '\r' | xargs)
 
-    [[ -z "$script" || "$script" =~ ^# ]] && continue
+    [[ -z "$col1" || "$col1" =~ ^# ]] && continue
 
-    if [[ -z "$desc" && -n "$script" ]]; then
-        desc="$script"
-        script="$category"
-        category="Uncategorized"
-    elif [[ -z "$category" ]]; then
-        category="Uncategorized"
+    if [[ -z "$col3" ]]; then
+        # Legacy 2-column format: script.sh | description
+        script="$col1"
+        desc="$col2"
+        
+        # Auto-infer category based on keywords
+        if [[ "$script" =~ net|wifi|ip|ping ]]; then
+            category="Network"
+        elif [[ "$script" =~ sys|info|cpu|temp|monitor ]]; then
+            category="System"
+        elif [[ "$script" =~ backup|clean|update|install ]]; then
+            category="Maintenance"
+        else
+            category="General"
+        fi
+    else
+        # New 3-column format: Category | Script | Description
+        category="$col1"
+        script="$col2"
+        desc="$col3"
     fi
 
     CATEGORIES["$category"]+="$script|$desc"$'\n'
@@ -53,12 +66,10 @@ MENU_OPTIONS=()
 sorted_categories=$(printf "%s\n" "${!CATEGORIES[@]}" | sort)
 
 for cat in $sorted_categories; do
-    # Add visual spacing before categories (except the first one)
     if [ "${#MENU_OPTIONS[@]}" -gt 0 ]; then
         MENU_OPTIONS+=("----------------------------------------" "")
     fi
 
-    # Enhanced category header with block styling for better prominence
     MENU_OPTIONS+=("► [ ${cat^^} ]" "")
     
     sorted_scripts=$(printf "%s" "${CATEGORIES[$cat]}" | sort)
@@ -78,7 +89,6 @@ fi
 TERM_HEIGHT=$(stty size </dev/tty 2>/dev/null | awk '{print $1}')
 TERM_WIDTH=$(stty size </dev/tty 2>/dev/null | awk '{print $2}')
 
-# Fallback if tty is unavailable
 [ -z "$TERM_HEIGHT" ] && TERM_HEIGHT=24
 [ -z "$TERM_WIDTH" ] && TERM_WIDTH=80
 
@@ -86,12 +96,11 @@ BOX_HEIGHT=$(( TERM_HEIGHT - 4 ))
 BOX_WIDTH=$(( TERM_WIDTH - 6 ))
 MENU_HEIGHT=$(( BOX_HEIGHT - 8 ))
 
-# Ensure box sizes never drop below a safe minimum threshold
 [ "$BOX_HEIGHT" -lt 10 ] && BOX_HEIGHT=10
 [ "$BOX_WIDTH" -lt 40 ] && BOX_WIDTH=40
 [ "$MENU_HEIGHT" -lt 5 ] && MENU_HEIGHT=5
 
-# 5. Launch Whiptail TUI loop with proper /dev/tty redirection for pipe execution
+# 5. Launch Whiptail TUI loop with proper /dev/tty redirection
 while true; do
     SELECTED=$(whiptail --clear \
         --backtitle "PiTweaks Script Manager" \
@@ -117,7 +126,7 @@ echo "🚀 Downloading and preparing ${SELECTED}..."
 echo "=========================================="
 echo ""
 
-# 6. Download script to disk using raw URL
+# 6. Download script to disk using raw URL (auto-overwrites safely)
 curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/${SELECTED}?cb=$(date +%s)" -o "${SELECTED}"
 
 # 7. Make it executable
@@ -132,7 +141,7 @@ fi
 # 9. Run locally so interactive prompts work properly
 ./"${SELECTED}"
 
-# 10. Smart Cleanup
+# 10. Smart Cleanup: Delete only if it's NOT a persistent background tool
 if [ "$IS_PERSISTENT" = false ]; then
     rm -f "${SELECTED}"
     echo ""
