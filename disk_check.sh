@@ -1,4 +1,7 @@
 #!/bin/bash
+# Description: Advanced disk and SD card health monitor and cleaner.
+# PERSISTENT: FALSE
+# Category: Tools
 
 # ==============================================================================
 # 🗄️ PiTweaks Advanced Disk & SD Card Health Monitor & Cleaner
