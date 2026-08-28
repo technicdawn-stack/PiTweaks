@@ -9,7 +9,7 @@ General|log2ram.sh|Interactive installer for log2ram with whiptail configuration
 General|net_auditor.sh|Enhanced network utility featuring an interactive menu for Ookla Speed Tests, open port auditing, ping checks, DNS tests, and Wi-Fi diagnostics.
 General|overclock.sh|Smart Raspberry Pi overclocking manager with live thermal monitoring and safe backups.
 General|security_module_upgrade.sh|No description provided
-General|stress_test.sh|PiTweaks All-in-One Continuous Stress Suite & Telemetry V2.0
+Tools|stress_test.sh|PiTweaks All-in-One Continuous Stress Suite & Telemetry V2.0
 Tools|swap_manager.sh|Smart memory and swap manager with auto-detection and recommendations
 Tools|sys_info.sh|System information and telemtry, condensed.
 Tools|throttlecheck.sh|Pi throttle checker
