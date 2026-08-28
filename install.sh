@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# 🍓 PI TWEAKS INSTALLER (SMART PERSISTENCE & DYNAMIC HEADERS)
+# 🍓 PI TWEAKS INSTALLER (SMART PERSISTENCE & AUTO-OVERWRITE)
 # ==============================================================================
 set -eo pipefail
 
@@ -25,7 +25,8 @@ INDEX_DATA=$(curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRA
     exit 1
 }
 
-# 2. Parse index.txt (supporting Category|Script|Desc or legacy Script|Desc)
+# 2. Build menu options with category support and legacy fallbacks
+MENU_OPTIONS=()
 declare -A CATEGORIES
 
 while IFS='|' read -r col1 col2 col3; do
@@ -36,22 +37,10 @@ while IFS='|' read -r col1 col2 col3; do
     [[ -z "$col1" || "$col1" =~ ^# ]] && continue
 
     if [[ -z "$col3" ]]; then
-        # Legacy 2-column format: script.sh | description
         script="$col1"
         desc="$col2"
-        
-        # Auto-infer category based on keywords
-        if [[ "$script" =~ net|wifi|ip|ping ]]; then
-            category="Network"
-        elif [[ "$script" =~ sys|info|cpu|temp|monitor ]]; then
-            category="System"
-        elif [[ "$script" =~ backup|clean|update|install ]]; then
-            category="Maintenance"
-        else
-            category="General"
-        fi
+        category="General"
     else
-        # New 3-column format: Category | Script | Description
         category="$col1"
         script="$col2"
         desc="$col3"
@@ -59,9 +48,6 @@ while IFS='|' read -r col1 col2 col3; do
 
     CATEGORIES["$category"]+="$script|$desc"$'\n'
 done <<< "$INDEX_DATA"
-
-# 3. Build whiptail menu options with enhanced visual headers and spacing
-MENU_OPTIONS=()
 
 sorted_categories=$(printf "%s\n" "${!CATEGORIES[@]}" | sort)
 
@@ -81,16 +67,13 @@ for cat in $sorted_categories; do
 done
 
 if [ "${#MENU_OPTIONS[@]}" -eq 0 ]; then
-    echo "❌ No valid scripts found in index.txt."
+    echo "❌ No scripts found in index.txt."
     exit 1
 fi
 
-# 4. Get terminal size from /dev/tty so it works with curl-to-bash
-TERM_HEIGHT=$(stty size </dev/tty 2>/dev/null | awk '{print $1}')
-TERM_WIDTH=$(stty size </dev/tty 2>/dev/null | awk '{print $2}')
-
-[ -z "$TERM_HEIGHT" ] && TERM_HEIGHT=24
-[ -z "$TERM_WIDTH" ] && TERM_WIDTH=80
+# 3. Get terminal size for responsive menu
+TERM_HEIGHT=$(stty size 2>/dev/null | awk '{print $1}' || echo 20)
+TERM_WIDTH=$(stty size 2>/dev/null | awk '{print $2}' || echo 80)
 
 BOX_HEIGHT=$(( TERM_HEIGHT - 4 ))
 BOX_WIDTH=$(( TERM_WIDTH - 6 ))
@@ -100,21 +83,20 @@ MENU_HEIGHT=$(( BOX_HEIGHT - 8 ))
 [ "$BOX_WIDTH" -lt 40 ] && BOX_WIDTH=40
 [ "$MENU_HEIGHT" -lt 5 ] && MENU_HEIGHT=5
 
-# 5. Launch Whiptail TUI loop with proper /dev/tty redirection
+# 4. Launch Whiptail TUI loop to filter out header selections
 while true; do
     SELECTED=$(whiptail --clear \
         --backtitle "PiTweaks Script Manager" \
         --title "Script Selection Menu" \
         --menu "Select a script to execute:" "$BOX_HEIGHT" "$BOX_WIDTH" "$MENU_HEIGHT" \
-        "${MENU_OPTIONS[@]}" 3>&1 1>&2 2>&3 </dev/tty >/dev/tty) || {
+        "${MENU_OPTIONS[@]}" 3>&1 1>&2 2>&3) || {
             clear
             echo "Cancelled."
             exit 0
         }
 
-    # Prevent selection of category headers or dividers
     if [[ "$SELECTED" == "►"* || "$SELECTED" == "---"* ]]; then
-        whiptail --title "Notice" --msgbox "Please select an actual script, not a category header or divider line." 8 50 </dev/tty >/dev/tty
+        whiptail --title "Notice" --msgbox "Please select an actual script, not a category header or divider line." 8 50
         continue
     fi
 
@@ -126,22 +108,22 @@ echo "🚀 Downloading and preparing ${SELECTED}..."
 echo "=========================================="
 echo ""
 
-# 6. Download script to disk using raw URL (auto-overwrites safely)
+# 5. Download script to disk using raw URL (automatically overwrites old versions safely)
 curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/${SELECTED}?cb=$(date +%s)" -o "${SELECTED}"
 
-# 7. Make it executable
+# 6. Make it executable
 chmod +x "${SELECTED}"
 
-# 8. Check if the script requires persistence
+# 7. Check if the script requires persistence (e.g., contains `# PERSISTENT: TRUE` or 'monitor' in name)
 IS_PERSISTENT=false
 if grep -qi "# PERSISTENT: TRUE" "${SELECTED}" || [[ "${SELECTED}" == *"monitor"* ]]; then
     IS_PERSISTENT=true
 fi
 
-# 9. Run locally so interactive prompts work properly
+# 8. Run locally so interactive prompts (like webhooks or configurations) work properly
 ./"${SELECTED}"
 
-# 10. Smart Cleanup: Delete only if it's NOT a persistent background tool
+# 9. Smart Cleanup: Delete only if it's NOT a persistent background tool
 if [ "$IS_PERSISTENT" = false ]; then
     rm -f "${SELECTED}"
     echo ""
