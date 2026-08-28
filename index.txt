@@ -1,7 +1,7 @@
 Tools|A_Test.sh|Loops the install url for faster and easier refreshing. V1.1
 General|Ice_Cube.sh|CubeCooler v1.4.2 Management Console with Persistent Service Control
 Tools|conspy_control.sh|Standalone Conspy screen mirroring controller and setup manager v1.1
-General|discord_controller.sh|No description provided
+Scripts|discord_controller.sh|Discord bot installer
 Discord|discord_monitor.sh|Pre Ping working version of temperature alerts, alert scheduling and resource testing with Instant Watchdog Triggers. V2.0
 Tools|disk_check.sh|Advanced disk and SD card health monitor and cleaner.
 Tools|img_backup.sh|Modular Pi Imager Utility with Dynamic USB Detection and Network Streaming V1.3.3
