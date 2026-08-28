@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# Description: Discord bot installer
+# PERSISTENT: FALSE
+# Category: Scripts
+
 # ==============================================================================
 # 🤖 PiTweaks - Discord Bot Installer (Whiptail TUI & Dual-Channel Routing)
 # ==============================================================================
