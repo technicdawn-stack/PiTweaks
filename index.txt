@@ -1,17 +1,17 @@
-A_Test.sh|Loops the install url for faster and easier refreshing. V1.1
-Ice_Cube.sh|CubeCooler v1.4.2 Management Console with Persistent Service Control
-conspy_control.sh|Standalone Conspy screen mirroring controller and setup manager v1.1
-discord_controller.sh|No description provided
-discord_monitor.sh|Pre Ping working version of temperature alerts, alert scheduling and resource testing with Instant Watchdog Triggers. V2.0
-disk_check.sh|No description provided
-img_backup.sh|Modular Pi Imager Utility with Dynamic USB Detection and Network Streaming V1.3.3
-log2ram.sh|Interactive installer for log2ram with whiptail configuration.
-net_auditor.sh|Enhanced network utility featuring an interactive menu for Ookla Speed Tests, open port auditing, ping checks, DNS tests, and Wi-Fi diagnostics.
-overclock.sh|Smart Raspberry Pi overclocking manager with live thermal monitoring and safe backups.
-security_module_upgrade.sh|No description provided
-stress_test.sh|PiTweaks All-in-One Continuous Stress Suite & Telemetry V2.0
-swap_manager.sh|Smart memory and swap manager with auto-detection and recommendations
-sys_info.sh|System information and telemtry, condensed.
-throttlecheck.sh|No description provided
-unbound.sh|Automated installer and configurer for Unbound (Recursive DNS) with Port Conflict Check
-wireguard.sh|Fully automated installer and configurer for WireGuard and WireGuard-UI (Bare Metal) V1.1
+Tools|A_Test.sh|Loops the install url for faster and easier refreshing. V1.1
+General|Ice_Cube.sh|CubeCooler v1.4.2 Management Console with Persistent Service Control
+General|conspy_control.sh|Standalone Conspy screen mirroring controller and setup manager v1.1
+General|discord_controller.sh|No description provided
+General|discord_monitor.sh|Pre Ping working version of temperature alerts, alert scheduling and resource testing with Instant Watchdog Triggers. V2.0
+General|disk_check.sh|No description provided
+General|img_backup.sh|Modular Pi Imager Utility with Dynamic USB Detection and Network Streaming V1.3.3
+General|log2ram.sh|Interactive installer for log2ram with whiptail configuration.
+General|net_auditor.sh|Enhanced network utility featuring an interactive menu for Ookla Speed Tests, open port auditing, ping checks, DNS tests, and Wi-Fi diagnostics.
+General|overclock.sh|Smart Raspberry Pi overclocking manager with live thermal monitoring and safe backups.
+General|security_module_upgrade.sh|No description provided
+General|stress_test.sh|PiTweaks All-in-One Continuous Stress Suite & Telemetry V2.0
+General|swap_manager.sh|Smart memory and swap manager with auto-detection and recommendations
+General|sys_info.sh|System information and telemtry, condensed.
+General|throttlecheck.sh|No description provided
+General|unbound.sh|Automated installer and configurer for Unbound (Recursive DNS) with Port Conflict Check
+General|wireguard.sh|Fully automated installer and configurer for WireGuard and WireGuard-UI (Bare Metal) V1.1
