@@ -1,185 +1,256 @@
 #!/bin/bash
 clear
 
-# Description: Thermodynamic ice calculator with automated Tkinter installation wrapper.
+# Description: Thermodynamic ice calculator with automated web server wrapper (CubeCooler v1.1).
 #PERSISTENT: FALSE
 
-PYTHON_APP_PATH="/tmp/ice_calculator_ui.py"
+PYTHON_APP_PATH="/tmp/CubeCooler.py"
 
-# Check and install python3-tk dependency automatically on Debian/Raspberry Pi OS
-if ! python3 -c "import tkinter" &> /dev/null; then
-    echo "Tkinter not found. Installing python3-tk automatically..."
-    sudo apt-get update -y && sudo apt-get install -y python3-tk
-    if [ $? -ne 0 ]; then
-        echo "Error: Failed to install python3-tk automatically. Please run: sudo apt install python3-tk"
-        exit 1
-    fi
-fi
-
-# Write or overwrite the latest Python UI script on every run
+# Write or overwrite the latest Python Web App script on every run
 cat << 'EOF' > "$PYTHON_APP_PATH"
-import tkinter as tk
-from tkinter import ttk
+import http.server
+import socketserver
+import urllib.parse
 
-class IceCalculatorApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Thermal Ice & Water Calculator")
-        self.root.geometry("450x520")
-        self.root.configure(bg="#0f172a")
+PORT = 8080
 
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("TLabel", background="#0f172a", foreground="#f8fafc", font=("Arial", 11))
-        style.configure("TButton", font=("Arial", 11, "bold"), background="#3b82f6", foreground="#ffffff")
-
-        title_label = ttk.Label(root, text="Thermal Equilibrium Engine", font=("Arial", 14, "bold"))
-        title_label.pack(pady=15)
-
-        form_frame = tk.Frame(root, bg="#1e293b", padx=15, pady=15)
-        form_frame.pack(padx=20, fill="x", expand=True)
-
-        self.entries = {}
-        fields = [
-            ("Water Volume (L)", "water_vol"),
-            ("Initial Temp (°C)", "init_temp"),
-            ("Final Temp (°C)", "final_temp"),
-            ("Ice Weight (g)", "ice_weight")
-        ]
-
-        for i, (label_text, key) in enumerate(fields):
-            lbl = tk.Label(form_frame, text=label_text, bg="#1e293b", fg="#94a3b8", font=("Arial", 10))
-            lbl.grid(row=i, column=0, sticky="w", pady=8)
-            
-            ent = tk.Entry(form_frame, font=("Arial", 11), bg="#334155", fg="#f8fafc", insertbackground="white", relief="flat")
-            ent.grid(row=i, column=1, sticky="ew", pady=8, padx=10)
-            self.entries[key] = ent
-
-        # Container Efficiency Dropdown
-        lbl_eff = tk.Label(form_frame, text="Container Type", bg="#1e293b", fg="#94a3b8", font=("Arial", 10))
-        lbl_eff.grid(row=4, column=0, sticky="w", pady=8)
+class CubeCoolerHandler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
         
-        self.eff_var = tk.StringVar(value="Thin Plastic (~1.15)")
-        eff_menu = ttk.Combobox(form_frame, textvariable=self.eff_var, state="readonly", values=[
-            "Thin Plastic (~1.15)", 
-            "Standard Metal (~1.05)", 
-            "Vacuum Sealed (~1.00)"
-        ])
-        eff_menu.grid(row=4, column=1, sticky="ew", pady=8, padx=10)
-
-        form_frame.columnconfigure(1, weight=1)
-
-        btn_calc = tk.Button(root, text="Calculate Missing Field", command=self.solve_thermodynamics, bg="#2563eb", fg="white", activebackground="#1d4ed8", activeforeground="white", relief="flat", pady=8)
-        btn_calc.pack(padx=20, pady=15, fill="x")
-
-        self.status_lbl = tk.Label(root, text="Leave one field blank to auto-solve it.", bg="#0f172a", fg="#38bdf8", font=("Arial", 9, "italic"))
-        self.status_lbl.pack(pady=5)
-
-    def solve_thermodynamics(self):
-        # Reset text color for all fields to normal white
-        for key, ent in self.entries.items():
-            ent.config(fg="#f8fafc")
-
-        data = {}
-        empty_key = None
-
-        eff_mapping = {
-            "Thin Plastic (~1.15)": 1.15,
-            "Standard Metal (~1.05)": 1.05,
-            "Vacuum Sealed (~1.00)": 1.00
-        }
-        eff = eff_mapping.get(self.eff_var.get(), 1.00)
-
-        for key, ent in self.entries.items():
-            val = ent.get().strip()
-            if val == "":
-                if empty_key is None:
-                    empty_key = key
+        parsed_path = urllib.parse.urlparse(self.path)
+        query_params = urllib.parse.parse_qs(parsed_path.query)
+        
+        water_vol = query_params.get("water_vol", [""])[0]
+        init_temp = query_params.get("init_temp", [""])[0]
+        final_temp = query_params.get("final_temp", [""])[0]
+        ice_weight = query_params.get("ice_weight", [""])[0]
+        container = query_params.get("container", ["1.15"])[0]
+        
+        result_msg = ""
+        result_color = "#38bdf8"
+        
+        if any([water_vol, init_temp, final_temp, ice_weight]):
+            try:
+                eff = float(container)
+                fields = {
+                    "water_vol": water_vol,
+                    "init_temp": init_temp,
+                    "final_temp": final_temp,
+                    "ice_weight": ice_weight
+                }
+                
+                empty_keys = [k for k, v in fields.items() if not v]
+                
+                if len(empty_keys) != 1:
+                    result_msg = "Error: Please leave exactly ONE field blank to auto-solve it."
+                    result_color = "#f43f5e"
                 else:
-                    self.status_lbl.config(text="Error: Leave exactly ONE field blank.", fg="#f43f5e")
-                    return
-            else:
-                try:
-                    data[key] = float(val)
-                except ValueError:
-                    self.status_lbl.config(text=f"Error: Invalid number in {key}", fg="#f43f5e")
-                    return
+                    empty_key = empty_keys[0]
+                    data = {k: float(v) for k, v in fields.items() if v}
+                    
+                    if empty_key == "final_temp":
+                        v = data["water_vol"] * 1000.0
+                        ti = data["init_temp"]
+                        m_ice = data["ice_weight"]
+                        numerator = (v * 4.184 * ti) - (m_ice * 334.0 * eff)
+                        denominator = (v * 4.184) + (m_ice * 4.184 * eff)
+                        tf = numerator / denominator
+                        final_temp = f"{tf:.2f}"
+                        result_msg = f"Successfully solved Final Temperature: {final_temp} °C"
+                        result_color = "#34d399"
+                        
+                    elif empty_key == "ice_weight":
+                        v = data["water_vol"] * 1000.0
+                        ti = data["init_temp"]
+                        tf = data["final_temp"]
+                        if tf >= ti:
+                            result_msg = "Error: Final temp must be lower than initial temp."
+                            result_color = "#f43f5e"
+                        else:
+                            target_drop = ti - tf
+                            heat_to_remove = v * 4.184 * target_drop * eff
+                            energy_per_g_ice = 334.0 + (4.184 * max(0.0, tf))
+                            m_ice = heat_to_remove / energy_per_g_ice
+                            ice_weight = f"{m_ice:.2f}"
+                            result_msg = f"Successfully solved Ice Weight: {ice_weight} g"
+                            result_color = "#34d399"
+                            
+                    elif empty_key == "water_vol":
+                        ti = data["init_temp"]
+                        tf = data["final_temp"]
+                        m_ice = data["ice_weight"]
+                        target_drop = ti - tf
+                        energy_gained = m_ice * (334.0 + (4.184 * max(0.0, tf)))
+                        water_mass_g = energy_gained / (4.184 * target_drop * eff)
+                        v = water_mass_g / 1000.0
+                        water_vol = f"{v:.2f}"
+                        result_msg = f"Successfully solved Water Volume: {water_vol} L"
+                        result_color = "#34d399"
+                        
+                    elif empty_key == "init_temp":
+                        v = data["water_vol"] * 1000.0
+                        tf = data["final_temp"]
+                        m_ice = data["ice_weight"]
+                        energy_gained = m_ice * (334.0 + (4.184 * max(0.0, tf)))
+                        heat_needed = energy_gained * eff
+                        delta_t = heat_needed / (v * 4.184)
+                        ti = tf + delta_t
+                        init_temp = f"{ti:.2f}"
+                        result_msg = f"Successfully solved Initial Temperature: {init_temp} °C"
+                        result_color = "#34d399"
+                        
+            except Exception as e:
+                result_msg = f"Calculation Error: {str(e)}"
+                result_color = "#f43f5e"
 
-        if not empty_key:
-            self.status_lbl.config(text="Error: Leave one field blank so the app can solve it.", fg="#f43f5e")
-            return
-
-        try:
-            # 1. Solve for Final Temp
-            if empty_key == "final_temp":
-                v = data["water_vol"] * 1000.0
-                ti = data["init_temp"]
-                m_ice = data["ice_weight"]
+        html = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>CubeCooler v1.1 - Thermal Equilibrium Engine</title>
+            <style>
+                :root {{
+                    --bg-color: #0f172a;
+                    --card-bg: #1e293b;
+                    --text-color: #f8fafc;
+                    --accent-color: #3b82f6;
+                    --accent-hover: #2563eb;
+                    --border-color: #334155;
+                }}
+                body {{
+                    font-family: system-ui, -apple-system, sans-serif;
+                    background-color: var(--bg-color);
+                    color: var(--text-color);
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    min-height: 100vh;
+                    margin: 0;
+                }}
+                .container {{
+                    background-color: var(--card-bg);
+                    padding: 2rem;
+                    border-radius: 1rem;
+                    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+                    width: 100%;
+                    max-width: 450px;
+                    border: 1px solid var(--border-color);
+                    box-sizing: border-box;
+                }}
+                h1 {{
+                    font-size: 1.5rem;
+                    margin-bottom: 1.5rem;
+                    text-align: center;
+                    color: #38bdf8;
+                }}
+                .field-group {{
+                    margin-bottom: 1rem;
+                }}
+                label {{
+                    display: block;
+                    font-size: 0.875rem;
+                    margin-bottom: 0.3rem;
+                    color: #94a3b8;
+                }}
+                input, select {{
+                    width: 100%;
+                    padding: 0.75rem;
+                    border-radius: 0.5rem;
+                    border: 1px solid var(--border-color);
+                    background-color: #0f172a;
+                    color: white;
+                    font-size: 1rem;
+                    box-sizing: border-box;
+                }}
+                button {{
+                    width: 100%;
+                    padding: 0.75rem;
+                    border: none;
+                    border-radius: 0.5rem;
+                    background-color: var(--accent-color);
+                    color: #ffffff;
+                    font-weight: bold;
+                    font-size: 1rem;
+                    cursor: pointer;
+                    transition: background-color 0.2s;
+                    margin-top: 1rem;
+                }}
+                button:hover {{
+                    background-color: var(--accent-hover);
+                }}
+                .result {{
+                    margin-top: 1rem;
+                    padding: 0.75rem;
+                    background-color: #0f172a;
+                    border-radius: 0.5rem;
+                    text-align: center;
+                    font-weight: 500;
+                    border: 1px solid var(--border-color);
+                    color: {result_color};
+                    font-size: 0.9rem;
+                }}
+                .hint {{
+                    text-align: center;
+                    font-size: 0.8rem;
+                    color: #38bdf8;
+                    font-style: italic;
+                    margin-bottom: 1.2rem;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Thermal Equilibrium Engine v1.1</h1>
+                <div class="hint">Leave exactly ONE field blank to auto-solve it.</div>
                 
-                numerator = (v * 4.184 * ti) - (m_ice * 334.0 * eff)
-                denominator = (v * 4.184) + (m_ice * 4.184 * eff)
-                tf = numerator / denominator
+                <form method="GET">
+                    <div class="field-group">
+                        <label>Water Volume (L)</label>
+                        <input type="number" step="any" name="water_vol" value="{water_vol}" placeholder="e.g. 2.0">
+                    </div>
+                    <div class="field-group">
+                        <label>Initial Temp (°C)</label>
+                        <input type="number" step="any" name="init_temp" value="{init_temp}" placeholder="e.g. 25.0">
+                    </div>
+                    <div class="field-group">
+                        <label>Final Temp (°C)</label>
+                        <input type="number" step="any" name="final_temp" value="{final_temp}" placeholder="e.g. 5.0">
+                    </div>
+                    <div class="field-group">
+                        <label>Ice Weight (g)</label>
+                        <input type="number" step="any" name="ice_weight" value="{ice_weight}" placeholder="e.g. 150">
+                    </div>
+                    <div class="field-group">
+                        <label>Container Type</label>
+                        <select name="container">
+                            <option value="1.15" {'selected' if container == '1.15' else ''}>Thin Plastic (~1.15)</option>
+                            <option value="1.05" {'selected' if container == '1.05' else ''}>Standard Metal (~1.05)</option>
+                            <option value="1.00" {'selected' if container == '1.00' else ''}>Vacuum Sealed (~1.00)</option>
+                        </select>
+                    </div>
+                    
+                    <button type="submit">Calculate Missing Field</button>
+                </form>
                 
-                self.entries["final_temp"].insert(0, f"{tf:.2f}")
-                self.entries["final_temp"].config(fg="#34d399") # Highlight solved field in mint green
-                self.status_lbl.config(text="Successfully solved Final Temperature!", fg="#34d399")
+                {f'<div class="result">{result_msg}</div>' if result_msg else ''}
+            </div>
+        </body>
+        </html>
+        """
+        self.wfile.write(html.encode("utf-8"))
 
-            # 2. Solve for Ice Weight
-            elif empty_key == "ice_weight":
-                v = data["water_vol"] * 1000.0
-                ti = data["init_temp"]
-                tf = data["final_temp"]
-                
-                if tf >= ti:
-                    self.status_lbl.config(text="Error: Final temp must be lower than initial temp.", fg="#f43f5e")
-                    return
-
-                target_drop = ti - tf
-                heat_to_remove = v * 4.184 * target_drop * eff
-                energy_per_g_ice = 334.0 + (4.184 * max(0.0, tf))
-                m_ice = heat_to_remove / energy_per_g_ice
-
-                self.entries["ice_weight"].insert(0, f"{m_ice:.2f}")
-                self.entries["ice_weight"].config(fg="#34d399")
-                self.status_lbl.config(text="Successfully solved Ice Weight!", fg="#34d399")
-
-            # 3. Solve for Water Volume
-            elif empty_key == "water_vol":
-                ti = data["init_temp"]
-                tf = data["final_temp"]
-                m_ice = data["ice_weight"]
-                
-                target_drop = ti - tf
-                energy_gained = m_ice * (334.0 + (4.184 * max(0.0, tf)))
-                water_mass_g = energy_gained / (4.184 * target_drop * eff)
-                v = water_mass_g / 1000.0
-
-                self.entries["water_vol"].insert(0, f"{v:.2f}")
-                self.entries["water_vol"].config(fg="#34d399")
-                self.status_lbl.config(text="Successfully solved Water Volume!", fg="#34d399")
-
-            # 4. Solve for Initial Temp
-            elif empty_key == "init_temp":
-                v = data["water_vol"] * 1000.0
-                tf = data["final_temp"]
-                m_ice = data["ice_weight"]
-                
-                energy_gained = m_ice * (334.0 + (4.184 * max(0.0, tf)))
-                heat_needed = energy_gained * eff
-                delta_t = heat_needed / (v * 4.184)
-                ti = tf + delta_t
-
-                self.entries["init_temp"].insert(0, f"{ti:.2f}")
-                self.entries["init_temp"].config(fg="#34d399")
-                self.status_lbl.config(text="Successfully solved Initial Temperature!", fg="#34d399")
-
-        except Exception as e:
-            self.status_lbl.config(text=f"Calculation Error: {str(e)}", fg="#f43f5e")
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = IceCalculatorApp(root)
-    root.mainloop()
+with socketserver.TCPServer(("", PORT), CubeCoolerHandler) as httpd:
+    print(f"CubeCooler v1.1 running! Access it via browser at http://<your-pi-ip>:{PORT}")
+    print("Press Ctrl+C to shut down and save resources.")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down CubeCooler v1.1...")
 EOF
 
 python3 "$PYTHON_APP_PATH"
