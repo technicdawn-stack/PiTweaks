@@ -13,5 +13,5 @@ Tools|stress_test.sh|PiTweaks All-in-One Continuous Stress Suite & Telemetry V2.
 Tools|swap_manager.sh|Smart memory and swap manager with auto-detection and recommendations
 Tools|sys_info.sh|System information and telemtry, condensed.
 Tools|throttlecheck.sh|Pi throttle checker
-General|unbound.sh|Automated installer and configurer for Unbound (Recursive DNS) with Port Conflict Check
+Scripts|unbound.sh|Automated installer and configurer for Unbound (Recursive DNS) with Port Conflict Check
 General|wireguard.sh|Fully automated installer and configurer for WireGuard and WireGuard-UI (Bare Metal) V1.1
