@@ -1,6 +1,7 @@
 #!/bin/bash
 # Description: PiTweaks All-in-One Continuous Stress Suite & Telemetry V2.0
 # PERSISTENT: TRUE
+# Category: Tools
 
 set -e
 
