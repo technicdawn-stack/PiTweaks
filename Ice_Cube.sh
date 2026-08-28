@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Description: CubeCooler v1.4.2 Management Console with Persistent Service Control
+# Description: CubeCooler v1.4.2 Management Console with Persistent Service Control aand install manager.
 # PERSISTENT: FALSE
+# Category: Scripts
 
 APP_DIR="/home/$(whoami)"
 PYTHON_APP_PATH="$APP_DIR/CubeCooler.py"
