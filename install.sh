@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# 🍓 PI TWEAKS INSTALLER (SMART PERSISTENCE & CATEGORY GROUPING)
+# 🍓 PI TWEAKS INSTALLER (SMART PERSISTENCE & DYNAMIC HEADERS)
 # ==============================================================================
 set -eo pipefail
 
@@ -25,50 +25,51 @@ INDEX_DATA=$(curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRA
     exit 1
 }
 
-# 2. Parse index.txt with support for Category|Script|Desc or legacy Script|Desc
+# 2. Parse index.txt and group items alphabetically by Category (Fallback: Uncategorized)
 declare -A CATEGORIES
 
-while IFS='|' read -r col1 col2 col3; do
-    col1=$(echo "$col1" | tr -d '\r' | xargs)
-    col2=$(echo "$col2" | tr -d '\r' | xargs)
-    col3=$(echo "$col3" | tr -d '\r' | xargs)
+while IFS='|' read -r category script desc; do
+    # Strip leading/trailing whitespaces
+    category=$(echo "$category" | xargs)
+    script=$(echo "$script" | xargs)
+    desc=$(echo "$desc" | xargs)
 
-    [[ -z "$col1" || "$col1" =~ ^# ]] && continue
+    [[ -z "$script" || "$script" =~ ^# ]] && continue
 
-    if [[ -z "$col3" ]]; then
-        script="$col1"
-        desc="$col2"
-        category="General"
-    else
-        category="$col1"
-        script="$col2"
-        desc="$col3"
+    # If the format only provided 2 columns (Script|Desc), shift values and use fallback
+    if [[ -z "$desc" && -n "$script" ]]; then
+        desc="$script"
+        script="$category"
+        category="Uncategorized"
+    elif [[ -z "$category" ]]; then
+        category="Uncategorized"
     fi
 
+    # Append to the category's item pool
     CATEGORIES["$category"]+="$script|$desc"$'\n'
 done <<< "$INDEX_DATA"
 
-# 3. Build whiptail menu options grouped alphabetically by category with visual headers
+# 3. Build whiptail menu options with dynamic headers sorted alphabetically
 MENU_OPTIONS=()
+
+# Sort categories alphabetically, ensuring 'Uncategorized' comes last if desired, or pure alphabetical
 sorted_categories=$(printf "%s\n" "${!CATEGORIES[@]}" | sort)
 
 for cat in $sorted_categories; do
-    if [ "${#MENU_OPTIONS[@]}" -gt 0 ]; then
-        MENU_OPTIONS+=("----------------------------------------" "")
-    fi
-
-    MENU_OPTIONS+=("► [ ${cat^^} ]" "")
+    # Add a disabled/informative header item in whiptail
+    MENU_OPTIONS+=("=== ${cat^^} ===" "")
     
+    # Sort scripts within this category alphabetically
     sorted_scripts=$(printf "%s" "${CATEGORIES[$cat]}" | sort)
     
     while IFS='|' read -r script desc; do
         [[ -z "$script" ]] && continue
-        MENU_OPTIONS+=("$script" "    └─ ${desc:-No description provided}")
+        MENU_OPTIONS+=("$script" "   └─ ${desc:-No description provided}")
     done <<< "$sorted_scripts"
 done
 
 if [ "${#MENU_OPTIONS[@]}" -eq 0 ]; then
-    echo "❌ No scripts found in index.txt."
+    echo "❌ No valid scripts found in index.txt."
     exit 1
 fi
 
@@ -80,11 +81,7 @@ BOX_HEIGHT=$(( TERM_HEIGHT - 4 ))
 BOX_WIDTH=$(( TERM_WIDTH - 6 ))
 MENU_HEIGHT=$(( BOX_HEIGHT - 8 ))
 
-[ "$BOX_HEIGHT" -lt 10 ] && BOX_HEIGHT=10
-[ "$BOX_WIDTH" -lt 40 ] && BOX_WIDTH=40
-[ "$MENU_HEIGHT" -lt 5 ] && MENU_HEIGHT=5
-
-# 5. Launch Whiptail TUI loop with validation against header selection
+# 5. Launch Whiptail TUI loop to handle category header selections gracefully
 while true; do
     SELECTED=$(whiptail --clear \
         --backtitle "PiTweaks Script Manager" \
@@ -96,8 +93,9 @@ while true; do
             exit 0
         }
 
-    if [[ "$SELECTED" == "►"* || "$SELECTED" == "---"* ]]; then
-        whiptail --title "Notice" --msgbox "Please select an actual script, not a category header or divider line." 8 50
+    # Prevent selection of category headers (which start with '===')
+    if [[ "$SELECTED" == "==="%* ]]; then
+        whiptail --title "Notice" --msgbox "Please select a script below the category headers, not the header itself." 8 45
         continue
     fi
 
@@ -124,7 +122,7 @@ fi
 # 9. Run locally so interactive prompts work properly
 ./"${SELECTED}"
 
-# 10. Smart Cleanup: Delete only if it's NOT a persistent background tool
+# 10. Smart Cleanup
 if [ "$IS_PERSISTENT" = false ]; then
     rm -f "${SELECTED}"
     echo ""
