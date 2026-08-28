@@ -1,5 +1,8 @@
 #!/bin/bash
 # Description: Smart Raspberry Pi overclocking manager with live thermal monitoring and safe backups.
+# PERSISTENT: FALSE
+# Category: Tools
+
 # ==============================================================================
 # 🍓 PiTweaks - Smart Overclock & Power Manager
 # ==============================================================================
