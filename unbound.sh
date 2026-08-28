@@ -3,6 +3,7 @@
 
 # Description: Automated installer and configurer for Unbound (Recursive DNS) with Port Conflict Check
 # PERSISTENT: FALSE
+# Category: Scripts
 
 set -eo pipefail
 
