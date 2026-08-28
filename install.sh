@@ -74,11 +74,11 @@ if [ "${#MENU_OPTIONS[@]}" -eq 0 ]; then
     exit 1
 fi
 
-# 4. Get terminal size for responsive menu with safety defaults
-TERM_HEIGHT=$(stty size 2>/dev/null | awk '{print $1}')
-TERM_WIDTH=$(stty size 2>/dev/null | awk '{print $2}')
+# 4. Get terminal size from /dev/tty so it works with curl-to-bash
+TERM_HEIGHT=$(stty size </dev/tty 2>/dev/null | awk '{print $1}')
+TERM_WIDTH=$(stty size </dev/tty 2>/dev/null | awk '{print $2}')
 
-# Fallback if stty size fails or returns empty
+# Fallback if tty is unavailable
 [ -z "$TERM_HEIGHT" ] && TERM_HEIGHT=24
 [ -z "$TERM_WIDTH" ] && TERM_WIDTH=80
 
