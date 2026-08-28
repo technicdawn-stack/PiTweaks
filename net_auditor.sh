@@ -1,5 +1,8 @@
 #!/bin/bash
 # Description: Enhanced network utility featuring an interactive menu for Ookla Speed Tests, open port auditing, ping checks, DNS tests, and Wi-Fi diagnostics.
+# PERSISTENT: FALSE
+# Category: Tools
+
 set -eo pipefail
 
 clear
