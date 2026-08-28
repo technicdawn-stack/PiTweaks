@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: CubeCooler v1.4.2 Management Console with Persistent Service Control aand install manager.
+# Description: CubeCooler v1.4.3 Management Console with Persistent Service Control and install manager.
 # PERSISTENT: FALSE
 # Category: Scripts
 
@@ -8,7 +8,7 @@ APP_DIR="/home/$(whoami)"
 PYTHON_APP_PATH="$APP_DIR/CubeCooler.py"
 PORT=8081
 
-# Ensure Python app script exists on disk persistently
+# Ensure Python app script exists on disk persistently with fixed f-string escaping
 create_app() {
     cat << 'EOF' > "$PYTHON_APP_PATH"
 import http.server
@@ -109,142 +109,140 @@ class CubeCoolerHandler(http.server.SimpleHTTPRequestHandler):
                 result_msg = f"Calculation Error: {str(e)}"
                 result_color = "#f43f5e"
 
-        html = f"""
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>CubeCooler v1.4 - Thermal Equilibrium Engine</title>
-            <style>
-                :root {{
-                    --bg-color: #0f172a;
-                    --card-bg: #1e293b;
-                    --text-color: #f8fafc;
-                    --accent-color: #3b82f6;
-                    --accent-hover: #2563eb;
-                    --border-color: #334155;
-                }}
-                body {{
-                    font-family: system-ui, -apple-system, sans-serif;
-                    background-color: var(--bg-color);
-                    color: var(--text-color);
-                    display: flex;
-                    justify-content: center;
-                    align-items: center;
-                    min-height: 100vh;
-                    margin: 0;
-                }}
-                .container {{
-                    background-color: var(--card-bg);
-                    padding: 2rem;
-                    border-radius: 1rem;
-                    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
-                    width: 100%;
-                    max-width: 450px;
-                    border: 1px solid var(--border-color);
-                    box-sizing: border-box;
-                }}
-                h1 {{
-                    font-size: 1.5rem;
-                    margin-bottom: 1.5rem;
-                    text-align: center;
-                    color: #38bdf8;
-                }}
-                .field-group {{
-                    margin-bottom: 1rem;
-                }}
-                label {{
-                    display: block;
-                    font-size: 0.875rem;
-                    margin-bottom: 0.3rem;
-                    color: #94a3b8;
-                }}
-                input, select {{
-                    width: 100%;
-                    padding: 0.75rem;
-                    border-radius: 0.5rem;
-                    border: 1px solid var(--border-color);
-                    background-color: #0f172a;
-                    color: white;
-                    font-size: 1rem;
-                    box-sizing: border-box;
-                }}
-                button {{
-                    width: 100%;
-                    padding: 0.75rem;
-                    border: none;
-                    border-radius: 0.5rem;
-                    background-color: var(--accent-color);
-                    color: #ffffff;
-                    font-weight: bold;
-                    font-size: 1rem;
-                    cursor: pointer;
-                    transition: background-color 0.2s;
-                    margin-top: 1rem;
-                }}
-                button:hover {{
-                    background-color: var(--accent-hover);
-                }}
-                .result {{
-                    margin-top: 1rem;
-                    padding: 0.75rem;
-                    background-color: #0f172a;
-                    border-radius: 0.5rem;
-                    text-align: center;
-                    font-weight: 500;
-                    border: 1px solid var(--border-color);
-                    color: {result_color};
-                    font-size: 0.9rem;
-                }}
-                .hint {{
-                    text-align: center;
-                    font-size: 0.8rem;
-                    color: #38bdf8;
-                    font-style: italic;
-                    margin-bottom: 1.2rem;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>🧊 CubeCooler v1.4</h1>
-                <div class="hint">Leave exactly ONE field blank to auto-solve it.</div>
-                
-                <form method="GET">
-                    <div class="field-group">
-                        <label>Water Volume (L)</label>
-                        <input type="number" step="any" name="water_vol" value="{water_vol}" placeholder="e.g. 2.0">
-                    </div>
-                    <div class="field-group">
-                        <label>Initial Temp (°C)</label>
-                        <input type="number" step="any" name="init_temp" value="{init_temp}" placeholder="e.g. 25.0">
-                    </div>
-                    <div class="field-group">
-                        <label>Final Temp (°C)</label>
-                        <input type="number" step="any" name="final_temp" value="{final_temp}" placeholder="e.g. 5.0">
-                    </div>
-                    <div class="field-group">
-                        <label>Ice Weight (g)</label>
-                        <input type="number" step="any" name="ice_weight" value="{ice_weight}" placeholder="e.g. 150">
-                    </div>
-                    <div class="field-group">
-                        <label>Container Type</label>
-                        <select name="container">
-                            <option value="1.15" {'selected' if container == '1.15' else ''}>Thin Plastic (~1.15)</option>
-                            <option value="1.05" {'selected' if container == '1.05' else ''}>Standard Metal (~1.05)</option>
-                            <option value="1.00" {'selected' if container == '1.00' else ''}>Vacuum Sealed (~1.00)</option>
-                        </select>
-                    </div>
-                    
-                    <button type="submit">Calculate Missing Field</button>
-                </form>
-                
-                {f'<div class="result">{result_msg}</div>' if result_msg else ''}
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CubeCooler v1.4 - Thermal Equilibrium Engine</title>
+    <style>
+        :root {{
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --text-color: #f8fafc;
+            --accent-color: #3b82f6;
+            --accent-hover: #2563eb;
+            --border-color: #334155;
+        }}
+        body {{
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }}
+        .container {{
+            background-color: var(--card-bg);
+            padding: 2rem;
+            border-radius: 1rem;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 450px;
+            border: 1px solid var(--border-color);
+            box-sizing: border-box;
+        }}
+        h1 {{
+            font-size: 1.5rem;
+            margin-bottom: 1.5rem;
+            text-align: center;
+            color: #38bdf8;
+        }}
+        .field-group {{
+            margin-bottom: 1rem;
+        }}
+        label {{
+            display: block;
+            font-size: 0.875rem;
+            margin-bottom: 0.3rem;
+            color: #94a3b8;
+        }}
+        input, select {{
+            width: 100%;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            border: 1px solid var(--border-color);
+            background-color: #0f172a;
+            color: white;
+            font-size: 1rem;
+            box-sizing: border-box;
+        }}
+        button {{
+            width: 100%;
+            padding: 0.75rem;
+            border: none;
+            border-radius: 0.5rem;
+            background-color: var(--accent-color);
+            color: #ffffff;
+            font-weight: bold;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            margin-top: 1rem;
+        }}
+        button:hover {{
+            background-color: var(--accent-hover);
+        }}
+        .result {{
+            margin-top: 1rem;
+            padding: 0.75rem;
+            background-color: #0f172a;
+            border-radius: 0.5rem;
+            text-align: center;
+            font-weight: 500;
+            border: 1px solid var(--border-color);
+            color: {result_color};
+            font-size: 0.9rem;
+        }}
+        .hint {{
+            text-align: center;
+            font-size: 0.8rem;
+            color: #38bdf8;
+            font-style: italic;
+            margin-bottom: 1.2rem;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧊 CubeCooler v1.4</h1>
+        <div class="hint">Leave exactly ONE field blank to auto-solve it.</div>
+        
+        <form method="GET">
+            <div class="field-group">
+                <label>Water Volume (L)</label>
+                <input type="number" step="any" name="water_vol" value="{water_vol}" placeholder="e.g. 2.0">
             </div>
-        </body>
-        </html>
-        """
+            <div class="field-group">
+                <label>Initial Temp (°C)</label>
+                <input type="number" step="any" name="init_temp" value="{init_temp}" placeholder="e.g. 25.0">
+            </div>
+            <div class="field-group">
+                <label>Final Temp (°C)</label>
+                <input type="number" step="any" name="final_temp" value="{final_temp}" placeholder="e.g. 5.0">
+            </div>
+            <div class="field-group">
+                <label>Ice Weight (g)</label>
+                <input type="number" step="any" name="ice_weight" value="{ice_weight}" placeholder="e.g. 150">
+            </div>
+            <div class="field-group">
+                <label>Container Type</label>
+                <select name="container">
+                    <option value="1.15" {'selected' if container == '1.15' else ''}>Thin Plastic (~1.15)</option>
+                    <option value="1.05" {'selected' if container == '1.05' else ''}>Standard Metal (~1.05)</option>
+                    <option value="1.00" {'selected' if container == '1.00' else ''}>Vacuum Sealed (~1.00)</option>
+                </select>
+            </div>
+            
+            <button type="submit">Calculate Missing Field</button>
+        </form>
+        
+        {f'<div class="result">{result_msg}</div>' if result_msg else ''}
+    </div>
+</body>
+</html>"""
         self.wfile.write(html.encode("utf-8"))
 
 with socketserver.TCPServer(("", PORT), CubeCoolerHandler) as httpd:
@@ -260,7 +258,7 @@ PI_IP=$(hostname -I | awk '{print $1}')
 while true; do
     clear
     echo "=================================================="
-    echo "           CUBE COOLER v1.4.1 MANAGEMENT          "
+    echo "         CUBE COOLER v1.4.1 MANAGEMENT          "
     echo "=================================================="
     echo " Web URL: http://$PI_IP:$PORT"
     echo "--------------------------------------------------"
