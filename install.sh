@@ -29,10 +29,10 @@ INDEX_DATA=$(curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRA
 declare -A CATEGORIES
 
 while IFS='|' read -r category script desc; do
-    # Strip leading/trailing whitespaces
-    category=$(echo "$category" | xargs)
-    script=$(echo "$script" | xargs)
-    desc=$(echo "$desc" | xargs)
+    # Strip leading/trailing whitespaces and carriage returns
+    category=$(echo "$category" | tr -d '\r' | xargs)
+    script=$(echo "$script" | tr -d '\r' | xargs)
+    desc=$(echo "$desc" | tr -d '\r' | xargs)
 
     [[ -z "$script" || "$script" =~ ^# ]] && continue
 
@@ -49,22 +49,26 @@ while IFS='|' read -r category script desc; do
     CATEGORIES["$category"]+="$script|$desc"$'\n'
 done <<< "$INDEX_DATA"
 
-# 3. Build whiptail menu options with dynamic headers sorted alphabetically
+# 3. Build whiptail menu options with prominent visual breaks and headers
 MENU_OPTIONS=()
 
-# Sort categories alphabetically, ensuring 'Uncategorized' comes last if desired, or pure alphabetical
 sorted_categories=$(printf "%s\n" "${!CATEGORIES[@]}" | sort)
 
 for cat in $sorted_categories; do
-    # Add a disabled/informative header item in whiptail
-    MENU_OPTIONS+=("=== ${cat^^} ===" "")
+    # Add prominent separator lines before categories (except the first one)
+    if [ "${#MENU_OPTIONS[@]}" -gt 0 ]; then
+        MENU_OPTIONS+=("========================================" "")
+    fi
+
+    # Enhanced prominent header block
+    MENU_OPTIONS+=("▶ [ ${cat^^} ]" "")
     
     # Sort scripts within this category alphabetically
     sorted_scripts=$(printf "%s" "${CATEGORIES[$cat]}" | sort)
     
     while IFS='|' read -r script desc; do
         [[ -z "$script" ]] && continue
-        MENU_OPTIONS+=("$script" "   └─ ${desc:-No description provided}")
+        MENU_OPTIONS+=("$script" "    └─ ${desc:-No description provided}")
     done <<< "$sorted_scripts"
 done
 
@@ -93,9 +97,9 @@ while true; do
             exit 0
         }
 
-    # Prevent selection of category headers (which start with '===')
-    if [[ "$SELECTED" == "==="%* ]]; then
-        whiptail --title "Notice" --msgbox "Please select a script below the category headers, not the header itself." 8 45
+    # Prevent selection of category headers or prominent breaks
+    if [[ "$SELECTED" == "▶"* || "$SELECTED" == "="* ]]; then
+        whiptail --title "Notice" --msgbox "Please select an actual script, not a header or separator line." 8 50
         continue
     fi
 
