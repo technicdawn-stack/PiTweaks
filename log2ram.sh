@@ -1,6 +1,7 @@
 #!/bin/bash
 # Description: Interactive installer for log2ram with whiptail configuration.
 # PERSISTENT: TRUE
+# Category: Scripts
 
 # Ensure script is run as root
 if [ "$EUID" -ne 0 ]; then
