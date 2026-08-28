@@ -10,7 +10,7 @@ General|net_auditor.sh|Enhanced network utility featuring an interactive menu fo
 General|overclock.sh|Smart Raspberry Pi overclocking manager with live thermal monitoring and safe backups.
 General|security_module_upgrade.sh|No description provided
 General|stress_test.sh|PiTweaks All-in-One Continuous Stress Suite & Telemetry V2.0
-General|swap_manager.sh|Smart memory and swap manager with auto-detection and recommendations
+Tools|swap_manager.sh|Smart memory and swap manager with auto-detection and recommendations
 Tools|sys_info.sh|System information and telemtry, condensed.
 Tools|throttlecheck.sh|Pi throttle checker
 General|unbound.sh|Automated installer and configurer for Unbound (Recursive DNS) with Port Conflict Check
