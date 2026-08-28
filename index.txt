@@ -7,7 +7,7 @@ General|disk_check.sh|No description provided
 Tools|img_backup.sh|Modular Pi Imager Utility with Dynamic USB Detection and Network Streaming V1.3.3
 General|log2ram.sh|Interactive installer for log2ram with whiptail configuration.
 General|net_auditor.sh|Enhanced network utility featuring an interactive menu for Ookla Speed Tests, open port auditing, ping checks, DNS tests, and Wi-Fi diagnostics.
-General|overclock.sh|Smart Raspberry Pi overclocking manager with live thermal monitoring and safe backups.
+Tools|overclock.sh|Smart Raspberry Pi overclocking manager with live thermal monitoring and safe backups.
 General|security_module_upgrade.sh|No description provided
 Tools|stress_test.sh|PiTweaks All-in-One Continuous Stress Suite & Telemetry V2.0
 Tools|swap_manager.sh|Smart memory and swap manager with auto-detection and recommendations
