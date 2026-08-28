@@ -25,6 +25,14 @@ INDEX_DATA=$(curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRA
     exit 1
 }
 
+# Search/Filter Prompt before building the menu
+SEARCH_QUERY=$(whiptail --clear \
+    --backtitle "PiTweaks Script Manager" \
+    --title "Filter Scripts" \
+    --inputbox "Search by script name or description (leave blank for all):" 10 60 3>&1 1>&2 2>&3) || SEARCH_QUERY=""
+
+SEARCH_QUERY=$(echo "$SEARCH_QUERY" | tr '[:upper:]' '[:lower:]' | xargs)
+
 # 2. Parse index.txt and group items alphabetically by Category (Fallback: Uncategorized)
 declare -A CATEGORIES
 
@@ -43,30 +51,41 @@ while IFS='|' read -r category script desc; do
         category="Uncategorized"
     fi
 
+    # Filter by both script name and description (and category)
+    if [[ -n "$SEARCH_QUERY" ]]; then
+        combined_text=$(echo "$script $desc $category" | tr '[:upper:]' '[:lower:]')
+        if [[ "$combined_text" != *"$SEARCH_QUERY"* ]]; then
+            continue
+        fi
+    fi
+
     CATEGORIES["$category"]+="$script|$desc"$'\n'
 done <<< "$INDEX_DATA"
 
-# 3. Build whiptail menu options with matching header structure and indented descriptions
+# 3. Build whiptail menu options with category headers starting at the very top
 MENU_OPTIONS=()
 
 sorted_categories=$(printf "%s\n" "${!CATEGORIES[@]}" | sort)
 
 for cat in $sorted_categories; do
-    # Add category header matching the safety check format
+    if [ "${#MENU_OPTIONS[@]}" -gt 0 ]; then
+        MENU_OPTIONS+=("========================================" "")
+    fi
+
+    # Category header lands as the first item so the cursor starts on it
     MENU_OPTIONS+=("=== ${cat^^} ===" "")
     
     sorted_scripts=$(printf "%s" "${CATEGORIES[$cat]}" | sort)
     
     while IFS='|' read -r script desc; do
         [[ -z "$script" ]] && continue
-        # Clean working tag name, indented tree branch description
         MENU_OPTIONS+=("$script" "    └─ ${desc:-No description provided}")
     done <<< "$sorted_scripts"
 done
 
 if [ "${#MENU_OPTIONS[@]}" -eq 0 ]; then
-    echo "❌ No valid scripts found in index.txt."
-    exit 1
+    whiptail --title "Notice" --msgbox "No matching scripts found for your search query." 8 50
+    exec "$0"
 fi
 
 # 4. Get terminal size for responsive menu
@@ -89,8 +108,7 @@ while true; do
             exit 0
         }
 
-    # Prevent selection of category headers matching the '===' prefix pattern
-    if [[ "$SELECTED" == "==="%* ]]; then
+    if [[ "$SELECTED" == "==="%* || "$SELECTED" == "="* ]]; then
         whiptail --title "Notice" --msgbox "Please select a script below the category headers, not the header itself." 8 45
         continue
     fi
@@ -118,7 +136,7 @@ fi
 # 9. Run locally
 ./"${SELECTED}"
 
-# 10. Smart Cleanup
+# 10. Smart Cleanup (Always removes temporary scripts to ensure fresh downloads)
 if [ "$IS_PERSISTENT" = false ]; then
     rm -f "${SELECTED}"
     echo ""
