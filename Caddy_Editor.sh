@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: Interactive Caddyfile Configuration Manager & Syntax Validator V1.4
+# Description: Interactive Caddyfile Configuration Manager & Syntax Validator V1.6
 # PERSISTENT: FALSE
 # Category: Administration
 
@@ -8,14 +8,14 @@ CADDYFILE_PATH="/etc/caddy/Caddyfile"
 BACKUP_DIR="/etc/caddy/backups"
 GLOBAL_COMMAND_PATH="/usr/local/bin/caddy-edit"
 
-# Ensure backup directory exists (using sudo if not root)
+# Ensure backup directory exists
 if [ "$EUID" -ne 0 ]; then
     sudo mkdir -p "$BACKUP_DIR"
 else
     mkdir -p "$BACKUP_DIR"
 fi
 
-# Install global shortcut command to /usr/local/bin using sudo if needed
+# Install global command by copying the script directly without .sh extension
 install_global_command() {
     local script_path
     script_path="$(realpath "$0")"
@@ -29,10 +29,9 @@ install_global_command() {
     fi
     
     echo "--------------------------------------------------"
-    echo "SUCCESS: Global command installed!"
+    echo "SUCCESS: Global command installed via direct copy!"
     echo "Command Name: caddy-edit"
     echo "Location:     $GLOBAL_COMMAND_PATH"
-    echo "You can now run 'sudo caddy-edit' from anywhere."
     echo "--------------------------------------------------"
 }
 
