@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Description: Interactive Caddyfile Configuration Manager & Syntax Validator V1.6
-# PERSISTENT: FALSE
+# PERSISTENT: TRUE
 # Category: Administration
 
 CADDYFILE_PATH="/etc/caddy/Caddyfile"
