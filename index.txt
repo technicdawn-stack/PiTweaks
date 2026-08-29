@@ -1,5 +1,5 @@
 1st_Set|A_Test.sh|Loops the install url for faster and easier refreshing. V1.1
-Administration|Caddy_Editor.sh|Interactive Caddyfile Configuration Manager & Syntax Validator V1.3
+Administration|Caddy_Editor.sh|Interactive Caddyfile Configuration Manager & Syntax Validator V1.4
 Webpages|Ice_Cube.sh|CubeCooler v1.4.3 Management Console with Systemd Service Control
 Webpages|Subnet_Calc.sh|HomeLab Subnet & IP Calculator Management Console with Systemd Service Control
 Tools|conspy_control.sh|Standalone Conspy screen mirroring controller and setup manager v1.1
