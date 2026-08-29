@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: Interactive Caddyfile Configuration Manager & Syntax Validator V1.1
+# Description: Interactive Caddyfile Configuration Manager & Syntax Validator V1.2
 # PERSISTENT: FALSE
 # Category: Administration
 
@@ -8,39 +8,41 @@ CADDYFILE_PATH="/etc/caddy/Caddyfile"
 BACKUP_DIR="/etc/caddy/backups"
 GLOBAL_COMMAND_PATH="/usr/local/bin/caddy-edit"
 
-# Ensure script is run with sudo privileges for Caddyfile access
+# Ensure backup directory exists (using sudo if not root)
 if [ "$EUID" -ne 0 ]; then
-    echo "Error: This management tool requires root privileges."
-    echo "Please run with: sudo ./$(basename "$0")"
-    exit 1
+    sudo mkdir -p "$BACKUP_DIR"
+else
+    mkdir -p "$BACKUP_DIR"
 fi
 
-# Ensure backup directory exists
-mkdir -p "$BACKUP_DIR"
-
-# Install global shortcut command explicitly and notify the user
+# Install global shortcut command to /usr/local/bin using sudo if needed
 install_global_command() {
     local script_path
     script_path="$(realpath "$0")"
     
-    # Copy the script itself to /usr/local/bin/caddy-edit for reliable global execution
-    cp "$script_path" "$GLOBAL_COMMAND_PATH"
-    chmod +x "$GLOBAL_COMMAND_PATH"
+    if [ "$EUID" -ne 0 ]; then
+        sudo cp "$script_path" "$GLOBAL_COMMAND_PATH"
+        sudo chmod +x "$GLOBAL_COMMAND_PATH"
+    else
+        cp "$script_path" "$GLOBAL_COMMAND_PATH"
+        chmod +x "$GLOBAL_COMMAND_PATH"
+    }
     
     echo "--------------------------------------------------"
-    echo "SUCCESS: Global variable / command created!"
+    echo "SUCCESS: Global command installed!"
     echo "Command Name: caddy-edit"
     echo "Location:     $GLOBAL_COMMAND_PATH"
+    echo "You can now run 'caddy-edit' from anywhere."
     echo "--------------------------------------------------"
 }
 
 install_global_command
 
-# Function to validate Caddyfile syntax using caddy validate
+# Function to validate Caddyfile syntax
 validate_caddyfile() {
     local test_file="$1"
     if command -v caddy &>/dev/null; then
-        if caddy validate --config "$test_file" &>/dev/null; then
+        if sudo caddy validate --config "$test_file" &>/dev/null; then
             return 0
         else
             return 1
@@ -100,11 +102,11 @@ add_site_block() {
     temp_block+="}\n"
 
     local tmp_test="/tmp/Caddyfile.test"
-    cp "$CADDYFILE_PATH" "$tmp_test"
-    echo -e "$temp_block" | tee -a "$tmp_test" > /dev/null
+    sudo cp "$CADDYFILE_PATH" "$tmp_test"
+    echo -e "$temp_block" | sudo tee -a "$tmp_test" > /dev/null
 
     if validate_caddyfile "$tmp_test"; then
-        cp "$tmp_test" "$CADDYFILE_PATH"
+        sudo cp "$tmp_test" "$CADDYFILE_PATH"
         rm -f "$tmp_test"
         echo "Success: Site block added and validated successfully!"
         prompt_restart_caddy
@@ -129,7 +131,7 @@ remove_site_block() {
     echo "=================================================="
     echo "Current Caddyfile contents preview:"
     echo "--------------------------------------------------"
-    cat "$CADDYFILE_PATH"
+    sudo cat "$CADDYFILE_PATH"
     echo "--------------------------------------------------"
     read -p "Enter the exact domain line to remove (e.g., mysite.local): " target_domain
 
@@ -137,16 +139,16 @@ remove_site_block() {
         return
     fi
 
-    cp "$CADDYFILE_PATH" "$BACKUP_DIR/Caddyfile.bak.$(date +%s)"
+    sudo cp "$CADDYFILE_PATH" "$BACKUP_DIR/Caddyfile.bak.$(date +%s)"
 
-    awk -v target="$target_domain" '
+    sudo awk -v target="$target_domain" '
         $1 == target { skipping=1; next }
         skipping && /^}/ { skipping=0; next }
         !skipping { print }
-    ' "$CADDYFILE_PATH" | tee /tmp/Caddyfile.new > /dev/null
+    ' "$CADDYFILE_PATH" | sudo tee /tmp/Caddyfile.new > /dev/null
 
     if validate_caddyfile "/tmp/Caddyfile.new"; then
-        mv /tmp/Caddyfile.new "$CADDYFILE_PATH"
+        sudo mv /tmp/Caddyfile.new "$CADDYFILE_PATH"
         echo "Success: Site block removed and configuration verified!"
         prompt_restart_caddy
     else
@@ -160,7 +162,7 @@ remove_site_block() {
 prompt_restart_caddy() {
     read -p "Would you like to restart Caddy now to apply changes? (y/N): " restart_choice
     if [[ "$restart_choice" =~ ^[Yy]$ ]]; then
-        if systemctl restart caddy; then
+        if sudo systemctl restart caddy; then
             echo "Caddy service restarted successfully."
         else
             echo "Error: Failed to restart Caddy service. Check journalctl -u caddy."
@@ -190,7 +192,7 @@ while true; do
         1)
             clear
             echo "--- Caddyfile Contents ---"
-            cat "$CADDYFILE_PATH"
+            sudo cat "$CADDYFILE_PATH"
             echo "--------------------------"
             read -p "Press Enter to continue..."
             ;;
@@ -209,7 +211,7 @@ while true; do
             read -p "Press Enter to continue..."
             ;;
         5)
-            systemctl restart caddy && echo "Caddy restarted." || echo "Restart failed."
+            sudo systemctl restart caddy && echo "Caddy restarted." || echo "Restart failed."
             read -p "Press Enter to continue..."
             ;;
         6)
