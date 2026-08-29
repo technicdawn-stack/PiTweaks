@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: Interactive Caddyfile Configuration Manager & Syntax Validator V1.3
+# Description: Interactive Caddyfile Configuration Manager & Syntax Validator V1.4
 # PERSISTENT: FALSE
 # Category: Administration
 
