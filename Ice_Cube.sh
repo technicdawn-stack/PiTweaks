@@ -1,14 +1,16 @@
 #!/bin/bash
 
-# Description: CubeCooler v1.4.3 Management Console with Persistent Service Control and install manager.
+# Description: CubeCooler v1.4.3 Management Console with Systemd Service Control
 # PERSISTENT: FALSE
 # Category: Scripts
 
 APP_DIR="/home/$(whoami)"
 PYTHON_APP_PATH="$APP_DIR/CubeCooler.py"
+SERVICE_PATH="/etc/systemd/system/cubecooler.service"
+CURRENT_USER=$(whoami)
 PORT=8081
 
-# Ensure Python app script exists on disk persistently with fixed f-string escaping
+# Ensure Python app script exists on disk persistently with fixed f-string escaping and address reuse
 create_app() {
     cat << 'EOF' > "$PYTHON_APP_PATH"
 import http.server
@@ -246,6 +248,7 @@ class CubeCoolerHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(html.encode("utf-8"))
 
 with socketserver.TCPServer(("", PORT), CubeCoolerHandler) as httpd:
+    httpd.allow_reuse_address = True
     httpd.serve_forever()
 EOF
 }
@@ -258,13 +261,13 @@ PI_IP=$(hostname -I | awk '{print $1}')
 while true; do
     clear
     echo "=================================================="
-    echo "         CUBE COOLER v1.4.1 MANAGEMENT          "
+    echo "         CUBE COOLER v1.4.3 MANAGEMENT          "
     echo "=================================================="
     echo " Web URL: http://$PI_IP:$PORT"
     echo "--------------------------------------------------"
     echo " [1] Start Server (Interactive / Foreground)"
-    echo " [2] Enable Always-On (Cron + Start Immediately)"
-    echo " [3] Disable Always-On (Remove Cron Job)"
+    echo " [2] Enable Always-On (Systemd Service + Start)"
+    echo " [3] Disable Always-On (Stop & Remove Service)"
     echo " [4] Uninstall / Delete All Traces"
     echo " [5] Exit Menu"
     echo "=================================================="
@@ -276,27 +279,43 @@ while true; do
             python3 "$PYTHON_APP_PATH"
             ;;
         2)
-            CRON_CMD="@reboot python3 $PYTHON_APP_PATH &"
-            (crontab -l 2>/dev/null | grep -v -F "$PYTHON_APP_PATH"; echo "$CRON_CMD") | crontab -
-            
-            if ! fuser -s ${PORT}/tcp 2>/dev/null; then
-                python3 "$PYTHON_APP_PATH" &
-                echo "Success: Cron job added AND server started immediately in the background!"
-            else
-                echo "Success: Cron job added (Server was already running)."
-            fi
+            # Create systemd service file dynamically
+            sudo bash -c "cat << 'EOT' > $SERVICE_PATH
+[Unit]
+Description=CubeCooler Web Server
+After=network.target
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+ExecStart=/usr/bin/python3 $PYTHON_APP_PATH
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOT"
+            sudo systemctl daemon-reload
+            sudo systemctl enable cubecooler.service
+            sudo systemctl restart cubecooler.service
+            echo "Success: Systemd service enabled and started!"
             read -p "Press Enter to continue..."
             ;;
         3)
-            (crontab -l 2>/dev/null | grep -v -F "$PYTHON_APP_PATH") | crontab -
-            echo "Success: Always-on cron job disabled."
+            sudo systemctl stop cubecooler.service &>/dev/null
+            sudo systemctl disable cubecooler.service &>/dev/null
+            sudo rm -f "$SERVICE_PATH"
+            sudo systemctl daemon-reload
+            echo "Success: Always-on systemd service disabled and removed."
             read -p "Press Enter to continue..."
             ;;
         4)
+            sudo systemctl stop cubecooler.service &>/dev/null
+            sudo systemctl disable cubecooler.service &>/dev/null
+            sudo rm -f "$SERVICE_PATH"
+            sudo systemctl daemon-reload
             fuser -k ${PORT}/tcp &>/dev/null
-            (crontab -l 2>/dev/null | grep -v -F "$PYTHON_APP_PATH") | crontab -
             rm -f "$PYTHON_APP_PATH"
-            echo "Success: All traces of CubeCooler v1.4.1 have been removed."
+            echo "Success: All traces of CubeCooler v1.4.3 have been removed."
             exit 0
             ;;
         5)
