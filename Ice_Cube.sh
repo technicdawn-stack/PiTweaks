@@ -2,7 +2,7 @@
 
 # Description: CubeCooler v1.4.3 Management Console with Systemd Service Control
 # PERSISTENT: FALSE
-# Category: Scripts
+# Category: Webpages
 
 APP_DIR="/home/$(whoami)"
 PYTHON_APP_PATH="$APP_DIR/CubeCooler.py"
