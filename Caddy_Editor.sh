@@ -32,7 +32,7 @@ install_global_command() {
     echo "SUCCESS: Global command installed!"
     echo "Command Name: caddy-edit"
     echo "Location:     $GLOBAL_COMMAND_PATH"
-    echo "You can now run 'caddy-edit' from anywhere."
+    echo "You can now run 'sudo caddy-edit' from anywhere."
     echo "--------------------------------------------------"
 }
 
