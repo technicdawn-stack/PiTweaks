@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: Interactive Caddyfile Configuration Manager & Syntax Validator V1.2
+# Description: Interactive Caddyfile Configuration Manager & Syntax Validator V1.3
 # PERSISTENT: FALSE
 # Category: Administration
 
@@ -26,7 +26,7 @@ install_global_command() {
     else
         cp "$script_path" "$GLOBAL_COMMAND_PATH"
         chmod +x "$GLOBAL_COMMAND_PATH"
-    }
+    fi
     
     echo "--------------------------------------------------"
     echo "SUCCESS: Global command installed!"
