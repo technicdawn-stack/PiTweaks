@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: RAM Drop v1.0.1 All-in-One Self-Contained Deployment & Management Console
+# Description: RAM Drop v1.0.2 All-in-One Self-Contained Deployment & Management Console
 # PERSISTENT: TRUE
 # Category: Webpages
 
