@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: RAM Drop v1.3.0 All-in-One Self-Contained Deployment & Management Console
+# Description: RAM Drop v1.4.0 All-in-One Self-Contained Deployment & Management Console
 # PERSISTENT: TRUE
 # Category: Webpages
 
@@ -38,13 +38,10 @@ fi
 CONFIG_RAM="1024"
 CONFIG_PAGE_PASS=""
 CONFIG_SETTINGS_PASS=""
-BLUR_FILE="False"
-BLUR_EXT="False"
-MUTE_STYLE="asterisk"
+KEEP_OLD_SETTINGS=false
 
 if [ -f "$PYTHON_APP_PATH" ] && command -v whiptail &>/dev/null; then
     if (whiptail --title "Existing Installation Found" --yesno "An existing RAM Drop installation was detected. Would you like to keep your previous settings?" 10 60); then
-        # Try extracting existing config values from app.py via grep/sed or fallback
         EXTRACTED_RAM=$(grep -oP '"max_ram_mb": \K[0-9]+' "$PYTHON_APP_PATH" 2>/dev/null)
         [ -n "$EXTRACTED_RAM" ] && CONFIG_RAM="$EXTRACTED_RAM"
         
@@ -58,7 +55,6 @@ if [ -f "$PYTHON_APP_PATH" ] && command -v whiptail &>/dev/null; then
     fi
 fi
 
-# If no existing config kept, run the Whiptail Setup wizards
 if [ "$KEEP_OLD_SETTINGS" != "true" ] && command -v whiptail &>/dev/null; then
     CONFIG_RAM=$(whiptail --title "RAM Drop Initial Setup" --inputbox "Enter Max RAM Limit (MB):" 10 50 "1024" 3>&1 1>&2 2>&3)
     [ $? -ne 0 ] && CONFIG_RAM="1024"
@@ -72,7 +68,6 @@ fi
 
 mkdir -p "$TEMPLATE_DIR"
 
-# Write the self-contained Flask application and HTML template in a single execution block
 cat << EOF > "$PYTHON_APP_PATH"
 import os
 import time
@@ -88,12 +83,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB Max File Limit
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 
 file_metadata = {}
 LOG_RETENTION_HOURS = 24
 
-# Global Settings Configurable via UI & Installer
 app_settings = {
     "max_ram_mb": $CONFIG_RAM,
     "page_password": "$CONFIG_PAGE_PASS",
@@ -113,6 +107,15 @@ def generate_masked_name(original_filename, mode="asterisk", blur_ext=False):
     if blur_ext:
         ext = ".***"
     return f"{name}{ext}"
+
+def get_current_app_ram_usage():
+    total_bytes = 0
+    for meta in file_metadata.values():
+        if meta.get('status') in ['ready', 'expiring_soon']:
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], meta['stored_name'])
+            if os.path.exists(file_path):
+                total_bytes += os.path.getsize(file_path)
+    return total_bytes / (1024 * 1024)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -170,7 +173,6 @@ def handle_settings():
             app_settings['mute_style'] = data['mute_style']
         return jsonify({'success': True, 'settings': app_settings})
         
-    # GET request - redact passwords before sending to frontend UI
     safe_settings = app_settings.copy()
     return jsonify(safe_settings)
 
@@ -180,11 +182,13 @@ def get_stats():
         return jsonify({'error': 'Unauthorized'}), 401
     cpu_usage = psutil.cpu_percent(interval=None)
     ram = psutil.virtual_memory()
+    app_ram_mb = get_current_app_ram_usage()
     return jsonify({
         'cpu': cpu_usage,
         'ram_percent': ram.percent,
         'ram_used_mb': round(ram.used / (1024 * 1024), 2),
         'ram_total_mb': round(ram.total / (1024 * 1024), 2),
+        'app_ram_mb': round(app_ram_mb, 2),
         'max_ram_limit': app_settings['max_ram_mb']
     })
 
@@ -221,6 +225,7 @@ def list_files():
             'id': file_id,
             'display_name': meta['display_name'],
             'size': meta['size'],
+            'size_bytes': meta.get('size_bytes', 0),
             'timestamp': meta['timestamp'],
             'time': time.strftime('%H:%M:%S', time.localtime(meta['timestamp'])),
             'date': time.strftime('%Y-%m-%d', time.localtime(meta['timestamp'])),
@@ -230,6 +235,41 @@ def list_files():
     
     active_files.sort(key=lambda x: x['timestamp'], reverse=True)
     return jsonify(active_files)
+
+@app.route('/api/check-capacity', methods=['POST'])
+def check_capacity():
+    if app_settings["page_password"] and not session.get('page_authenticated'):
+        return jsonify({'error': 'Unauthorized'}), 401
+        
+    data = request.json
+    incoming_size = data.get('size_bytes', 0)
+    current_usage = get_current_app_ram_usage() * 1024 * 1024
+    max_limit = app_settings['max_ram_mb'] * 1024 * 1024
+    
+    if current_usage + incoming_size <= max_limit:
+        return jsonify({'needs_deletion': False})
+        
+    # Determine files to delete oldest first
+    active = [(fid, m) for fid, m in file_metadata.items() if m.get('status') in ['ready', 'expiring_soon']]
+    active.sort(key=lambda x: x[1]['timestamp']) # oldest first
+    
+    freed = 0
+    files_to_delete = []
+    target_needed = (current_usage + incoming_size) - max_limit
+    
+    for fid, m in active:
+        fpath = os.path.join(app.config['UPLOAD_FOLDER'], m['stored_name'])
+        if os.path.exists(fpath):
+            fsize = os.path.getsize(fpath)
+            files_to_delete.append({'id': fid, 'name': m['display_name']})
+            freed += fsize
+            if current_usage - freed + incoming_size <= max_limit:
+                break
+                
+    return jsonify({
+        'needs_deletion': True,
+        'files_to_delete': files_to_delete
+    })
 
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
@@ -244,7 +284,33 @@ def upload_file():
         return jsonify({'error': 'No selected file'}), 400
         
     ttl_hours = int(request.form.get('ttl', 4))
+    force_cleanup = request.form.get('force_cleanup', 'false') == 'true'
     
+    file_path_temp = os.path.join(app.config['UPLOAD_FOLDER'], f"temp_{file.filename}")
+    file.save(file_path_temp)
+    file_size = os.path.getsize(file_path_temp)
+    os.remove(file_path_temp)
+    
+    current_usage = get_current_app_ram_usage() * 1024 * 1024
+    max_limit = app_settings['max_ram_mb'] * 1024 * 1024
+    
+    if current_usage + file_size > max_limit and not force_cleanup:
+        return jsonify({'error': 'Capacity exceeded', 'requires_confirmation': True}), 400
+        
+    if force_cleanup:
+        active = [(fid, m) for fid, m in file_metadata.items() if m.get('status') in ['ready', 'expiring_soon']]
+        active.sort(key=lambda x: x[1]['timestamp'])
+        freed = 0
+        for fid, m in active:
+            fpath = os.path.join(app.config['UPLOAD_FOLDER'], m['stored_name'])
+            if os.path.exists(fpath):
+                fsize = os.path.getsize(fpath)
+                os.remove(fpath)
+                m['status'] = 'deleted'
+                freed += fsize
+                if current_usage - freed + file_size <= max_limit:
+                    break
+
     display_name = file.filename
     if app_settings['blur_filename']:
         display_name = generate_masked_name(display_name, app_settings['mute_style'], app_settings['blur_extension'])
@@ -253,13 +319,14 @@ def upload_file():
     stored_name = f"{file_id}_{file.filename}"
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_name)
     
+    file.stream.seek(0)
     file.save(file_path)
-    file_size = os.path.getsize(file_path)
     
     file_metadata[file_id] = {
         'stored_name': stored_name,
         'display_name': display_name,
         'size': f"{round(file_size / 1024, 1)} KB" if file_size < 1024*1024 else f"{round(file_size / (1024*1024), 1)} MB",
+        'size_bytes': file_size,
         'timestamp': time.time(),
         'ttl': ttl_hours * 3600,
         'status': 'ready'
@@ -357,10 +424,21 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         }
         p.subtitle { color: var(--text-muted); font-size: 0.95rem; margin: 0; }
 
-        .telemetry-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 24px; }
+        .telemetry-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 16px; }
         .telemetry-card { background-color: var(--surface-color); border: 1px solid var(--surface-border); padding: 16px 20px; border-radius: 12px; }
         .telemetry-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 6px; }
         .telemetry-value { font-size: 1.25rem; font-weight: 700; color: var(--text-main); }
+
+        /* App RAM Capacity Progress Bar Card */
+        .capacity-card { background-color: var(--surface-color); border: 1px solid var(--surface-border); padding: 16px 20px; border-radius: 12px; margin-bottom: 24px; }
+        .capacity-header { display: flex; justify-content: space-between; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 8px; }
+        .capacity-bar-track { width: 100%; background: var(--surface-border); border-radius: 6px; height: 10px; overflow: hidden; position: relative; cursor: pointer; }
+        .capacity-bar-fill { height: 100%; width: 0%; transition: width 0.3s ease, background-color 0.3s ease; }
+        .capacity-bar-track[data-tooltip]:hover::after {
+            content: attr(data-tooltip); position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+            background: #020617; color: #fff; padding: 4px 8px; font-size: 0.75rem; border-radius: 6px;
+            white-space: nowrap; border: 1px solid var(--surface-border); z-index: 50; pointer-events: none;
+        }
 
         .dropzone {
             background-color: var(--surface-color); border: 2px dashed var(--surface-border);
@@ -388,6 +466,8 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         .btn:hover { background-color: var(--accent-hover); }
         .btn-danger { background-color: rgba(244, 63, 94, 0.1); color: var(--danger); border: 1px solid rgba(244, 63, 94, 0.2); }
         .btn-danger:hover { background-color: var(--danger); color: white; }
+        .btn-clear { background: transparent; color: var(--text-muted); border: 1px solid var(--surface-border); }
+        .btn-clear:hover { color: var(--text-main); background: var(--surface-border); }
 
         .table-container { background-color: var(--surface-color); border: 1px solid var(--surface-border); border-radius: 12px; overflow: hidden; }
         table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem; }
@@ -396,6 +476,16 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         tr:last-child td { border-bottom: none; }
         a.file-link { color: var(--accent); text-decoration: none; font-weight: 500; }
         a.file-link:hover { text-decoration: underline; }
+
+        /* Highlight Row Animation */
+        tr.highlight-target {
+            animation: highlightPulse 2s ease-in-out infinite;
+        }
+        @keyframes highlightPulse {
+            0% { background-color: rgba(56, 189, 248, 0.2); }
+            50% { background-color: rgba(56, 189, 248, 0.05); }
+            100% { background-color: rgba(56, 189, 248, 0.2); }
+        }
 
         .status-badge { display: inline-flex; align-items: center; gap: 8px; font-size: 0.85rem; font-weight: 500; }
         .status-dot { width: 10px; height: 10px; border-radius: 50%; position: relative; cursor: pointer; }
@@ -412,7 +502,7 @@ cat << 'EOF' > "$TEMPLATE_PATH"
 
         .empty-state { text-align: center; padding: 40px; color: var(--text-muted); font-style: italic; }
 
-        /* Modal Overlay */
+        /* General Modal Overlay */
         .modal-overlay {
             display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(3, 7, 18, 0.8); z-index: 1000; justify-content: center; align-items: center;
@@ -423,6 +513,16 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         }
         .modal-header { font-size: 1.25rem; font-weight: 700; margin-bottom: 4px; }
         .modal-input { background: var(--bg-color); border: 1px solid var(--surface-border); color: var(--text-main); padding: 10px 14px; border-radius: 8px; font-size: 0.95rem; width: 100%; box-sizing: border-box; }
+
+        /* Custom Warning Alert Modal */
+        .alert-modal-box {
+            background-color: var(--surface-color); border: 1px solid var(--surface-border);
+            padding: 24px; border-radius: 16px; width: 100%; max-width: 400px; text-align: center;
+            display: flex; flex-direction: column; align-items: center; gap: 16px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5);
+        }
+        .warning-icon-svg { width: 48px; height: 48px; stroke: var(--warning); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+        .alert-text { font-size: 0.95rem; color: var(--text-main); line-height: 1.4; margin: 0; }
+        .alert-actions { display: flex; justify-content: space-between; width: 100%; margin-top: 8px; align-items: center; }
     </style>
 </head>
 <body>
@@ -468,8 +568,19 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                 <div class="telemetry-value" id="cpu-val">0.0%</div>
             </div>
             <div class="telemetry-card">
-                <div class="telemetry-label">RAM Buffer Allocation</div>
+                <div class="telemetry-label">System RAM Total</div>
                 <div class="telemetry-value" id="ram-val">0.0 MB</div>
+            </div>
+        </div>
+
+        <!-- App Capacity Progress Bar Card -->
+        <div class="capacity-card">
+            <div class="capacity-header">
+                <span>App RAM Usage Allocation</span>
+                <span id="capacity-text">0.0 / 0.0 MB</span>
+            </div>
+            <div class="capacity-bar-track" id="capacityTrack" data-tooltip="0.0 MB / 0.0 MB (0.0%)">
+                <div class="capacity-bar-fill" id="capacityFill"></div>
             </div>
         </div>
 
@@ -522,6 +633,18 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         </div>
     </div>
 
+    <!-- Capacity Warning Alert Modal -->
+    <div class="modal-overlay" id="capacityAlertModal">
+        <div class="alert-modal-box">
+            <svg class="warning-icon-svg" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            <p class="alert-text" id="alertModalText">A file will be deleted to make space.</p>
+            <div class="alert-actions">
+                <button class="btn btn-clear" id="alertCancelBtn">Cancel</button>
+                <button class="btn" id="alertTakeMeThereBtn" style="background-color: var(--accent);">Take me there</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Settings Modal -->
     <div class="modal-overlay" id="settingsModal">
         <div class="modal-content">
@@ -563,7 +686,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
     </div>
 
     <script>
-        // Scramble Title Animation on Boot
         function runScrambleAnimation() {
             const el = document.getElementById('scrambleTitle');
             const targetText = "RAM DROP";
@@ -585,7 +707,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         }
         runScrambleAnimation();
 
-        // Dropdown Toggle
         const refreshBtn = document.getElementById('refreshDropdownBtn');
         const refreshMenu = document.getElementById('refreshDropdown');
         refreshBtn.addEventListener('click', (e) => {
@@ -595,15 +716,12 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         window.addEventListener('click', () => refreshMenu.classList.remove('show'));
         refreshMenu.addEventListener('click', (e) => e.stopPropagation());
 
-        // Settings Modal Management with Authentication Gate
         const settingsModal = document.getElementById('settingsModal');
-        
         async function openSettings() {
             let authRes = await fetch('/api/verify-settings-auth');
             let authData = await authRes.json();
             
             if (!authData.authenticated) {
-                // Prompt inline for settings password or redirect to settings login
                 let password = prompt("Enter Settings Tab Password:");
                 if (!password) return;
                 
@@ -631,17 +749,14 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         }
 
         document.getElementById('settingsBtn').addEventListener('click', openSettings);
-
-        document.getElementById('closeSettingsBtn').addEventListener('click', () => {
-            settingsModal.style.display = 'none';
-        });
+        document.getElementById('closeSettingsBtn').addEventListener('click', () => settingsModal.style.display = 'none');
 
         document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
             let payload = {
                 max_ram_mb: document.getElementById('settingMaxRam').value,
                 page_password: document.getElementById('settingPagePass').value,
                 settings_password: document.getElementById('settingSettingsPass').value,
-                blur_filename: document.getElementById('settingBlurFilename').checked,
+                blur_filename: document.getElementById('settingBlurFilename'].checked,
                 blur_extension: document.getElementById('settingBlurExtension').checked,
                 mute_style: document.getElementById('settingMuteStyle').value
             };
@@ -651,37 +766,69 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                 body: JSON.stringify(payload)
             });
             settingsModal.style.display = 'none';
+            fetchStats();
         });
 
-        // Telemetry
         let currentCpu = 0, targetCpu = 0;
-        let currentRam = 0, targetRam = 0;
+        let currentRamTotal = 0, targetRamTotal = 0;
+        let currentAppRam = 0, targetAppRam = 0;
+        let maxRamLimit = 1024;
 
         async function fetchStats() {
             try {
                 let res = await fetch('/api/stats');
                 let data = await res.json();
                 targetCpu = data.cpu;
-                targetRam = data.ram_used_mb;
+                targetRamTotal = data.ram_used_mb;
+                targetAppRam = data.app_ram_mb;
+                maxRamLimit = data.max_ram_limit;
+
+                updateCapacityBar();
             } catch (e) {}
         }
         setInterval(fetchStats, 5000);
         fetchStats();
 
+        function updateCapacityBar() {
+            let percent = Math.min(100, (currentAppRam / maxRamLimit) * 100);
+            const fill = document.getElementById('capacityFill');
+            fill.style.width = percent + '%';
+
+            // Color shift from green/blue to red
+            if (percent < 60) {
+                fill.style.backgroundColor = 'var(--success)';
+            } else if (percent < 85) {
+                fill.style.backgroundColor = 'var(--warning)';
+            } else {
+                fill.style.backgroundColor = 'var(--danger)';
+            }
+
+            document.getElementById('capacity-text').innerText = `${currentAppRam.toFixed(1)} / ${maxRamLimit} MB`;
+            document.getElementById('capacityTrack').setAttribute('data-tooltip', `${currentAppRam.toFixed(1)} MB / ${maxRamLimit} MB (${percent.toFixed(1)}%)`);
+        }
+
         function animateStats() {
             currentCpu += (targetCpu - currentCpu) * 0.1;
-            currentRam += (targetRam - currentRam) * 0.1;
+            currentRamTotal += (targetRamTotal - currentRamTotal) * 0.1;
+            currentAppRam += (targetAppRam - currentAppRam) * 0.1;
+
             document.getElementById('cpu-val').innerText = currentCpu.toFixed(1) + '%';
-            document.getElementById('ram-val').innerText = currentRam.toFixed(1) + ' MB';
+            document.getElementById('ram-val').innerText = currentRamTotal.toFixed(1) + ' MB';
+            updateCapacityBar();
+
             requestAnimationFrame(animateStats);
         }
         requestAnimationFrame(animateStats);
 
-        // Dropzone & Upload
         const dropzone = document.getElementById('dropzone');
         const fileInput = document.getElementById('fileInput');
         const progressBar = document.getElementById('progressBar');
         const progressContainer = document.getElementById('progressContainer');
+        const capacityAlertModal = document.getElementById('capacityAlertModal');
+        
+        let pendingFile = null;
+        let pendingTtl = 4;
+        let targetFileIdsToHighlight = [];
 
         dropzone.addEventListener('click', () => fileInput.click());
         dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
@@ -689,14 +836,68 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         dropzone.addEventListener('drop', (e) => {
             e.preventDefault();
             dropzone.classList.remove('dragover');
-            if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+            if (e.dataTransfer.files.length) handleFileUploadPrecheck(e.dataTransfer.files[0]);
         });
-        fileInput.addEventListener('change', () => { if (fileInput.files.length) uploadFile(fileInput.files[0]); });
+        fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFileUploadPrecheck(fileInput.files[0]); });
 
-        function uploadFile(file) {
+        async function handleFileUploadPrecheck(file) {
+            pendingFile = file;
+            pendingTtl = document.getElementById('ttlSelect').value;
+
+            // Check capacity first
+            let checkRes = await fetch('/api/check-capacity', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({size_bytes: file.size})
+            });
+            let checkData = await checkRes.json();
+
+            if (checkData.needs_deletion) {
+                targetFileIdsToHighlight = checkData.files_to_delete.map(f => f.id);
+                let names = checkData.files_to_delete.map(f => f.name).join(', ');
+                document.getElementById('alertModalText').innerHTML = `Uploading this file exceeds max RAM capacity.<br><br>The oldest file(s) (<strong>${names}</strong>) will be deleted to make space.<br><br>Press 'I understand, continue' to proceed.`;
+                document.getElementById('alertTakeMeThereBtn').innerText = "I understand, continue";
+                capacityAlertModal.style.display = 'flex';
+            } else {
+                executeUpload(false);
+            }
+        }
+
+        document.getElementById('alertCancelBtn').addEventListener('click', () => {
+            capacityAlertModal.style.display = 'none';
+            pendingFile = null;
+        });
+
+        document.getElementById('alertTakeMeThereBtn').addEventListener('click', () => {
+            capacityAlertModal.style.display = 'none';
+            
+            // Scroll to table and highlight target files
+            const tableContainer = document.querySelector('.table-container');
+            tableContainer.scrollIntoView({ behavior: 'smooth' });
+
+            targetFileIdsToHighlight.forEach(id => {
+                const row = document.querySelector(`tr[data-file-id="${id}"]`);
+                if (row) {
+                    row.classList.add('highlight-target');
+                    setTimeout(() => row.classList.remove('highlight-target'), 6000);
+                }
+            });
+
+            // Execute upload with force cleanup
+            setTimeout(() => {
+                executeUpload(true);
+            }, 1000);
+        });
+
+        function executeUpload(forceCleanup) {
+            if (!pendingFile) return;
+
             let formData = new FormData();
-            formData.append('file', file);
-            formData.append('ttl', document.getElementById('ttlSelect').value);
+            formData.append('file', pendingFile);
+            formData.append('ttl', pendingTtl);
+            if (forceCleanup) {
+                formData.append('force_cleanup', 'true');
+            }
 
             let xhr = new XMLHttpRequest();
             xhr.open('POST', '/api/upload', true);
@@ -712,12 +913,13 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             xhr.onload = () => {
                 progressContainer.style.display = 'none';
                 progressBar.style.width = '0%';
+                pendingFile = null;
                 loadFiles();
+                fetchStats();
             };
             xhr.send(formData);
         }
 
-        // File List Management
         async function loadFiles() {
             try {
                 let res = await fetch('/api/files');
@@ -751,6 +953,7 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                     }
 
                     let tr = document.createElement('tr');
+                    tr.setAttribute('data-file-id', f.id);
                     tr.innerHTML = `
                         <td><input type="checkbox" class="file-checkbox" value="${f.id}"></td>
                         <td><a href="/api/download/${f.id}" class="file-link">${f.display_name}</a></td>
@@ -769,7 +972,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             } catch (e) {}
         }
 
-        // Auto-refresh configuration loop
         let refreshTimer = null;
         const autoRefreshToggle = document.getElementById('autoRefreshToggle');
         const refreshIntervalSelect = document.getElementById('refreshInterval');
@@ -790,7 +992,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             refreshMenu.classList.remove('show');
         });
 
-        // Selection & Deletion Handler
         const selectAllCheckbox = document.getElementById('selectAll');
         selectAllCheckbox.addEventListener('change', () => {
             document.querySelectorAll('.file-checkbox').forEach(cb => cb.checked = selectAllCheckbox.checked);
@@ -807,16 +1008,15 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                 body: JSON.stringify({ids: selectedIds})
             });
             loadFiles();
+            fetchStats();
         });
 
-        // Initial Load
         loadFiles();
     </script>
 </body>
 </html>
 EOF
 
-# Create a shared login template for both page and settings authentication
 cat << 'EOF' > "$TEMPLATE_DIR/login.html"
 <!DOCTYPE html>
 <html lang="en">
@@ -882,7 +1082,6 @@ cat << 'EOF' > "$TEMPLATE_DIR/login.html"
 </html>
 EOF
 
-# Setup Systemd Service for Auto-Start & Persistence
 echo "[*] Configuring systemd service..."
 sudo bash -c "cat > $SERVICE_PATH" << EOL
 [Unit]
@@ -903,5 +1102,5 @@ sudo systemctl daemon-reload
 sudo systemctl enable ramdrop.service
 sudo systemctl restart ramdrop.service
 
-echo "[+] RAM Drop v1.3.0 successfully deployed!"
+echo "[+] RAM Drop v1.4.0 successfully deployed!"
 echo "[+] Access your console at: http://<server-ip>:$PORT"
