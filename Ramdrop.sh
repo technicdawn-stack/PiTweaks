@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: RAM Drop v1.2.1 All-in-One Self-Contained Deployment & Management Console
+# Description: RAM Drop v1.3.0 All-in-One Self-Contained Deployment & Management Console
 # PERSISTENT: TRUE
 # Category: Webpages
 
@@ -34,16 +34,40 @@ if ! python3 -c "import flask, psutil" &>/dev/null; then
     python3 -m pip install flask psutil
 fi
 
-# Interactive Whiptail Setup for Initial Settings & Password
+# Check for existing installation and configuration settings
 CONFIG_RAM="1024"
-CONFIG_PASS=""
+CONFIG_PAGE_PASS=""
+CONFIG_SETTINGS_PASS=""
+BLUR_FILE="False"
+BLUR_EXT="False"
+MUTE_STYLE="asterisk"
 
-if command -v whiptail &>/dev/null; then
+if [ -f "$PYTHON_APP_PATH" ] && command -v whiptail &>/dev/null; then
+    if (whiptail --title "Existing Installation Found" --yesno "An existing RAM Drop installation was detected. Would you like to keep your previous settings?" 10 60); then
+        # Try extracting existing config values from app.py via grep/sed or fallback
+        EXTRACTED_RAM=$(grep -oP '"max_ram_mb": \K[0-9]+' "$PYTHON_APP_PATH" 2>/dev/null)
+        [ -n "$EXTRACTED_RAM" ] && CONFIG_RAM="$EXTRACTED_RAM"
+        
+        EXTRACTED_PAGE_PASS=$(grep -oP '"page_password": "\K[^"]*' "$PYTHON_APP_PATH" 2>/dev/null)
+        [ -n "$EXTRACTED_PAGE_PASS" ] && CONFIG_PAGE_PASS="$EXTRACTED_PAGE_PASS"
+
+        EXTRACTED_SETT_PASS=$(grep -oP '"settings_password": "\K[^"]*' "$PYTHON_APP_PATH" 2>/dev/null)
+        [ -n "$EXTRACTED_SETT_PASS" ] && CONFIG_SETTINGS_PASS="$EXTRACTED_SETT_PASS"
+        
+        KEEP_OLD_SETTINGS=true
+    fi
+fi
+
+# If no existing config kept, run the Whiptail Setup wizards
+if [ "$KEEP_OLD_SETTINGS" != "true" ] && command -v whiptail &>/dev/null; then
     CONFIG_RAM=$(whiptail --title "RAM Drop Initial Setup" --inputbox "Enter Max RAM Limit (MB):" 10 50 "1024" 3>&1 1>&2 2>&3)
     [ $? -ne 0 ] && CONFIG_RAM="1024"
 
-    CONFIG_PASS=$(whiptail --title "RAM Drop Initial Setup" --passwordbox "Enter Webpage / Settings Password (leave blank for none):" 10 50 3>&1 1>&2 2>&3)
-    [ $? -ne 0 ] && CONFIG_PASS=""
+    CONFIG_PAGE_PASS=$(whiptail --title "RAM Drop Initial Setup" --passwordbox "Enter Main Page / Upload Password (leave blank for none):" 10 50 3>&1 1>&2 2>&3)
+    [ $? -ne 0 ] && CONFIG_PAGE_PASS=""
+
+    CONFIG_SETTINGS_PASS=$(whiptail --title "RAM Drop Initial Setup" --passwordbox "Enter Settings Tab Password (leave blank for none):" 10 50 3>&1 1>&2 2>&3)
+    [ $? -ne 0 ] && CONFIG_SETTINGS_PASS=""
 fi
 
 mkdir -p "$TEMPLATE_DIR"
@@ -72,7 +96,8 @@ LOG_RETENTION_HOURS = 24
 # Global Settings Configurable via UI & Installer
 app_settings = {
     "max_ram_mb": $CONFIG_RAM,
-    "web_password": "$CONFIG_PASS",
+    "page_password": "$CONFIG_PAGE_PASS",
+    "settings_password": "$CONFIG_SETTINGS_PASS",
     "blur_filename": False,
     "blur_extension": False,
     "mute_style": "asterisk"
@@ -91,18 +116,35 @@ def generate_masked_name(original_filename, mode="asterisk", blur_ext=False):
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    if not app_settings["web_password"]:
+    if not app_settings["page_password"]:
         return redirect(url_for('index'))
     if request.method == 'POST':
-        if request.form.get('password') == app_settings["web_password"]:
-            session['authenticated'] = True
+        if request.form.get('password') == app_settings["page_password"]:
+            session['page_authenticated'] = True
             return redirect(url_for('index'))
-        return render_template('login.html', error="Incorrect password")
-    return render_template('login.html', error=None)
+        return render_template('login.html', error="Incorrect network password", title="RAM Drop - Network Login")
+    return render_template('login.html', error=None, title="RAM Drop - Network Login")
+
+@app.route('/settings-login', methods=['GET', 'POST'])
+def settings_login():
+    if not app_settings["settings_password"]:
+        return redirect(url_for('index'))
+    if request.method == 'POST':
+        if request.form.get('password') == app_settings["settings_password"]:
+            session['settings_authenticated'] = True
+            return jsonify({'success': True})
+        return jsonify({'success': False, 'error': 'Incorrect password'}), 401
+    return render_template('login.html', error=None, title="RAM Drop - Settings Login")
+
+@app.route('/api/verify-settings-auth', methods=['GET'])
+def verify_settings_auth():
+    if not app_settings["settings_password"] or session.get('settings_authenticated'):
+        return jsonify({'authenticated': True})
+    return jsonify({'authenticated': False})
 
 @app.route('/')
 def index():
-    if app_settings["web_password"] and not session.get('authenticated'):
+    if app_settings["page_password"] and not session.get('page_authenticated'):
         return redirect(url_for('login'))
     return render_template('index.html')
 
@@ -110,11 +152,16 @@ def index():
 def handle_settings():
     global app_settings
     if request.method == 'POST':
+        if app_settings["settings_password"] and not session.get('settings_authenticated'):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+            
         data = request.json
         if 'max_ram_mb' in data:
             app_settings['max_ram_mb'] = int(data['max_ram_mb'])
-        if 'web_password' in data:
-            app_settings['web_password'] = data['web_password']
+        if 'page_password' in data:
+            app_settings['page_password'] = data['page_password']
+        if 'settings_password' in data:
+            app_settings['settings_password'] = data['settings_password']
         if 'blur_filename' in data:
             app_settings['blur_filename'] = bool(data['blur_filename'])
         if 'blur_extension' in data:
@@ -122,10 +169,15 @@ def handle_settings():
         if 'mute_style' in data:
             app_settings['mute_style'] = data['mute_style']
         return jsonify({'success': True, 'settings': app_settings})
-    return jsonify(app_settings)
+        
+    # GET request - redact passwords before sending to frontend UI
+    safe_settings = app_settings.copy()
+    return jsonify(safe_settings)
 
 @app.route('/api/stats', methods=['GET'])
 def get_stats():
+    if app_settings["page_password"] and not session.get('page_authenticated'):
+        return jsonify({'error': 'Unauthorized'}), 401
     cpu_usage = psutil.cpu_percent(interval=None)
     ram = psutil.virtual_memory()
     return jsonify({
@@ -138,6 +190,9 @@ def get_stats():
 
 @app.route('/api/files', methods=['GET'])
 def list_files():
+    if app_settings["page_password"] and not session.get('page_authenticated'):
+        return jsonify({'error': 'Unauthorized'}), 401
+        
     current_time = time.time()
     active_files = []
     cutoff_time = current_time - (LOG_RETENTION_HOURS * 3600)
@@ -178,6 +233,9 @@ def list_files():
 
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
+    if app_settings["page_password"] and not session.get('page_authenticated'):
+        return jsonify({'error': 'Unauthorized'}), 401
+        
     if 'file' not in request.files:
         return jsonify({'error': 'No file part'}), 400
     
@@ -211,6 +269,8 @@ def upload_file():
 
 @app.route('/api/download/<file_id>', methods=['GET'])
 def download_file(file_id):
+    if app_settings["page_password"] and not session.get('page_authenticated'):
+        return redirect(url_for('login'))
     if file_id not in file_metadata:
         return "File not found", 404
     meta = file_metadata[file_id]
@@ -218,6 +278,9 @@ def download_file(file_id):
 
 @app.route('/api/delete', methods=['POST'])
 def delete_files():
+    if app_settings["page_password"] and not session.get('page_authenticated'):
+        return jsonify({'error': 'Unauthorized'}), 401
+        
     data = request.json
     file_ids = data.get('ids', [])
     for file_id in file_ids:
@@ -469,8 +532,12 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                     <input type="number" id="settingMaxRam" class="modal-input" value="1024">
                 </div>
                 <div>
-                    <label style="color: var(--text-muted); display: block; margin-bottom: 4px;">Webpage Password (Leave blank for none)</label>
-                    <input type="password" id="settingPassword" class="modal-input" placeholder="Optional password">
+                    <label style="color: var(--text-muted); display: block; margin-bottom: 4px;">Main Page Password (Leave blank for none)</label>
+                    <input type="password" id="settingPagePass" class="modal-input" placeholder="Network password">
+                </div>
+                <div>
+                    <label style="color: var(--text-muted); display: block; margin-bottom: 4px;">Settings Password (Leave blank for none)</label>
+                    <input type="password" id="settingSettingsPass" class="modal-input" placeholder="Settings password">
                 </div>
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <input type="checkbox" id="settingBlurFilename">
@@ -528,18 +595,42 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         window.addEventListener('click', () => refreshMenu.classList.remove('show'));
         refreshMenu.addEventListener('click', (e) => e.stopPropagation());
 
-        // Settings Modal Management
+        // Settings Modal Management with Authentication Gate
         const settingsModal = document.getElementById('settingsModal');
-        document.getElementById('settingsBtn').addEventListener('click', async () => {
+        
+        async function openSettings() {
+            let authRes = await fetch('/api/verify-settings-auth');
+            let authData = await authRes.json();
+            
+            if (!authData.authenticated) {
+                // Prompt inline for settings password or redirect to settings login
+                let password = prompt("Enter Settings Tab Password:");
+                if (!password) return;
+                
+                let loginRes = await fetch('/settings-login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                    body: 'password=' + encodeURIComponent(password)
+                });
+                
+                if (!loginRes.ok) {
+                    alert("Incorrect settings password.");
+                    return;
+                }
+            }
+
             let res = await fetch('/api/settings');
             let data = await res.json();
             document.getElementById('settingMaxRam').value = data.max_ram_mb;
-            document.getElementById('settingPassword').value = data.web_password;
+            document.getElementById('settingPagePass').value = data.page_password || '';
+            document.getElementById('settingSettingsPass').value = data.settings_password || '';
             document.getElementById('settingBlurFilename').checked = data.blur_filename;
             document.getElementById('settingBlurExtension').checked = data.blur_extension;
             document.getElementById('settingMuteStyle').value = data.mute_style;
             settingsModal.style.display = 'flex';
-        });
+        }
+
+        document.getElementById('settingsBtn').addEventListener('click', openSettings);
 
         document.getElementById('closeSettingsBtn').addEventListener('click', () => {
             settingsModal.style.display = 'none';
@@ -548,7 +639,8 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
             let payload = {
                 max_ram_mb: document.getElementById('settingMaxRam').value,
-                web_password: document.getElementById('settingPassword').value,
+                page_password: document.getElementById('settingPagePass').value,
+                settings_password: document.getElementById('settingSettingsPass').value,
                 blur_filename: document.getElementById('settingBlurFilename').checked,
                 blur_extension: document.getElementById('settingBlurExtension').checked,
                 mute_style: document.getElementById('settingMuteStyle').value
@@ -724,14 +816,14 @@ cat << 'EOF' > "$TEMPLATE_PATH"
 </html>
 EOF
 
-# Create a login template for password protection support
+# Create a shared login template for both page and settings authentication
 cat << 'EOF' > "$TEMPLATE_DIR/login.html"
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RAM DROP — Login</title>
+    <title>{{ title }}</title>
     <style>
         :root {
             --bg-color: #030712;
@@ -779,7 +871,7 @@ cat << 'EOF' > "$TEMPLATE_DIR/login.html"
 <body>
     <form class="login-box" method="POST">
         <h2>RAM DROP</h2>
-        <p style="color: var(--text-muted); font-size: 0.85rem; text-align: center; margin: 0;">Enter console password to proceed</p>
+        <p style="color: var(--text-muted); font-size: 0.85rem; text-align: center; margin: 0;">Authentication Required</p>
         {% if error %}
         <p class="error">{{ error }}</p>
         {% endif %}
@@ -811,5 +903,5 @@ sudo systemctl daemon-reload
 sudo systemctl enable ramdrop.service
 sudo systemctl restart ramdrop.service
 
-echo "[+] RAM Drop v1.2.1 successfully deployed!"
+echo "[+] RAM Drop v1.3.0 successfully deployed!"
 echo "[+] Access your console at: http://<server-ip>:$PORT"
