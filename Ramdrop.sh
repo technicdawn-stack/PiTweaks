@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: RAM Drop v1.3.3 All-in-One Self-Contained Deployment & Management Console
+# Description: RAM Drop v1.3.4 All-in-One Self-Contained Deployment & Management Console
 # PERSISTENT: TRUE
 # Category: Webpages
 
@@ -19,7 +19,7 @@ TEMPLATE_PATH="$TEMPLATE_DIR/index.html"
 SERVICE_PATH="/etc/systemd/system/ramdrop.service"
 PORT=8083
 
-# Automatic Dependency Detection & Installation
+# Automatic Dependency Detection & Installation[cite: 2]
 echo "[*] Checking Python3 and pip environment..."
 if ! command -v python3 &>/dev/null; then
     echo "[!] python3 could not be found. Installing python3..."
@@ -34,13 +34,14 @@ if ! python3 -c "import flask, psutil" &>/dev/null; then
     python3 -m pip install flask psutil
 fi
 
-# Check for existing installation and configuration settings
+# Check for existing installation and configuration settings[cite: 2]
 CONFIG_RAM="1024"
 CONFIG_PAGE_PASS=""
 CONFIG_SETTINGS_PASS=""
 BLUR_FILE="False"
 BLUR_EXT="False"
 MUTE_STYLE="asterisk"
+ENABLE_SCRAMBLE="True"
 
 if [ -f "$PYTHON_APP_PATH" ] && command -v whiptail &>/dev/null; then
     if (whiptail --title "Existing Installation Found" --yesno "An existing RAM Drop installation was detected. Would you like to keep your previous settings?" 10 60); then
@@ -57,7 +58,7 @@ if [ -f "$PYTHON_APP_PATH" ] && command -v whiptail &>/dev/null; then
     fi
 fi
 
-# If no existing config kept, run the Whiptail Setup wizards
+# If no existing config kept, run the Whiptail Setup wizards[cite: 2]
 if [ "$KEEP_OLD_SETTINGS" != "true" ] && command -v whiptail &>/dev/null; then
     CONFIG_RAM=$(whiptail --title "RAM Drop Initial Setup" --inputbox "Enter Max RAM Limit (MB):" 10 50 "1024" 3>&1 1>&2 2>&3)
     [ $? -ne 0 ] && CONFIG_RAM="1024"
@@ -87,7 +88,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB Max File Limit
+app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200MB Max File Limit to support files like 131MB
 
 file_metadata = {}
 LOG_RETENTION_HOURS = 24
@@ -97,6 +98,7 @@ app_settings = {
     "max_ram_mb": $CONFIG_RAM,
     "page_password": "$CONFIG_PAGE_PASS",
     "settings_password": "$CONFIG_SETTINGS_PASS",
+    "enable_scramble": True,
     "blur_filename": False,
     "blur_extension": False,
     "mute_style": "asterisk"
@@ -112,6 +114,10 @@ def generate_masked_name(original_filename, mode="asterisk", blur_ext=False):
     if blur_ext:
         ext = ".***"
     return f"{name}{ext}"
+
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    return jsonify({'success': False, 'error': 'Max file size exceeded (200MB limit).'}), 413
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -161,6 +167,8 @@ def handle_settings():
             app_settings['page_password'] = data['page_password']
         if 'settings_password' in data:
             app_settings['settings_password'] = data['settings_password']
+        if 'enable_scramble' in data:
+            app_settings['enable_scramble'] = bool(data['enable_scramble'])
         if 'blur_filename' in data:
             app_settings['blur_filename'] = bool(data['blur_filename'])
         if 'blur_extension' in data:
@@ -179,7 +187,6 @@ def get_stats():
     cpu_usage = psutil.cpu_percent(interval=None)
     ram = psutil.virtual_memory()
     
-    # Calculate total current file cache usage in MB
     current_files_mb = sum([os.path.getsize(os.path.join(app.config['UPLOAD_FOLDER'], m['stored_name'])) for m in file_metadata.values() if m.get('status') != 'deleted' and os.path.exists(os.path.join(app.config['UPLOAD_FOLDER'], m['stored_name']))]) / (1024 * 1024)
 
     return jsonify({
@@ -236,38 +243,41 @@ def list_files():
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
     if app_settings["page_password"] and not session.get('page_authenticated'):
-        return jsonify({'error': 'Unauthorized'}), 401
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
         
     if 'file' not in request.files:
-        return jsonify({'error': 'No file part'}), 400
+        return jsonify({'success': False, 'error': 'No file part'}), 400
     
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
+    files = request.files.getlist('file')
+    if not files or files[0].filename == '':
+        return jsonify({'success': False, 'error': 'No selected file'}), 400
         
     ttl_hours = int(request.form.get('ttl', 4))
-    
-    display_name = file.filename
-    if app_settings['blur_filename']:
-        display_name = generate_masked_name(display_name, app_settings['mute_style'], app_settings['blur_extension'])
+    uploaded_ids = []
+
+    for file in files:
+        display_name = file.filename
+        if app_settings.get('enable_scramble', True) and app_settings['blur_filename']:
+            display_name = generate_masked_name(display_name, app_settings['mute_style'], app_settings['blur_extension'])
+            
+        file_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
+        stored_name = f"{file_id}_{file.filename}"
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_name)
         
-    file_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
-    stored_name = f"{file_id}_{file.filename}"
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], stored_name)
+        file.save(file_path)
+        file_size = os.path.getsize(file_path)
+        
+        file_metadata[file_id] = {
+            'stored_name': stored_name,
+            'display_name': display_name,
+            'size': f"{round(file_size / 1024, 1)} KB" if file_size < 1024*1024 else f"{round(file_size / (1024*1024), 1)} MB",
+            'timestamp': time.time(),
+            'ttl': ttl_hours * 3600,
+            'status': 'ready'
+        }
+        uploaded_ids.append(file_id)
     
-    file.save(file_path)
-    file_size = os.path.getsize(file_path)
-    
-    file_metadata[file_id] = {
-        'stored_name': stored_name,
-        'display_name': display_name,
-        'size': f"{round(file_size / 1024, 1)} KB" if file_size < 1024*1024 else f"{round(file_size / (1024*1024), 1)} MB",
-        'timestamp': time.time(),
-        'ttl': ttl_hours * 3600,
-        'status': 'ready'
-    }
-    
-    return jsonify({'success': True, 'id': file_id})
+    return jsonify({'success': True, 'ids': uploaded_ids})
 
 @app.route('/api/download/<file_id>', methods=['GET'])
 def download_file(file_id):
@@ -281,7 +291,7 @@ def download_file(file_id):
 @app.route('/api/delete', methods=['POST'])
 def delete_files():
     if app_settings["page_password"] and not session.get('page_authenticated'):
-        return jsonify({'error': 'Unauthorized'}), 401
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
         
     data = request.json
     file_ids = data.get('ids', [])
@@ -416,20 +426,10 @@ cat << 'EOF' > "$TEMPLATE_PATH"
 
         .empty-state { text-align: center; padding: 40px; color: var(--text-muted); font-style: italic; }
 
-        @keyframes ringModal {
-            0% { transform: scale(1); }
-            20% { transform: scale(1.03) rotate(1deg); }
-            40% { transform: scale(0.98) rotate(-1deg); }
-            60% { transform: scale(1.02) rotate(1deg); }
-            80% { transform: scale(0.99) rotate(-1deg); }
-            100% { transform: scale(1); }
-        }
-        .ringing { animation: ringModal 0.5s ease-in-out infinite; }
-        .economic-outline {
-            outline: 2px solid var(--accent);
-            outline-offset: 4px;
-            border-radius: 6px;
-            transition: outline 0.3s ease;
+        .highlight-row {
+            background-color: rgba(56, 189, 248, 0.15) !important;
+            box-shadow: inset 0 0 0 2px var(--accent);
+            transition: background-color 0.5s ease, box-shadow 0.5s ease;
         }
 
         .modal-overlay {
@@ -505,8 +505,8 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         <div class="dropzone" id="dropzone">
             <div class="dropzone-icon">📥</div>
             <div class="dropzone-text">Drag & Drop files here, or click to browse</div>
-            <div class="dropzone-sub">Files are handled entirely in volatile system RAM</div>
-            <input type="file" id="fileInput" style="display: none;">
+            <div class="dropzone-sub">Files are handled entirely in volatile system RAM (Multi-upload supported)</div>
+            <input type="file" id="fileInput" style="display: none;" multiple>
             <div class="progress-container" id="progressContainer">
                 <div class="progress-bar" id="progressBar"></div>
             </div>
@@ -552,13 +552,13 @@ cat << 'EOF' > "$TEMPLATE_PATH"
     </div>
 
     <div id="ramWarningPopup" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.7); z-index: 1000; justify-content: center; align-items: center;">
-        <div id="ringingModalBox" class="modal-content" style="text-align: center; max-width: 400px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);">
+        <div class="modal-content" style="text-align: center; max-width: 400px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);">
             <div style="width: 48px; height: 48px; margin: 0 auto; border: 2px solid var(--danger); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--danger); font-weight: bold; font-size: 1.2rem;">!</div>
             <div class="modal-header" style="margin-top: 10px;">RAM Capacity Exceeded</div>
-            <p style="color: var(--text-muted); font-size: 0.9rem; margin: 0 0 15px 0;">An incoming upload will exceed your maximum RAM limit. Oldest files must be purged to maintain system stability.</p>
+            <p style="color: var(--text-muted); font-size: 0.9rem; margin: 0 0 15px 0;">An incoming upload will exceed your maximum RAM limit. Would you like to select and delete the oldest file(s) to free up space?</p>
             <div style="display: flex; justify-content: space-between; gap: 10px;">
-                <button id="popupCancelBtn" style="flex: 1; background: transparent; border: 1px solid var(--danger); color: var(--danger); padding: 10px; border-radius: 8px; font-weight: 600; cursor: pointer;">Cancel</button>
-                <button id="popupNavigateBtn" style="flex: 1; background: var(--accent); border: none; color: #030712; padding: 10px; border-radius: 8px; font-weight: 600; cursor: pointer;">Take me there</button>
+                <button id="popupCancelBtn" style="flex: 1; background: transparent; border: 1px solid var(--surface-border); color: var(--text-muted); padding: 10px; border-radius: 8px; font-weight: 600; cursor: pointer;">Cancel</button>
+                <button id="popupNavigateBtn" style="flex: 1; background: var(--accent); border: none; color: #030712; padding: 10px; border-radius: 8px; font-weight: 600; cursor: pointer;">Select & Delete</button>
             </div>
         </div>
     </div>
@@ -578,6 +578,10 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                 <div>
                     <label style="color: var(--text-muted); display: block; margin-bottom: 4px;">Settings Password (Leave blank for none)</label>
                     <input type="password" id="settingSettingsPass" class="modal-input" placeholder="Settings password">
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="checkbox" id="settingEnableScramble">
+                    <label for="settingEnableScramble">Enable Filename Privacy Scramble Feature</label>
                 </div>
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <input type="checkbox" id="settingBlurFilename">
@@ -662,6 +666,7 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             document.getElementById('settingMaxRam').value = data.max_ram_mb;
             document.getElementById('settingPagePass').value = data.page_password || '';
             document.getElementById('settingSettingsPass').value = data.settings_password || '';
+            document.getElementById('settingEnableScramble').checked = data.enable_scramble !== false;
             document.getElementById('settingBlurFilename').checked = data.blur_filename;
             document.getElementById('settingBlurExtension').checked = data.blur_extension;
             document.getElementById('settingMuteStyle').value = data.mute_style;
@@ -679,6 +684,7 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                 max_ram_mb: document.getElementById('settingMaxRam').value,
                 page_password: document.getElementById('settingPagePass').value,
                 settings_password: document.getElementById('settingSettingsPass').value,
+                enable_scramble: document.getElementById('settingEnableScramble').checked,
                 blur_filename: document.getElementById('settingBlurFilename').checked,
                 blur_extension: document.getElementById('settingBlurExtension').checked,
                 mute_style: document.getElementById('settingMuteStyle').value
@@ -715,27 +721,30 @@ cat << 'EOF' > "$TEMPLATE_PATH"
 
         function triggerRamWarningPopup() {
             const popup = document.getElementById('ramWarningPopup');
-            const modalBox = document.getElementById('ringingModalBox');
             popup.style.display = 'flex';
-            modalBox.classList.add('ringing');
         }
 
         document.getElementById('popupCancelBtn').addEventListener('click', () => {
             document.getElementById('ramWarningPopup').style.display = 'none';
-            document.getElementById('ringingModalBox').classList.remove('ringing');
         });
 
         document.getElementById('popupNavigateBtn').addEventListener('click', () => {
             document.getElementById('ramWarningPopup').style.display = 'none';
-            document.getElementById('ringingModalBox').classList.remove('ringing');
             
             const tableContainer = document.getElementById('fileTableBody');
             if (tableContainer && tableContainer.rows.length > 0) {
                 const oldestRow = tableContainer.rows[tableContainer.rows.length - 1];
                 oldestRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                oldestRow.classList.add('economic-outline');
+                oldestRow.classList.add('highlight-row');
+                
+                // Select the checkbox inside the oldest row to prompt deletion
+                const checkbox = oldestRow.querySelector('.file-checkbox');
+                if (checkbox) {
+                    checkbox.checked = true;
+                }
+
                 setTimeout(() => {
-                    oldestRow.classList.remove('economic-outline');
+                    oldestRow.classList.remove('highlight-row');
                 }, 3000);
             }
         });
@@ -780,13 +789,15 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         dropzone.addEventListener('drop', (e) => {
             e.preventDefault();
             dropzone.classList.remove('dragover');
-            if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+            if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
         });
-        fileInput.addEventListener('change', () => { if (fileInput.files.length) uploadFile(fileInput.files[0]); });
+        fileInput.addEventListener('change', () => { if (fileInput.files.length) uploadFiles(fileInput.files); });
 
-        function uploadFile(file) {
+        function uploadFiles(files) {
             let formData = new FormData();
-            formData.append('file', file);
+            for (let i = 0; i < files.length; i++) {
+                formData.append('file', files[i]);
+            }
             formData.append('ttl', document.getElementById('ttlSelect').value);
 
             let xhr = new XMLHttpRequest();
@@ -803,8 +814,28 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             xhr.onload = () => {
                 progressContainer.style.display = 'none';
                 progressBar.style.width = '0%';
+                if (xhr.status === 413) {
+                    try {
+                        let resJson = JSON.parse(xhr.responseText);
+                        alert(resJson.error || "Max file size exceeded (200mb).");
+                    } catch (err) {
+                        alert("Max file size exceeded (200mb limit).");
+                    }
+                } else if (xhr.status !== 200) {
+                    try {
+                        let resJson = JSON.parse(xhr.responseText);
+                        alert(resJson.error || "Upload failed.");
+                    } catch (err) {
+                        alert("Upload failed.");
+                    }
+                }
                 loadFiles();
                 fetchStats();
+            };
+            xhr.onerror = () => {
+                progressContainer.style.display = 'none';
+                progressBar.style.width = '0%';
+                alert("Upload failed or max file size exceeded (200mb limit).");
             };
             xhr.send(formData);
         }
@@ -995,5 +1026,5 @@ sudo systemctl daemon-reload
 sudo systemctl enable ramdrop.service
 sudo systemctl restart ramdrop.service
 
-echo "[+] RAM Drop v1.3.2 successfully deployed!"
+echo "[+] RAM Drop v1.3.4 successfully deployed!"
 echo "[+] Access your console at: http://<server-ip>:$PORT"
