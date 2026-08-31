@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Description: RAM Drop v1.0.1 All-in-One Self-Contained Deployment & Management Console
-# PERSISTENT: FALSE
+# PERSISTENT: TRUE
 # Category: Webpages
 
 APP_DIR="/home/$(whoami)/ram-drop"
