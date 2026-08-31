@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: RAM Drop v1.3.2 All-in-One Self-Contained Deployment & Management Console
+# Description: RAM Drop v1.3.3 All-in-One Self-Contained Deployment & Management Console
 # PERSISTENT: TRUE
 # Category: Webpages
 
@@ -9,7 +9,7 @@ if [ -n "$SUDO_USER" ]; then
     CURRENT_USER="$SUDO_USER"
 else
     CURRENT_USER="$(whoami)"
-f
+fi
 
 USER_HOME="$(eval echo ~$CURRENT_USER)"
 APP_DIR="$USER_HOME/ram-drop"
@@ -364,7 +364,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         .telemetry-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 6px; }
         .telemetry-value { font-size: 1.25rem; font-weight: 700; color: var(--text-main); }
 
-        /* Dynamic RAM Capacity Bar Container */
         .ram-metrics-container { background-color: var(--surface-color); border: 1px solid var(--surface-border); padding: 16px 20px; border-radius: 12px; margin-bottom: 24px; }
 
         .dropzone {
@@ -417,7 +416,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
 
         .empty-state { text-align: center; padding: 40px; color: var(--text-muted); font-style: italic; }
 
-        /* Ringing Modal Animation & Styling */
         @keyframes ringModal {
             0% { transform: scale(1); }
             20% { transform: scale(1.03) rotate(1deg); }
@@ -434,7 +432,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             transition: outline 0.3s ease;
         }
 
-        /* Modal Overlay */
         .modal-overlay {
             display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(3, 7, 18, 0.8); z-index: 1000; justify-content: center; align-items: center;
@@ -495,7 +492,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             </div>
         </div>
 
-        <!-- Dynamic RAM Capacity Tracking Bar -->
         <div class="ram-metrics-container">
             <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 0.9rem;">
                 <span style="color: var(--text-muted);">RAM Buffer Capacity</span>
@@ -504,7 +500,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             <div id="ramCapacityBarWrapper" style="width: 100%; height: 10px; background: var(--bg-color); border-radius: 5px; overflow: hidden; position: relative; cursor: pointer;">
                 <div id="ramCapacityBar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #38bdf8, #22c55e); transition: width 0.3s ease, background 0.3s ease;"></div>
             </div>
-            <div id="ramTooltip" style="display: none; position: absolute; background: #000; color: #fff; padding: 4px 8px; font-size: 0.75rem; border-radius: 4px; pointer-events: none; z-index: 100;"></div>
         </div>
 
         <div class="dropzone" id="dropzone">
@@ -556,7 +551,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         </div>
     </div>
 
-    <!-- Auto-Deletion Ringing Popup Modal -->
     <div id="ramWarningPopup" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.7); z-index: 1000; justify-content: center; align-items: center;">
         <div id="ringingModalBox" class="modal-content" style="text-align: center; max-width: 400px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);">
             <div style="width: 48px; height: 48px; margin: 0 auto; border: 2px solid var(--danger); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--danger); font-weight: bold; font-size: 1.2rem;">!</div>
@@ -569,7 +563,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         </div>
     </div>
 
-    <!-- Settings Modal -->
     <div class="modal-overlay" id="settingsModal">
         <div class="modal-content">
             <div class="modal-header">Console Settings</div>
@@ -612,7 +605,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
     <script>
         let MAX_RAM_MB = 1024;
 
-        // Scramble Title Animation on Boot
         function runScrambleAnimation() {
             const el = document.getElementById('scrambleTitle');
             const targetText = "RAM DROP";
@@ -634,7 +626,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         }
         runScrambleAnimation();
 
-        // Dropdown Toggle
         const refreshBtn = document.getElementById('refreshDropdownBtn');
         const refreshMenu = document.getElementById('refreshDropdown');
         refreshBtn.addEventListener('click', (e) => {
@@ -644,7 +635,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         window.addEventListener('click', () => refreshMenu.classList.remove('show'));
         refreshMenu.addEventListener('click', (e) => e.stopPropagation());
 
-        // Settings Modal Management with Authentication Gate
         const settingsModal = document.getElementById('settingsModal');
         
         async function openSettings() {
@@ -706,12 +696,9 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             fetchStats();
         });
 
-        // RAM Capacity Bar Updates & Ringing Modal Logic
         function updateRamCapacityBar(currentUsageMB) {
             const bar = document.getElementById('ramCapacityBar');
             const textStats = document.getElementById('ramTextStats');
-            const wrapper = document.getElementById('ramCapacityBarWrapper');
-            const tooltip = document.getElementById('ramTooltip');
 
             let percentage = Math.min(100, (currentUsageMB / MAX_RAM_MB) * 100);
             bar.style.width = percentage + '%';
@@ -724,7 +711,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             } else {
                 bar.style.background = 'linear-gradient(90deg, #f97316, #f43f5e)';
             }
-
         }
 
         function triggerRamWarningPopup() {
@@ -754,7 +740,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             }
         });
 
-        // Telemetry
         let currentCpu = 0, targetCpu = 0;
         let currentRamPct = 0, targetRamPct = 0;
 
@@ -784,7 +769,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         }
         requestAnimationFrame(animateStats);
 
-        // Dropzone & Upload
         const dropzone = document.getElementById('dropzone');
         const fileInput = document.getElementById('fileInput');
         const progressBar = document.getElementById('progressBar');
@@ -825,7 +809,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             xhr.send(formData);
         }
 
-        // File List Management
         async function loadFiles() {
             try {
                 let res = await fetch('/api/files');
@@ -877,7 +860,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             } catch (e) {}
         }
 
-        // Auto-refresh configuration loop
         let refreshTimer = null;
         const autoRefreshToggle = document.getElementById('autoRefreshToggle');
         const refreshIntervalSelect = document.getElementById('refreshInterval');
@@ -902,7 +884,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             refreshMenu.classList.remove('show');
         });
 
-        // Selection & Deletion Handler
         const selectAllCheckbox = document.getElementById('selectAll');
         selectAllCheckbox.addEventListener('change', () => {
             document.querySelectorAll('.file-checkbox').forEach(cb => cb.checked = selectAllCheckbox.checked);
@@ -922,7 +903,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             fetchStats();
         });
 
-        // Initial Load
         loadFiles();
         fetchStats();
     </script>
@@ -930,7 +910,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
 </html>
 EOF
 
-# Create a shared login template for both page and settings authentication
 cat << 'EOF' > "$TEMPLATE_DIR/login.html"
 <!DOCTYPE html>
 <html lang="en">
@@ -996,7 +975,6 @@ cat << 'EOF' > "$TEMPLATE_DIR/login.html"
 </html>
 EOF
 
-# Setup Systemd Service for Auto-Start & Persistence
 echo "[*] Configuring systemd service..."
 sudo bash -c "cat > $SERVICE_PATH" << EOL
 [Unit]
@@ -1017,5 +995,5 @@ sudo systemctl daemon-reload
 sudo systemctl enable ramdrop.service
 sudo systemctl restart ramdrop.service
 
-echo "[+] RAM Drop v1.3.1 successfully deployed!"
+echo "[+] RAM Drop v1.3.2 successfully deployed!"
 echo "[+] Access your console at: http://<server-ip>:$PORT"
