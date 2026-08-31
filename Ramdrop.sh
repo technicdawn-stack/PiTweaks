@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: RAM Drop v1.0.2 All-in-One Self-Contained Deployment & Management Console
+# Description: RAM Drop v1.1.0 All-in-One Self-Contained Deployment & Management Console
 # PERSISTENT: TRUE
 # Category: Webpages
 
@@ -11,6 +11,19 @@ TEMPLATE_PATH="$TEMPLATE_DIR/index.html"
 SERVICE_PATH="/etc/systemd/system/ramdrop.service"
 CURRENT_USER=$(whoami)
 PORT=8083
+
+# Automatic Dependency Detection & Installation
+echo "[*] Checking Python3 and pip environment..."
+if ! command -v python3 &>/dev/null; then
+    echo "[!] python3 could not be found. Installing python3..."
+    sudo apt-get update && sudo apt-get install -y python3 python3-pip
+fi
+
+if ! python3 -c "import flask, psutil" &>/dev/null; then
+    echo "[!] Missing required Python modules (Flask or psutil). Installing dependencies..."
+    python3 -m pip install --upgrade pip
+    python3 -m pip install flask psutil
+fi
 
 mkdir -p "$TEMPLATE_DIR"
 
@@ -28,9 +41,10 @@ app = Flask(__name__)
 UPLOAD_FOLDER = '/home/pi/filedrop/uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB Max File Limit
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB Max File Limit
 
 file_metadata = {}
+LOG_RETENTION_HOURS = 24  # Configurable Sliding-Window Log History (24h default, up to 72h max)
 
 def generate_masked_name(original_filename, mode="asterisk"):
     ext = os.path.splitext(original_filename)[1]
@@ -60,16 +74,26 @@ def list_files():
     current_time = time.time()
     active_files = []
     
+    # Sliding window cutoff for pruning old logs (Configurable up to 3 days / 72 hours)
+    cutoff_time = current_time - (LOG_RETENTION_HOURS * 3600)
+    
     for file_id, meta in list(file_metadata.items()):
+        # Prune logs older than configured retention window
+        if meta['timestamp'] < cutoff_time:
+            del file_metadata[file_id]
+            continue
+
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], meta['stored_name'])
+        time_elapsed = current_time - meta['timestamp']
+        time_remaining = meta['ttl'] - time_elapsed
         
-        if meta['status'] == 'deleted':
+        if meta.get('status') == 'deleted':
             state = 'deleted'
         elif not os.path.exists(file_path):
             state = 'reclaimed'
-        elif (meta['timestamp'] + meta['ttl']) < current_time:
+        elif time_remaining <= 0:
             state = 'expired'
-        elif (meta['timestamp'] + meta['ttl'] - current_time) < 3600:
+        elif time_remaining < 3600:
             state = 'expiring_soon'
         else:
             state = 'ready'
@@ -80,7 +104,8 @@ def list_files():
             'size': meta['size'],
             'time': time.strftime('%H:%M:%S', time.localtime(meta['timestamp'])),
             'date': time.strftime('%Y-%m-%d', time.localtime(meta['timestamp'])),
-            'status': state
+            'status': state,
+            'remaining_seconds': max(0, int(time_remaining)) if state == 'expiring_soon' else 0
         })
         
     return jsonify(active_files)
@@ -141,7 +166,7 @@ def delete_files():
     return jsonify({'success': True})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080)
+    app.run(host='0.0.0.0', port=8083)
 EOF
 
 cat << 'EOF' > "$TEMPLATE_PATH"
@@ -292,7 +317,7 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         </div>
 
         <div class="toolbar">
-            <div style="font-size: 0.9rem; font-weight: 600; color: var(--text-muted);">Recent Active Cache (Last 24 Hours)</div>
+            <div style="font-size: 0.9rem; font-weight: 600; color: var(--text-muted);">Recent Active Cache (Sliding Window: Last 24 Hours)</div>
             <button class="btn btn-danger" id="deleteSelected">Delete Selected Files</button>
         </div>
 
@@ -397,7 +422,9 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                     
                     if (f.status === 'expiring_soon') {
                         statusClass = 'dot-expiring';
-                        statusTooltip = 'Leaving Soon: Less than 1 hour remaining until automatic purge';
+                        let mins = Math.floor(f.remaining_seconds / 60);
+                        let secs = f.remaining_seconds % 60;
+                        statusTooltip = `Expiring Soon: ${mins}m ${secs}s remaining until automatic purge`;
                     } else if (f.status === 'expired') {
                         statusClass = 'dot-expired';
                         statusTooltip = 'Discarded: Exceeded assigned retention window, pending cleanup';
@@ -455,7 +482,7 @@ PI_IP=$(hostname -I | awk '{print $1}')
 while true; do
     clear
     echo "=========================================================="
-    echo "       RAM DROP v1.0.0 MANAGEMENT CONSOLE                 "
+    echo "        RAM DROP v1.1.0 MANAGEMENT CONSOLE                "
     echo "=========================================================="
     echo " Web Dashboard URL : http://$PI_IP:$PORT"
     echo " App Directory     : $APP_DIR"
@@ -524,7 +551,7 @@ EOT
             fi
             fuser -k ${PORT}/tcp &>/dev/null
             rm -rf "$APP_DIR"
-            echo "Success: All traces of RAM Drop v1.0.0 have been completely purged."
+            echo "Success: All traces of RAM Drop v1.1.0 have been completely purged."
             exit 0
             ;;
         5)
