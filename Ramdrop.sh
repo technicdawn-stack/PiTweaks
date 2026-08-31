@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: RAM Drop v1.2.0 All-in-One Self-Contained Deployment & Management Console
+# Description: RAM Drop v1.2.1 All-in-One Self-Contained Deployment & Management Console
 # PERSISTENT: TRUE
 # Category: Webpages
 
@@ -23,7 +23,9 @@ PORT=8083
 echo "[*] Checking Python3 and pip environment..."
 if ! command -v python3 &>/dev/null; then
     echo "[!] python3 could not be found. Installing python3..."
-    sudo apt-get update && sudo apt-get install -y python3 python3-pip
+    sudo apt-get update && sudo apt-get install -y python3 python3-pip whiptail
+elif ! command -v whiptail &>/dev/null; then
+    sudo apt-get update && sudo apt-get install -y whiptail
 fi
 
 if ! python3 -c "import flask, psutil" &>/dev/null; then
@@ -32,10 +34,22 @@ if ! python3 -c "import flask, psutil" &>/dev/null; then
     python3 -m pip install flask psutil
 fi
 
+# Interactive Whiptail Setup for Initial Settings & Password
+CONFIG_RAM="1024"
+CONFIG_PASS=""
+
+if command -v whiptail &>/dev/null; then
+    CONFIG_RAM=$(whiptail --title "RAM Drop Initial Setup" --inputbox "Enter Max RAM Limit (MB):" 10 50 "1024" 3>&1 1>&2 2>&3)
+    [ $? -ne 0 ] && CONFIG_RAM="1024"
+
+    CONFIG_PASS=$(whiptail --title "RAM Drop Initial Setup" --passwordbox "Enter Webpage / Settings Password (leave blank for none):" 10 50 3>&1 1>&2 2>&3)
+    [ $? -ne 0 ] && CONFIG_PASS=""
+fi
+
 mkdir -p "$TEMPLATE_DIR"
 
 # Write the self-contained Flask application and HTML template in a single execution block
-cat << 'EOF' > "$PYTHON_APP_PATH"
+cat << EOF > "$PYTHON_APP_PATH"
 import os
 import time
 import random
@@ -55,10 +69,10 @@ app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB Max File Limit
 file_metadata = {}
 LOG_RETENTION_HOURS = 24
 
-# Global Settings Configurable via UI
+# Global Settings Configurable via UI & Installer
 app_settings = {
-    "max_ram_mb": 1024,
-    "web_password": "",
+    "max_ram_mb": $CONFIG_RAM,
+    "web_password": "$CONFIG_PASS",
     "blur_filename": False,
     "blur_extension": False,
     "mute_style": "asterisk"
@@ -159,7 +173,6 @@ def list_files():
             'remaining_seconds': max(0, int(time_remaining)) if state == 'expiring_soon' else 0
         })
     
-    # Sort files from newest upload to oldest (descending timestamp order)
     active_files.sort(key=lambda x: x['timestamp'], reverse=True)
     return jsonify(active_files)
 
@@ -256,13 +269,13 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         .wrapper { width: 100%; max-width: 960px; position: relative; }
         header { text-align: center; margin-bottom: 30px; position: relative; }
         
-        .top-left-controls { position: absolute; top: 0; left: 0; display: flex; gap: 8px; }
-        .top-right-controls { position: absolute; top: 0; right: 0; display: flex; gap: 8px; }
+        .top-left-controls { position: absolute; top: 0; left: 0; display: flex; gap: 8px; z-index: 10; }
+        .top-right-controls { position: absolute; top: 0; right: 0; display: flex; gap: 8px; z-index: 10; }
 
         .icon-btn {
             background-color: var(--surface-color); border: 1px solid var(--surface-border);
             color: var(--text-main); padding: 8px 12px; border-radius: 8px; cursor: pointer;
-            font-size: 1rem; display: flex; align-items: center; gap: 6px; transition: background 0.2s;
+            font-size: 0.9rem; display: flex; align-items: center; gap: 6px; transition: background 0.2s;
         }
         .icon-btn:hover { background-color: var(--surface-border); }
 
@@ -355,7 +368,8 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             <div class="top-left-controls">
                 <div style="position: relative;">
                     <button class="icon-btn" id="refreshDropdownBtn" title="Refresh Controls">
-                        🔄 <span style="font-size: 0.8rem;">▼</span>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.65-5.65"/></svg>
+                        <span style="font-size: 0.75rem;">▼</span>
                     </button>
                     <div class="dropdown-menu" id="refreshDropdown">
                         <div class="dropdown-item">
@@ -679,31 +693,38 @@ cat << 'EOF' > "$TEMPLATE_PATH"
 
         autoRefreshToggle.addEventListener('change', updateRefreshInterval);
         refreshIntervalSelect.addEventListener('change', updateRefreshInterval);
-        manualRefreshBtn.addEventListener('click', () => loadFiles());
+        manualRefreshBtn.addEventListener('click', () => {
+            loadFiles();
+            refreshMenu.classList.remove('show');
+        });
 
-        // Default initial load
-        loadFiles();
-
-        document.getElementById('selectAll').addEventListener('change', (e) => {
-            document.querySelectorAll('.file-checkbox').forEach(cb => cb.checked = e.target.checked);
+        // Selection & Deletion Handler
+        const selectAllCheckbox = document.getElementById('selectAll');
+        selectAllCheckbox.addEventListener('change', () => {
+            document.querySelectorAll('.file-checkbox').forEach(cb => cb.checked = selectAllCheckbox.checked);
         });
 
         document.getElementById('deleteSelected').addEventListener('click', async () => {
-            let ids = Array.from(document.querySelectorAll('.file-checkbox:checked')).map(cb => cb.value);
-            if (!ids.length) return;
+            let selectedIds = [];
+            document.querySelectorAll('.file-checkbox:checked').forEach(cb => selectedIds.push(cb.value));
+            if (!selectedIds.length) return;
+
             await fetch('/api/delete', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ids})
+                body: JSON.stringify({ids: selectedIds})
             });
             loadFiles();
         });
+
+        // Initial Load
+        loadFiles();
     </script>
 </body>
 </html>
 EOF
 
-# Write companion login template if password protection is enabled later
+# Create a login template for password protection support
 cat << 'EOF' > "$TEMPLATE_DIR/login.html"
 <!DOCTYPE html>
 <html lang="en">
@@ -712,110 +733,83 @@ cat << 'EOF' > "$TEMPLATE_DIR/login.html"
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RAM DROP — Login</title>
     <style>
-        body { font-family: system-ui, sans-serif; background-color: #030712; color: #f8fafc; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        .card { background-color: #0f172a; border: 1px solid #1e293b; padding: 40px; border-radius: 16px; width: 100%; max-width: 360px; text-align: center; }
-        h1 { font-size: 1.5rem; margin-bottom: 20px; color: #38bdf8; }
-        input { background: #030712; border: 1px solid #1e293b; color: #f8fafc; padding: 10px 14px; border-radius: 8px; width: 100%; margin-bottom: 16px; box-sizing: border-box; }
-        button { background-color: #38bdf8; color: #030712; border: none; padding: 10px 18px; border-radius: 8px; font-weight: 600; width: 100%; cursor: pointer; }
-        .error { color: #f43f5e; font-size: 0.85rem; margin-bottom: 12px; }
+        :root {
+            --bg-color: #030712;
+            --surface-color: #0f172a;
+            --surface-border: #1e293b;
+            --accent: #38bdf8;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --danger: #f43f5e;
+        }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            height: 100vh;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .login-box {
+            background-color: var(--surface-color);
+            border: 1px solid var(--surface-border);
+            padding: 30px;
+            border-radius: 16px;
+            width: 100%;
+            max-width: 350px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+        }
+        h2 { margin: 0 0 4px 0; font-size: 1.5rem; text-align: center; }
+        .input-field {
+            background: var(--bg-color); border: 1px solid var(--surface-border);
+            color: var(--text-main); padding: 10px 14px; border-radius: 8px; font-size: 0.95rem; width: 100%; box-sizing: border-box;
+        }
+        .btn {
+            background-color: var(--accent); color: #030712; border: none; padding: 10px;
+            border-radius: 8px; font-weight: 600; cursor: pointer; width: 100%;
+        }
+        .error { color: var(--danger); font-size: 0.85rem; text-align: center; margin: 0; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h1>RAM DROP</h1>
-        {% if error %}<div class="error">{{ error }}</div>{% endif %}
-        <form method="POST">
-            <input type="password" name="password" placeholder="Enter Web Password" required autofocus>
-            <button type="submit">Access Console</button>
-        </form>
-    </div>
+    <form class="login-box" method="POST">
+        <h2>RAM DROP</h2>
+        <p style="color: var(--text-muted); font-size: 0.85rem; text-align: center; margin: 0;">Enter console password to proceed</p>
+        {% if error %}
+        <p class="error">{{ error }}</p>
+        {% endif %}
+        <input type="password" name="password" class="input-field" placeholder="Password" required autofocus>
+        <button type="submit" class="btn">Authenticate</button>
+    </form>
 </body>
 </html>
 EOF
 
-PI_IP=$(hostname -I | awk '{print $1}')
-[ -z "$PI_IP" ] && PI_IP="127.0.0.1"
-
-while true; do
-    clear
-    echo "=========================================================="
-    echo "        RAM DROP v1.2.0 MANAGEMENT CONSOLE                "
-    echo "=========================================================="
-    echo " Web Dashboard URL : http://$PI_IP:$PORT"
-    echo " App Directory     : $APP_DIR"
-    echo "----------------------------------------------------------"
-    echo " [1] Start Server (Interactive / Foreground Mode)"
-    echo " [2] Enable Always-On (Systemd Service + Background Start)"
-    echo " [3] Disable Always-On (Stop & Remove Systemd Service)"
-    echo " [4] Uninstall / Purge All Traces & Files"
-    echo " [5] Exit Menu"
-    echo "=========================================================="
-    read -p "Select an option [1-5]: " choice
-
-    case $choice in
-        1)
-            echo "Starting RAM Drop server on port $PORT. Press Ctrl+C to exit."
-            python3 "$PYTHON_APP_PATH"
-            ;;
-        2)
-            if [ "$EUID" -ne 0 ]; then
-                echo ""
-                echo "[-] Sudo permission required to configure systemd service."
-                read -p "Press Enter to return to menu..."
-                continue
-            fi
-            cat << EOT > "$SERVICE_PATH"
+# Setup Systemd Service for Auto-Start & Persistence
+echo "[*] Configuring systemd service..."
+sudo bash -c "cat > $SERVICE_PATH" << EOL
 [Unit]
-Description=RAM Drop Volatile File Sharing Web Server
+Description=RAM Drop Secure Volatile File Drop Service
 After=network.target
 
 [Service]
-Type=simple
 User=$CURRENT_USER
+WorkingDirectory=$APP_DIR
 ExecStart=/usr/bin/python3 $PYTHON_APP_PATH
-Restart=on-failure
+Restart=always
 
 [Install]
 WantedBy=multi-user.target
-EOT
-            systemctl daemon-reload
-            systemctl enable ramdrop.service
-            systemctl restart ramdrop.service
-            echo "Success: Systemd service enabled and started successfully!"
-            read -p "Press Enter to continue..."
-            ;;
-        3)
-            if [ "$EUID" -ne 0 ]; then
-                echo "[-] Sudo required to remove systemd service."
-                read -p "Press Enter to continue..."
-                continue
-            fi
-            systemctl stop ramdrop.service &>/dev/null
-            systemctl disable ramdrop.service &>/dev/null
-            rm -f "$SERVICE_PATH"
-            systemctl daemon-reload
-            echo "Success: Systemd service disabled and removed."
-            read -p "Press Enter to continue..."
-            ;;
-        4)
-            if [ "$EUID" -eq 0 ]; then
-                systemctl stop ramdrop.service &>/dev/null
-                systemctl disable ramdrop.service &>/dev/null
-                rm -f "$SERVICE_PATH"
-                systemctl daemon-reload
-            fi
-            fuser -k ${PORT}/tcp &>/dev/null
-            rm -rf "$APP_DIR"
-            echo "Success: All traces of RAM Drop v1.2.0 have been completely purged."
-            exit 0
-            ;;
-        5)
-            echo "Exiting menu."
-            exit 0
-            ;;
-        *)
-            echo "Invalid option. Please choose a number between 1 and 5."
-            sleep 2
-            ;;
-    esac
-done
+EOL
+
+sudo systemctl daemon-reload
+sudo systemctl enable ramdrop.service
+sudo systemctl restart ramdrop.service
+
+echo "[+] RAM Drop v1.2.1 successfully deployed!"
+echo "[+] Access your console at: http://<server-ip>:$PORT"
