@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: RAM Drop v1.0.0 All-in-One Self-Contained Deployment & Management Console
+# Description: RAM Drop v1.0.1 All-in-One Self-Contained Deployment & Management Console
 # PERSISTENT: FALSE
 # Category: Webpages
 
@@ -10,7 +10,7 @@ TEMPLATE_DIR="$APP_DIR/templates"
 TEMPLATE_PATH="$TEMPLATE_DIR/index.html"
 SERVICE_PATH="/etc/systemd/system/ramdrop.service"
 CURRENT_USER=$(whoami)
-PORT=8080
+PORT=8083
 
 mkdir -p "$TEMPLATE_DIR"
 
