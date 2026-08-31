@@ -1,15 +1,22 @@
 #!/bin/bash
 
-# Description: RAM Drop v1.1.0 All-in-One Self-Contained Deployment & Management Console
+# Description: RAM Drop v1.2.0 All-in-One Self-Contained Deployment & Management Console
 # PERSISTENT: TRUE
 # Category: Webpages
 
-APP_DIR="/home/$(whoami)/ram-drop"
+# Dynamically detect the real user even if run via sudo
+if [ -n "$SUDO_USER" ]; then
+    CURRENT_USER="$SUDO_USER"
+else
+    CURRENT_USER="$(whoami)"
+fi
+
+USER_HOME="$(eval echo ~$CURRENT_USER)"
+APP_DIR="$USER_HOME/ram-drop"
 PYTHON_APP_PATH="$APP_DIR/app.py"
 TEMPLATE_DIR="$APP_DIR/templates"
 TEMPLATE_PATH="$TEMPLATE_DIR/index.html"
 SERVICE_PATH="/etc/systemd/system/ramdrop.service"
-CURRENT_USER=$(whoami)
 PORT=8083
 
 # Automatic Dependency Detection & Installation
@@ -34,29 +41,74 @@ import time
 import random
 import string
 import psutil
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_from_directory, session, redirect, url_for
 
 app = Flask(__name__)
+app.secret_key = ''.join(random.choices(string.ascii_letters + string.digits, k=32))
 
-UPLOAD_FOLDER = '/home/pi/filedrop/uploads'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB Max File Limit
 
 file_metadata = {}
-LOG_RETENTION_HOURS = 24  # Configurable Sliding-Window Log History (24h default, up to 72h max)
+LOG_RETENTION_HOURS = 24
 
-def generate_masked_name(original_filename, mode="asterisk"):
-    ext = os.path.splitext(original_filename)[1]
+# Global Settings Configurable via UI
+app_settings = {
+    "max_ram_mb": 1024,
+    "web_password": "",
+    "blur_filename": False,
+    "blur_extension": False,
+    "mute_style": "asterisk"
+}
+
+def generate_masked_name(original_filename, mode="asterisk", blur_ext=False):
+    root, ext = os.path.splitext(original_filename)
     if mode == "random":
         name = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
     else:
         name = "**********"
+    
+    if blur_ext:
+        ext = ".***"
     return f"{name}{ext}"
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if not app_settings["web_password"]:
+        return redirect(url_for('index'))
+    if request.method == 'POST':
+        if request.form.get('password') == app_settings["web_password"]:
+            session['authenticated'] = True
+            return redirect(url_for('index'))
+        return render_template('login.html', error="Incorrect password")
+    return render_template('login.html', error=None)
 
 @app.route('/')
 def index():
+    if app_settings["web_password"] and not session.get('authenticated'):
+        return redirect(url_for('login'))
     return render_template('index.html')
+
+@app.route('/api/settings', methods=['GET', 'POST'])
+def handle_settings():
+    global app_settings
+    if request.method == 'POST':
+        data = request.json
+        if 'max_ram_mb' in data:
+            app_settings['max_ram_mb'] = int(data['max_ram_mb'])
+        if 'web_password' in data:
+            app_settings['web_password'] = data['web_password']
+        if 'blur_filename' in data:
+            app_settings['blur_filename'] = bool(data['blur_filename'])
+        if 'blur_extension' in data:
+            app_settings['blur_extension'] = bool(data['blur_extension'])
+        if 'mute_style' in data:
+            app_settings['mute_style'] = data['mute_style']
+        return jsonify({'success': True, 'settings': app_settings})
+    return jsonify(app_settings)
 
 @app.route('/api/stats', methods=['GET'])
 def get_stats():
@@ -66,19 +118,17 @@ def get_stats():
         'cpu': cpu_usage,
         'ram_percent': ram.percent,
         'ram_used_mb': round(ram.used / (1024 * 1024), 2),
-        'ram_total_mb': round(ram.total / (1024 * 1024), 2)
+        'ram_total_mb': round(ram.total / (1024 * 1024), 2),
+        'max_ram_limit': app_settings['max_ram_mb']
     })
 
 @app.route('/api/files', methods=['GET'])
 def list_files():
     current_time = time.time()
     active_files = []
-    
-    # Sliding window cutoff for pruning old logs (Configurable up to 3 days / 72 hours)
     cutoff_time = current_time - (LOG_RETENTION_HOURS * 3600)
     
     for file_id, meta in list(file_metadata.items()):
-        # Prune logs older than configured retention window
         if meta['timestamp'] < cutoff_time:
             del file_metadata[file_id]
             continue
@@ -102,12 +152,15 @@ def list_files():
             'id': file_id,
             'display_name': meta['display_name'],
             'size': meta['size'],
+            'timestamp': meta['timestamp'],
             'time': time.strftime('%H:%M:%S', time.localtime(meta['timestamp'])),
             'date': time.strftime('%Y-%m-%d', time.localtime(meta['timestamp'])),
             'status': state,
             'remaining_seconds': max(0, int(time_remaining)) if state == 'expiring_soon' else 0
         })
-        
+    
+    # Sort files from newest upload to oldest (descending timestamp order)
+    active_files.sort(key=lambda x: x['timestamp'], reverse=True)
     return jsonify(active_files)
 
 @app.route('/api/upload', methods=['POST'])
@@ -119,13 +172,11 @@ def upload_file():
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
         
-    mute_name = request.form.get('mute', 'false') == 'true'
-    mute_style = request.form.get('mute_style', 'asterisk')
     ttl_hours = int(request.form.get('ttl', 4))
     
     display_name = file.filename
-    if mute_name:
-        display_name = generate_masked_name(display_name, mute_style)
+    if app_settings['blur_filename']:
+        display_name = generate_masked_name(display_name, app_settings['mute_style'], app_settings['blur_extension'])
         
     file_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
     stored_name = f"{file_id}_{file.filename}"
@@ -202,8 +253,27 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             justify-content: center;
         }
 
-        .wrapper { width: 100%; max-width: 960px; }
-        header { text-align: center; margin-bottom: 30px; }
+        .wrapper { width: 100%; max-width: 960px; position: relative; }
+        header { text-align: center; margin-bottom: 30px; position: relative; }
+        
+        .top-left-controls { position: absolute; top: 0; left: 0; display: flex; gap: 8px; }
+        .top-right-controls { position: absolute; top: 0; right: 0; display: flex; gap: 8px; }
+
+        .icon-btn {
+            background-color: var(--surface-color); border: 1px solid var(--surface-border);
+            color: var(--text-main); padding: 8px 12px; border-radius: 8px; cursor: pointer;
+            font-size: 1rem; display: flex; align-items: center; gap: 6px; transition: background 0.2s;
+        }
+        .icon-btn:hover { background-color: var(--surface-border); }
+
+        .dropdown-menu {
+            display: none; position: absolute; top: 42px; left: 0; background-color: var(--surface-color);
+            border: 1px solid var(--surface-border); border-radius: 8px; padding: 12px; width: 200px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5); z-index: 100; font-size: 0.85rem;
+        }
+        .dropdown-menu.show { display: block; }
+        .dropdown-item { margin-bottom: 8px; display: flex; flex-direction: column; gap: 4px; }
+
         h1 {
             font-size: 2.25rem; font-weight: 800; letter-spacing: -0.025em; margin: 0 0 8px 0;
             background: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
@@ -235,7 +305,7 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         }
         .control-group { display: flex; align-items: center; gap: 10px; font-size: 0.9rem; }
         select { background-color: var(--bg-color); border: 1px solid var(--surface-border); color: var(--text-main); padding: 8px 12px; border-radius: 8px; font-size: 0.9rem; outline: none; cursor: pointer; }
-        input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+        input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); cursor: pointer; }
 
         .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
         .btn { background-color: var(--accent); color: #030712; border: none; padding: 10px 18px; border-radius: 8px; font-weight: 600; font-size: 0.9rem; cursor: pointer; transition: background-color 0.2s; }
@@ -259,23 +329,59 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             white-space: nowrap; border: 1px solid var(--surface-border); z-index: 50; pointer-events: none;
         }
         .dot-ready { background-color: var(--success); }
-        .dot-expiring { background-color: var(--amber-pulse); animation: pulse 1.2s infinite ease-in-out; }
+        .dot-expiring { background-color: var(--amber-pulse); }
         .dot-expired { background-color: var(--warning); }
         .dot-reclaimed { background-color: var(--reclaimed-blue); }
         .dot-deleted { background-color: var(--danger); }
 
-        @keyframes pulse {
-            0% { transform: scale(0.95); opacity: 1; }
-            70% { transform: scale(1.1); opacity: 0.8; }
-            100% { transform: scale(0.95); opacity: 1; }
-        }
         .empty-state { text-align: center; padding: 40px; color: var(--text-muted); font-style: italic; }
+
+        /* Modal Overlay */
+        .modal-overlay {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(3, 7, 18, 0.8); z-index: 1000; justify-content: center; align-items: center;
+        }
+        .modal-content {
+            background-color: var(--surface-color); border: 1px solid var(--surface-border);
+            padding: 30px; border-radius: 16px; width: 100%; max-width: 450px; display: flex; flex-direction: column; gap: 16px;
+        }
+        .modal-header { font-size: 1.25rem; font-weight: 700; margin-bottom: 4px; }
+        .modal-input { background: var(--bg-color); border: 1px solid var(--surface-border); color: var(--text-main); padding: 10px 14px; border-radius: 8px; font-size: 0.95rem; width: 100%; box-sizing: border-box; }
     </style>
 </head>
 <body>
     <div class="wrapper">
         <header>
-            <h1>RAM DROP</h1>
+            <div class="top-left-controls">
+                <div style="position: relative;">
+                    <button class="icon-btn" id="refreshDropdownBtn" title="Refresh Controls">
+                        🔄 <span style="font-size: 0.8rem;">▼</span>
+                    </button>
+                    <div class="dropdown-menu" id="refreshDropdown">
+                        <div class="dropdown-item">
+                            <label><input type="checkbox" id="autoRefreshToggle"> Auto-Refresh</label>
+                        </div>
+                        <div class="dropdown-item">
+                            <label style="color: var(--text-muted); font-size: 0.75rem;">Interval (seconds):</label>
+                            <select id="refreshInterval" style="width: 100%;">
+                                <option value="2">2s</option>
+                                <option value="5" selected>5s</option>
+                                <option value="10">10s</option>
+                                <option value="30">30s</option>
+                            </select>
+                        </div>
+                        <div style="margin-top: 4px;">
+                            <button class="btn" style="width: 100%; padding: 6px; font-size: 0.8rem;" id="manualRefreshBtn">Refresh Now</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="top-right-controls">
+                <button class="icon-btn" id="settingsBtn" title="Settings">⚙️ Settings</button>
+            </div>
+
+            <h1 id="scrambleTitle">RAM DROP</h1>
             <p class="subtitle">Zero-Wear Volatile Local File Transfer Hub</p>
         </header>
 
@@ -302,10 +408,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
 
         <div class="controls-panel">
             <div class="control-group">
-                <input type="checkbox" id="muteToggle">
-                <label for="muteToggle" style="cursor: pointer;">Mute Filename (Privacy Shield)</label>
-            </div>
-            <div class="control-group">
                 <label for="ttlSelect">Retention Lifetime:</label>
                 <select id="ttlSelect">
                     <option value="1">1 Hour</option>
@@ -314,10 +416,13 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                     <option value="24">24 Hours</option>
                 </select>
             </div>
+            <div class="control-group" style="color: var(--text-muted); font-size: 0.85rem;">
+                Privacy blur & settings configured via ⚙️ menu.
+            </div>
         </div>
 
         <div class="toolbar">
-            <div style="font-size: 0.9rem; font-weight: 600; color: var(--text-muted);">Recent Active Cache (Sliding Window: Last 24 Hours)</div>
+            <div style="font-size: 0.9rem; font-weight: 600; color: var(--text-muted);">Recent Active Cache (Newest First)</div>
             <button class="btn btn-danger" id="deleteSelected">Delete Selected Files</button>
         </div>
 
@@ -340,7 +445,109 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         </div>
     </div>
 
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal">
+        <div class="modal-content">
+            <div class="modal-header">Console Settings</div>
+            <div style="display: flex; flex-direction: column; gap: 12px; font-size: 0.9rem;">
+                <div>
+                    <label style="color: var(--text-muted); display: block; margin-bottom: 4px;">Max RAM Limit (MB)</label>
+                    <input type="number" id="settingMaxRam" class="modal-input" value="1024">
+                </div>
+                <div>
+                    <label style="color: var(--text-muted); display: block; margin-bottom: 4px;">Webpage Password (Leave blank for none)</label>
+                    <input type="password" id="settingPassword" class="modal-input" placeholder="Optional password">
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="checkbox" id="settingBlurFilename">
+                    <label for="settingBlurFilename">Blur / Mask Filename</label>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="checkbox" id="settingBlurExtension">
+                    <label for="settingBlurExtension">Blur File Extension Too</label>
+                </div>
+                <div>
+                    <label style="color: var(--text-muted); display: block; margin-bottom: 4px;">Mask Style</label>
+                    <select id="settingMuteStyle" style="width: 100%;">
+                        <option value="asterisk">Asterisks (**********)</option>
+                        <option value="random">Random Alphanumeric</option>
+                    </select>
+                </div>
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
+                <button class="icon-btn" id="closeSettingsBtn">Cancel</button>
+                <button class="btn" id="saveSettingsBtn">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
     <script>
+        // Scramble Title Animation on Boot
+        function runScrambleAnimation() {
+            const el = document.getElementById('scrambleTitle');
+            const targetText = "RAM DROP";
+            const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789$%#@*&!f57";
+            let iteration = 0;
+            
+            const interval = setInterval(() => {
+                el.innerText = targetText.split("").map((letter, index) => {
+                    if (index < iteration) return targetText[index];
+                    return chars[Math.floor(Math.random() * chars.length)];
+                }).join("");
+                
+                if (iteration >= targetText.length) {
+                    clearInterval(interval);
+                    el.innerText = targetText;
+                }
+                iteration += 1 / 3;
+            }, 40);
+        }
+        runScrambleAnimation();
+
+        // Dropdown Toggle
+        const refreshBtn = document.getElementById('refreshDropdownBtn');
+        const refreshMenu = document.getElementById('refreshDropdown');
+        refreshBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            refreshMenu.classList.toggle('show');
+        });
+        window.addEventListener('click', () => refreshMenu.classList.remove('show'));
+        refreshMenu.addEventListener('click', (e) => e.stopPropagation());
+
+        // Settings Modal Management
+        const settingsModal = document.getElementById('settingsModal');
+        document.getElementById('settingsBtn').addEventListener('click', async () => {
+            let res = await fetch('/api/settings');
+            let data = await res.json();
+            document.getElementById('settingMaxRam').value = data.max_ram_mb;
+            document.getElementById('settingPassword').value = data.web_password;
+            document.getElementById('settingBlurFilename').checked = data.blur_filename;
+            document.getElementById('settingBlurExtension').checked = data.blur_extension;
+            document.getElementById('settingMuteStyle').value = data.mute_style;
+            settingsModal.style.display = 'flex';
+        });
+
+        document.getElementById('closeSettingsBtn').addEventListener('click', () => {
+            settingsModal.style.display = 'none';
+        });
+
+        document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
+            let payload = {
+                max_ram_mb: document.getElementById('settingMaxRam').value,
+                web_password: document.getElementById('settingPassword').value,
+                blur_filename: document.getElementById('settingBlurFilename').checked,
+                blur_extension: document.getElementById('settingBlurExtension').checked,
+                mute_style: document.getElementById('settingMuteStyle').value
+            };
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+            settingsModal.style.display = 'none';
+        });
+
+        // Telemetry
         let currentCpu = 0, targetCpu = 0;
         let currentRam = 0, targetRam = 0;
 
@@ -364,6 +571,7 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         }
         requestAnimationFrame(animateStats);
 
+        // Dropzone & Upload
         const dropzone = document.getElementById('dropzone');
         const fileInput = document.getElementById('fileInput');
         const progressBar = document.getElementById('progressBar');
@@ -382,7 +590,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         function uploadFile(file) {
             let formData = new FormData();
             formData.append('file', file);
-            formData.append('mute', document.getElementById('muteToggle').checked);
             formData.append('ttl', document.getElementById('ttlSelect').value);
 
             let xhr = new XMLHttpRequest();
@@ -404,6 +611,7 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             xhr.send(formData);
         }
 
+        // File List Management
         async function loadFiles() {
             try {
                 let res = await fetch('/api/files');
@@ -454,7 +662,26 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                 });
             } catch (e) {}
         }
-        setInterval(loadFiles, 3000);
+
+        // Auto-refresh configuration loop
+        let refreshTimer = null;
+        const autoRefreshToggle = document.getElementById('autoRefreshToggle');
+        const refreshIntervalSelect = document.getElementById('refreshInterval');
+        const manualRefreshBtn = document.getElementById('manualRefreshBtn');
+
+        function updateRefreshInterval() {
+            if (refreshTimer) clearInterval(refreshTimer);
+            if (autoRefreshToggle.checked) {
+                let intervalSecs = parseInt(refreshIntervalSelect.value) || 5;
+                refreshTimer = setInterval(loadFiles, intervalSecs * 1000);
+            }
+        }
+
+        autoRefreshToggle.addEventListener('change', updateRefreshInterval);
+        refreshIntervalSelect.addEventListener('change', updateRefreshInterval);
+        manualRefreshBtn.addEventListener('click', () => loadFiles());
+
+        // Default initial load
         loadFiles();
 
         document.getElementById('selectAll').addEventListener('change', (e) => {
@@ -476,13 +703,43 @@ cat << 'EOF' > "$TEMPLATE_PATH"
 </html>
 EOF
 
+# Write companion login template if password protection is enabled later
+cat << 'EOF' > "$TEMPLATE_DIR/login.html"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAM DROP — Login</title>
+    <style>
+        body { font-family: system-ui, sans-serif; background-color: #030712; color: #f8fafc; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .card { background-color: #0f172a; border: 1px solid #1e293b; padding: 40px; border-radius: 16px; width: 100%; max-width: 360px; text-align: center; }
+        h1 { font-size: 1.5rem; margin-bottom: 20px; color: #38bdf8; }
+        input { background: #030712; border: 1px solid #1e293b; color: #f8fafc; padding: 10px 14px; border-radius: 8px; width: 100%; margin-bottom: 16px; box-sizing: border-box; }
+        button { background-color: #38bdf8; color: #030712; border: none; padding: 10px 18px; border-radius: 8px; font-weight: 600; width: 100%; cursor: pointer; }
+        .error { color: #f43f5e; font-size: 0.85rem; margin-bottom: 12px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>RAM DROP</h1>
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
+        <form method="POST">
+            <input type="password" name="password" placeholder="Enter Web Password" required autofocus>
+            <button type="submit">Access Console</button>
+        </form>
+    </div>
+</body>
+</html>
+EOF
+
 PI_IP=$(hostname -I | awk '{print $1}')
 [ -z "$PI_IP" ] && PI_IP="127.0.0.1"
 
 while true; do
     clear
     echo "=========================================================="
-    echo "        RAM DROP v1.1.0 MANAGEMENT CONSOLE                "
+    echo "        RAM DROP v1.2.0 MANAGEMENT CONSOLE                "
     echo "=========================================================="
     echo " Web Dashboard URL : http://$PI_IP:$PORT"
     echo " App Directory     : $APP_DIR"
@@ -504,8 +761,6 @@ while true; do
             if [ "$EUID" -ne 0 ]; then
                 echo ""
                 echo "[-] Sudo permission required to configure systemd service."
-                echo "[!] Please run the script with root privileges or execute:"
-                echo "    sudo systemctl daemon-reload"
                 read -p "Press Enter to return to menu..."
                 continue
             fi
@@ -551,7 +806,7 @@ EOT
             fi
             fuser -k ${PORT}/tcp &>/dev/null
             rm -rf "$APP_DIR"
-            echo "Success: All traces of RAM Drop v1.1.0 have been completely purged."
+            echo "Success: All traces of RAM Drop v1.2.0 have been completely purged."
             exit 0
             ;;
         5)
