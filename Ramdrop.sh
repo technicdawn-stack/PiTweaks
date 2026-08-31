@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: RAM Drop v1.3.1 All-in-One Self-Contained Deployment & Management Console
+# Description: RAM Drop v1.3.2 All-in-One Self-Contained Deployment & Management Console
 # PERSISTENT: TRUE
 # Category: Webpages
 
@@ -9,7 +9,7 @@ if [ -n "$SUDO_USER" ]; then
     CURRENT_USER="$SUDO_USER"
 else
     CURRENT_USER="$(whoami)"
-fi
+f
 
 USER_HOME="$(eval echo ~$CURRENT_USER)"
 APP_DIR="$USER_HOME/ram-drop"
@@ -725,15 +725,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                 bar.style.background = 'linear-gradient(90deg, #f97316, #f43f5e)';
             }
 
-            wrapper.onmousemove = (e) => {
-                tooltip.style.display = 'block';
-                tooltip.style.left = e.pageX + 10 + 'px';
-                tooltip.style.top = e.pageY - 25 + 'px';
-                tooltip.innerText = `${currentUsageMB.toFixed(1)} / ${MAX_RAM_MB} MB`;
-            };
-            wrapper.onmouseleave = () => {
-                tooltip.style.display = 'none';
-            };
         }
 
         function triggerRamWarningPopup() {
