@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: RAM Drop v1.3.5 All-in-One Self-Contained Deployment & Management Console
+# Description: RAM Drop v1.3.7 All-in-One Self-Contained Deployment & Management Console
 # PERSISTENT: TRUE
 # Category: Webpages
 
@@ -78,7 +78,7 @@ import random
 import string
 import psutil
 import threading
-from flask import Flask, render_template, request, jsonify, send_from_directory, session, redirect, url_for
+from flask import Flask, render_template, request, jsonify, send_from_directory, session, redirect, url_for, after_this_request
 
 app = Flask(__name__)
 app.secret_key = ''.join(random.choices(string.ascii_letters + string.digits, k=32))
@@ -107,7 +107,6 @@ def add_notification(message):
     global recent_notifications
     timestamp = time.time()
     recent_notifications.append({'id': ''.join(random.choices(string.ascii_lowercase + string.digits, k=6)), 'message': message, 'timestamp': timestamp})
-    # Keep last 10 notifications
     if len(recent_notifications) > 10:
         recent_notifications.pop(0)
 
@@ -119,7 +118,6 @@ def background_expiry_worker():
                 if meta.get('status') == 'deleted':
                     continue
                 time_elapsed = current_time - meta['timestamp']
-                # Check if TTL expired (ttl > 0 means regular hours, ttl == 0 means one-time download)
                 if meta['ttl'] > 0 and time_elapsed >= meta['ttl']:
                     file_path = os.path.join(app.config['UPLOAD_FOLDER'], meta['stored_name'])
                     if os.path.exists(file_path):
@@ -130,7 +128,6 @@ def background_expiry_worker():
             pass
         time.sleep(5)
 
-# Start background cleanup worker daemon thread
 threading.Thread(target=background_expiry_worker, daemon=True).start()
 
 def generate_masked_name(original_filename, mode="asterisk", blur_ext=False):
@@ -223,7 +220,9 @@ def get_stats():
         'ram_percent': ram.percent,
         'ram_used_mb': round(current_files_mb, 2),
         'ram_total_mb': round(ram.total / (1024 * 1024), 2),
-        'max_ram_limit': app_settings['max_ram_mb']
+        'max_ram_limit': app_settings['max_ram_mb'],
+        'default_scramble': app_settings.get('enable_scramble', True),
+        'default_blur_filename': app_settings.get('blur_filename', False)
     })
 
 @app.route('/api/notifications', methods=['GET'])
@@ -298,11 +297,13 @@ def upload_file():
         return jsonify({'success': False, 'error': 'No selected file'}), 400
         
     ttl_val = int(request.form.get('ttl', 4))
+    scramble_enabled = request.form.get('scramble', 'true') == 'true'
+    
     uploaded_ids = []
 
     for file in files:
         display_name = file.filename
-        if app_settings.get('enable_scramble', True) and app_settings['blur_filename']:
+        if scramble_enabled and app_settings.get('enable_scramble', True):
             display_name = generate_masked_name(display_name, app_settings['mute_style'], app_settings['blur_extension'])
             
         file_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
@@ -312,7 +313,6 @@ def upload_file():
         file.save(file_path)
         file_size = os.path.getsize(file_path)
         
-        # If ttl_val is 0, it means one-time download (ttl set to 0 hours)
         ttl_seconds = ttl_val * 3600 if ttl_val > 0 else 0
         
         file_metadata[file_id] = {
@@ -340,7 +340,6 @@ def download_file(file_id):
     if not os.path.exists(file_path):
         return "File no longer available", 404
 
-    # If it's a one-time download, self-destruct immediately after download
     is_one_time = (meta['ttl'] == 0 and meta.get('status') == 'ready')
 
     try:
@@ -506,7 +505,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             transition: background-color 0.5s ease, box-shadow 0.5s ease;
         }
 
-        /* Toast Notifications Container in Top Right */
         #toastContainer {
             position: fixed; top: 20px; right: 20px; z-index: 9999;
             display: flex; flex-direction: column; gap: 10px; pointer-events: none;
@@ -613,15 +611,18 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             <div class="control-group">
                 <label for="ttlSelect">Retention Lifetime:</label>
                 <select id="ttlSelect">
-                    <option value="0">One-Time Download (Only single use file)</option>
+                    <option value="0">One-Time Download (Self-Destructs After First Download)</option>
                     <option value="1">1 Hour</option>
                     <option value="4" selected>4 Hours</option>
                     <option value="12">12 Hours</option>
                     <option value="24">24 Hours</option>
                 </select>
             </div>
-            <div class="control-group" style="color: var(--text-muted); font-size: 0.85rem;">
-                Privacy blur & settings configured via ⚙️ menu.
+            <div class="control-group">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                    <input type="checkbox" id="userScrambleToggle" checked>
+                    <span>Privacy Scramble Filename</span>
+                </label>
             </div>
         </div>
 
@@ -679,7 +680,7 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                 </div>
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <input type="checkbox" id="settingEnableScramble">
-                    <label for="settingEnableScramble">Enable Filename Privacy Scramble Feature</label>
+                    <label for="settingEnableScramble">Enable Filename Privacy Scramble Feature (Global Admin Allow)</label>
                 </div>
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <input type="checkbox" id="settingBlurFilename">
@@ -724,8 +725,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             });
 
             container.appendChild(toast);
-            
-            // Smooth slide-in
             setTimeout(() => toast.classList.add('show'), 50);
         }
 
@@ -736,7 +735,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                 notes.forEach(n => {
                     if (!knownNotifications.has(n.id)) {
                         knownNotifications.add(n.id);
-                        // Only show toast for auto-purges or meaningful background activities
                         if (n.message.includes('Auto-purged') || n.message.includes('self-destructed')) {
                             showToast(n.message);
                         }
@@ -834,6 +832,7 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             let data = await res.json();
             if (data.success && data.settings) {
                 MAX_RAM_MB = parseInt(data.settings.max_ram_mb);
+                document.getElementById('userScrambleToggle').checked = data.settings.enable_scramble;
             }
             settingsModal.style.display = 'none';
             fetchStats();
@@ -897,6 +896,12 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                 MAX_RAM_MB = data.max_ram_limit || MAX_RAM_MB;
                 updateRamCapacityBar(data.ram_used_mb);
                 
+                const userToggle = document.getElementById('userScrambleToggle');
+                if (userToggle && data.default_scramble !== undefined && !userToggle.getAttribute('data-initialized')) {
+                    userToggle.checked = data.default_scramble;
+                    userToggle.setAttribute('data-initialized', 'true');
+                }
+
                 if (data.ram_used_mb >= MAX_RAM_MB * 0.95) {
                     triggerRamWarningPopup();
                 }
@@ -935,6 +940,7 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                 formData.append('file', files[i]);
             }
             formData.append('ttl', document.getElementById('ttlSelect').value);
+            formData.append('scramble', document.getElementById('userScrambleToggle').checked ? 'true' : 'false');
 
             let xhr = new XMLHttpRequest();
             xhr.open('POST', '/api/upload', true);
@@ -1165,5 +1171,5 @@ sudo systemctl daemon-reload
 sudo systemctl enable ramdrop.service
 sudo systemctl restart ramdrop.service
 
-echo "[+] RAM Drop v1.3.5 successfully deployed!"
+echo "[+] RAM Drop v1.3.7 successfully deployed!"
 echo "[+] Access your console at: http://<server-ip>:$PORT"
