@@ -613,7 +613,7 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             <div class="control-group">
                 <label for="ttlSelect">Retention Lifetime:</label>
                 <select id="ttlSelect">
-                    <option value="0">⚡ One-Time Download (Self-Destructs After First Download)</option>
+                    <option value="0">One-Time Download (Self-Destructs After First Download)</option>
                     <option value="1">1 Hour</option>
                     <option value="4" selected>4 Hours</option>
                     <option value="12">12 Hours</option>
