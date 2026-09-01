@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: RAM Drop v1.3.4 All-in-One Self-Contained Deployment & Management Console
+# Description: RAM Drop v1.3.5 All-in-One Self-Contained Deployment & Management Console
 # PERSISTENT: TRUE
 # Category: Webpages
 
@@ -58,7 +58,6 @@ if [ -f "$PYTHON_APP_PATH" ] && command -v whiptail &>/dev/null; then
     fi
 fi
 
-# If no existing config kept, run the Whiptail Setup wizards[cite: 2]
 if [ "$KEEP_OLD_SETTINGS" != "true" ] && command -v whiptail &>/dev/null; then
     CONFIG_RAM=$(whiptail --title "RAM Drop Initial Setup" --inputbox "Enter Max RAM Limit (MB):" 10 50 "1024" 3>&1 1>&2 2>&3)
     [ $? -ne 0 ] && CONFIG_RAM="1024"
@@ -72,13 +71,13 @@ fi
 
 mkdir -p "$TEMPLATE_DIR"
 
-# Write the self-contained Flask application and HTML template in a single execution block
 cat << EOF > "$PYTHON_APP_PATH"
 import os
 import time
 import random
 import string
 import psutil
+import threading
 from flask import Flask, render_template, request, jsonify, send_from_directory, session, redirect, url_for
 
 app = Flask(__name__)
@@ -88,12 +87,12 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200MB Max File Limit to support files like 131MB
+app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200MB Max File Limit
 
 file_metadata = {}
+recent_notifications = []
 LOG_RETENTION_HOURS = 24
 
-# Global Settings Configurable via UI & Installer
 app_settings = {
     "max_ram_mb": $CONFIG_RAM,
     "page_password": "$CONFIG_PAGE_PASS",
@@ -103,6 +102,36 @@ app_settings = {
     "blur_extension": False,
     "mute_style": "asterisk"
 }
+
+def add_notification(message):
+    global recent_notifications
+    timestamp = time.time()
+    recent_notifications.append({'id': ''.join(random.choices(string.ascii_lowercase + string.digits, k=6)), 'message': message, 'timestamp': timestamp})
+    # Keep last 10 notifications
+    if len(recent_notifications) > 10:
+        recent_notifications.pop(0)
+
+def background_expiry_worker():
+    while True:
+        try:
+            current_time = time.time()
+            for file_id, meta in list(file_metadata.items()):
+                if meta.get('status') == 'deleted':
+                    continue
+                time_elapsed = current_time - meta['timestamp']
+                # Check if TTL expired (ttl > 0 means regular hours, ttl == 0 means one-time download)
+                if meta['ttl'] > 0 and time_elapsed >= meta['ttl']:
+                    file_path = os.path.join(app.config['UPLOAD_FOLDER'], meta['stored_name'])
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                    meta['status'] = 'expired'
+                    add_notification(f"Auto-purged expired file: {meta['display_name']}")
+        except Exception as e:
+            pass
+        time.sleep(5)
+
+# Start background cleanup worker daemon thread
+threading.Thread(target=background_expiry_worker, daemon=True).start()
 
 def generate_masked_name(original_filename, mode="asterisk", blur_ext=False):
     root, ext = os.path.splitext(original_filename)
@@ -187,7 +216,7 @@ def get_stats():
     cpu_usage = psutil.cpu_percent(interval=None)
     ram = psutil.virtual_memory()
     
-    current_files_mb = sum([os.path.getsize(os.path.join(app.config['UPLOAD_FOLDER'], m['stored_name'])) for m in file_metadata.values() if m.get('status') != 'deleted' and os.path.exists(os.path.join(app.config['UPLOAD_FOLDER'], m['stored_name']))]) / (1024 * 1024)
+    current_files_mb = sum([os.path.getsize(os.path.join(app.config['UPLOAD_FOLDER'], m['stored_name'])) for m in file_metadata.values() if m.get('status') == 'ready' and os.path.exists(os.path.join(app.config['UPLOAD_FOLDER'], m['stored_name']))]) / (1024 * 1024)
 
     return jsonify({
         'cpu': cpu_usage,
@@ -196,6 +225,12 @@ def get_stats():
         'ram_total_mb': round(ram.total / (1024 * 1024), 2),
         'max_ram_limit': app_settings['max_ram_mb']
     })
+
+@app.route('/api/notifications', methods=['GET'])
+def get_notifications():
+    if app_settings["page_password"] and not session.get('page_authenticated'):
+        return jsonify([])
+    return jsonify(recent_notifications)
 
 @app.route('/api/files', methods=['GET'])
 def list_files():
@@ -212,19 +247,29 @@ def list_files():
             continue
 
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], meta['stored_name'])
-        time_elapsed = current_time - meta['timestamp']
-        time_remaining = meta['ttl'] - time_elapsed
         
         if meta.get('status') == 'deleted':
             state = 'deleted'
+        elif meta.get('status') == 'expired':
+            state = 'expired'
         elif not os.path.exists(file_path):
             state = 'reclaimed'
-        elif time_remaining <= 0:
-            state = 'expired'
-        elif time_remaining < 3600:
-            state = 'expiring_soon'
         else:
-            state = 'ready'
+            if meta['ttl'] == 0:
+                state = 'one_time'
+                time_remaining = 0
+            else:
+                time_elapsed = current_time - meta['timestamp']
+                time_remaining = meta['ttl'] - time_elapsed
+                if time_remaining <= 0:
+                    state = 'expired'
+                    meta['status'] = 'expired'
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                elif time_remaining < 3600:
+                    state = 'expiring_soon'
+                else:
+                    state = 'ready'
             
         active_files.append({
             'id': file_id,
@@ -234,7 +279,7 @@ def list_files():
             'time': time.strftime('%H:%M:%S', time.localtime(meta['timestamp'])),
             'date': time.strftime('%Y-%m-%d', time.localtime(meta['timestamp'])),
             'status': state,
-            'remaining_seconds': max(0, int(time_remaining)) if state == 'expiring_soon' else 0
+            'remaining_seconds': max(0, int(time_remaining)) if state in ['expiring_soon', 'ready', 'one_time'] else 0
         })
     
     active_files.sort(key=lambda x: x['timestamp'], reverse=True)
@@ -252,7 +297,7 @@ def upload_file():
     if not files or files[0].filename == '':
         return jsonify({'success': False, 'error': 'No selected file'}), 400
         
-    ttl_hours = int(request.form.get('ttl', 4))
+    ttl_val = int(request.form.get('ttl', 4))
     uploaded_ids = []
 
     for file in files:
@@ -267,15 +312,19 @@ def upload_file():
         file.save(file_path)
         file_size = os.path.getsize(file_path)
         
+        # If ttl_val is 0, it means one-time download (ttl set to 0 hours)
+        ttl_seconds = ttl_val * 3600 if ttl_val > 0 else 0
+        
         file_metadata[file_id] = {
             'stored_name': stored_name,
             'display_name': display_name,
             'size': f"{round(file_size / 1024, 1)} KB" if file_size < 1024*1024 else f"{round(file_size / (1024*1024), 1)} MB",
             'timestamp': time.time(),
-            'ttl': ttl_hours * 3600,
+            'ttl': ttl_seconds,
             'status': 'ready'
         }
         uploaded_ids.append(file_id)
+        add_notification(f"Uploaded: {display_name}")
     
     return jsonify({'success': True, 'ids': uploaded_ids})
 
@@ -286,7 +335,30 @@ def download_file(file_id):
     if file_id not in file_metadata:
         return "File not found", 404
     meta = file_metadata[file_id]
-    return send_from_directory(app.config['UPLOAD_FOLDER'], meta['stored_name'], as_attachment=True, download_name=meta['display_name'])
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], meta['stored_name'])
+    
+    if not os.path.exists(file_path):
+        return "File no longer available", 404
+
+    # If it's a one-time download, self-destruct immediately after download
+    is_one_time = (meta['ttl'] == 0 and meta.get('status') == 'ready')
+
+    try:
+        response = send_from_directory(app.config['UPLOAD_FOLDER'], meta['stored_name'], as_attachment=True, download_name=meta['display_name'])
+        if is_one_time:
+            @after_this_request
+            def remove_one_time_file(resp):
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                    meta['status'] = 'expired'
+                    add_notification(f"One-time file self-destructed: {meta['display_name']}")
+                except Exception:
+                    pass
+                return resp
+        return response
+    except Exception as e:
+        return "Download error", 500
 
 @app.route('/api/delete', methods=['POST'])
 def delete_files():
@@ -302,6 +374,7 @@ def delete_files():
             if os.path.exists(file_path):
                 os.remove(file_path)
             meta['status'] = 'deleted'
+            add_notification(f"Manually deleted: {meta['display_name']}")
     return jsonify({'success': True})
 
 if __name__ == '__main__':
@@ -423,6 +496,7 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         .dot-expired { background-color: var(--warning); }
         .dot-reclaimed { background-color: var(--reclaimed-blue); }
         .dot-deleted { background-color: var(--danger); }
+        .dot-onetime { background-color: #a855f7; }
 
         .empty-state { text-align: center; padding: 40px; color: var(--text-muted); font-style: italic; }
 
@@ -431,6 +505,27 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             box-shadow: inset 0 0 0 2px var(--accent);
             transition: background-color 0.5s ease, box-shadow 0.5s ease;
         }
+
+        /* Toast Notifications Container in Top Right */
+        #toastContainer {
+            position: fixed; top: 20px; right: 20px; z-index: 9999;
+            display: flex; flex-direction: column; gap: 10px; pointer-events: none;
+        }
+        .toast-notification {
+            background-color: var(--surface-color); border: 1px solid var(--surface-border);
+            color: var(--text-main); padding: 14px 18px; border-radius: 12px; font-size: 0.9rem;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5); display: flex; align-items: center; gap: 14px;
+            pointer-events: auto; min-width: 280px; max-width: 380px;
+            transform: translateX(120%); opacity: 0;
+            transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.35s ease;
+        }
+        .toast-notification.show { transform: translateX(0); opacity: 1; }
+        .toast-notification.hide { transform: translateX(120%); opacity: 0; }
+        .toast-close {
+            background: transparent; border: none; color: var(--text-muted); font-size: 1.1rem;
+            cursor: pointer; padding: 0; margin-left: auto; line-height: 1; transition: color 0.2s;
+        }
+        .toast-close:hover { color: var(--text-main); }
 
         .modal-overlay {
             display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -445,6 +540,8 @@ cat << 'EOF' > "$TEMPLATE_PATH"
     </style>
 </head>
 <body>
+    <div id="toastContainer"></div>
+
     <div class="wrapper">
         <header>
             <div class="top-left-controls">
@@ -497,7 +594,7 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                 <span style="color: var(--text-muted);">RAM Buffer Capacity</span>
                 <span id="ramTextStats" style="font-weight: 600;">0 / 1024 MB</span>
             </div>
-            <div id="ramCapacityBarWrapper" style="width: 100%; height: 10px; background: var(--bg-color); border-radius: 5px; overflow: hidden; position: relative; cursor: pointer;">
+            <div id="ramCapacityBarWrapper" style="width: 100%; height: 10px; background: var(--bg-color); border-radius: 5px; overflow: hidden; position: relative;">
                 <div id="ramCapacityBar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #38bdf8, #22c55e); transition: width 0.3s ease, background 0.3s ease;"></div>
             </div>
         </div>
@@ -516,6 +613,7 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             <div class="control-group">
                 <label for="ttlSelect">Retention Lifetime:</label>
                 <select id="ttlSelect">
+                    <option value="0">⚡ One-Time Download (Self-Destructs After First Download)</option>
                     <option value="1">1 Hour</option>
                     <option value="4" selected>4 Hours</option>
                     <option value="12">12 Hours</option>
@@ -608,6 +706,45 @@ cat << 'EOF' > "$TEMPLATE_PATH"
 
     <script>
         let MAX_RAM_MB = 1024;
+        let knownNotifications = new Set();
+
+        function showToast(message) {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = 'toast-notification';
+            toast.innerHTML = `
+                <span>⚠️ ${message}</span>
+                <button class="toast-close">&times;</button>
+            `;
+
+            const closeBtn = toast.querySelector('.toast-close');
+            closeBtn.addEventListener('click', () => {
+                toast.classList.add('hide');
+                setTimeout(() => toast.remove(), 350);
+            });
+
+            container.appendChild(toast);
+            
+            // Smooth slide-in
+            setTimeout(() => toast.classList.add('show'), 50);
+        }
+
+        async function pollNotifications() {
+            try {
+                let res = await fetch('/api/notifications');
+                let notes = await res.json();
+                notes.forEach(n => {
+                    if (!knownNotifications.has(n.id)) {
+                        knownNotifications.add(n.id);
+                        // Only show toast for auto-purges or meaningful background activities
+                        if (n.message.includes('Auto-purged') || n.message.includes('self-destructed')) {
+                            showToast(n.message);
+                        }
+                    }
+                });
+            } catch (e) {}
+        }
+        setInterval(pollNotifications, 3000);
 
         function runScrambleAnimation() {
             const el = document.getElementById('scrambleTitle');
@@ -737,7 +874,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                 oldestRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 oldestRow.classList.add('highlight-row');
                 
-                // Select the checkbox inside the oldest row to prompt deletion
                 const checkbox = oldestRow.querySelector('.file-checkbox');
                 if (checkbox) {
                     checkbox.checked = true;
@@ -856,14 +992,17 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                     let statusClass = 'dot-ready';
                     let statusTooltip = 'Ready: Safely cached in RAM and fully accessible';
                     
-                    if (f.status === 'expiring_soon') {
+                    if (f.status === 'one_time') {
+                        statusClass = 'dot-onetime';
+                        statusTooltip = 'One-Time: Will instantly self-destruct after first download';
+                    } else if (f.status === 'expiring_soon') {
                         statusClass = 'dot-expiring';
                         let mins = Math.floor(f.remaining_seconds / 60);
                         let secs = f.remaining_seconds % 60;
                         statusTooltip = `Expiring Soon: ${mins}m ${secs}s remaining until automatic purge`;
                     } else if (f.status === 'expired') {
                         statusClass = 'dot-expired';
-                        statusTooltip = 'Discarded: Exceeded assigned retention window, pending cleanup';
+                        statusTooltip = 'Discarded: Exceeded assigned retention window or consumed, cleaned from RAM';
                     } else if (f.status === 'reclaimed') {
                         statusClass = 'dot-reclaimed';
                         statusTooltip = 'System Reclaimed: Linux kernel automatically cleared buffer space for system stability';
@@ -875,7 +1014,7 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                     let tr = document.createElement('tr');
                     tr.innerHTML = `
                         <td><input type="checkbox" class="file-checkbox" value="${f.id}"></td>
-                        <td><a href="/api/download/${f.id}" class="file-link">${f.display_name}</a></td>
+                        <td><a href="/api/download/${f.id}" class="file-link" onclick="setTimeout(loadFiles, 1000)">${f.display_name}</a></td>
                         <td>${f.size}</td>
                         <td>${f.time}</td>
                         <td>${f.date}</td>
@@ -1026,5 +1165,5 @@ sudo systemctl daemon-reload
 sudo systemctl enable ramdrop.service
 sudo systemctl restart ramdrop.service
 
-echo "[+] RAM Drop v1.3.4 successfully deployed!"
+echo "[+] RAM Drop v1.3.5 successfully deployed!"
 echo "[+] Access your console at: http://<server-ip>:$PORT"
