@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: PiTweaks Security Event Monitor & Network Watchdog V1.1
+# Description: PiTweaks Security Event Monitor & Network Watchdog V2.2
 # PERSISTENT: TRUE
 # Category: Scripts
 
@@ -8,7 +8,7 @@ clear
 
 # ==============================================================================
 # PiTweaks Security Event Monitor & Network Watchdog
-# Version 2.1.0
+# Version 2.2.0
 #
 # Design goals:
 #   - Portable across supported Raspberry Pi OS systems
@@ -20,13 +20,14 @@ clear
 #   - systemd timer instead of cron
 #   - Whiptail configuration interface
 #   - Discord is optional and failure-safe
+#   - Discord webhook can be tested before installation
 #   - Configuration is treated as DATA, never executable shell code
 # ==============================================================================
 
 set -u
 set -o pipefail
 
-MODULE_VERSION="2.1.0"
+MODULE_VERSION="2.2.0"
 
 SERVICE_NAME="pitweaks-security.service"
 TIMER_NAME="pitweaks-security.timer"
@@ -52,25 +53,35 @@ fi
 # ------------------------------------------------------------------------------
 
 if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+
     CURRENT_USER="$SUDO_USER"
-    REAL_HOME="$(getent passwd "$CURRENT_USER" | cut -d: -f6)"
+
 else
+
     CURRENT_USER="$(logname 2>/dev/null || true)"
 
-    if [ -z "$CURRENT_USER" ]; then
+    if [ -z "$CURRENT_USER" ] || [ "$CURRENT_USER" = "root" ]; then
         CURRENT_USER="$(whoami)"
     fi
 
-    REAL_HOME="$(getent passwd "$CURRENT_USER" 2>/dev/null | cut -d: -f6)"
+fi
 
-    if [ -z "$REAL_HOME" ]; then
-        REAL_HOME="$HOME"
+REAL_HOME="$(getent passwd "$CURRENT_USER" 2>/dev/null | cut -d: -f6)"
+
+if [ -z "$REAL_HOME" ] || [ ! -d "$REAL_HOME" ]; then
+
+    if [ -n "${SUDO_USER:-}" ] &&
+       [ "$SUDO_USER" != "root" ]; then
+
+        REAL_HOME="$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)"
     fi
 fi
 
 if [ -z "$REAL_HOME" ] || [ ! -d "$REAL_HOME" ]; then
+
     echo "❌ Could not determine the PiTweaks user's home directory."
     exit 1
+
 fi
 
 INSTALL_DIR="$REAL_HOME/PiTweaks"
@@ -97,6 +108,7 @@ if ! command -v whiptail >/dev/null 2>&1; then
         echo "❌ Failed to install whiptail."
         exit 1
     fi
+
 fi
 
 # ------------------------------------------------------------------------------
@@ -109,7 +121,9 @@ if [ -f "$CONFIG_FILE" ] ||
    [ -f "$MONITOR_SCRIPT" ] ||
    [ -f "$SERVICE_FILE" ] ||
    [ -f "$TIMER_FILE" ]; then
+
     EXISTING_INSTALL="Y"
+
 fi
 
 INSTALL_MODE="NEW"
@@ -121,14 +135,14 @@ if [ "$EXISTING_INSTALL" = "Y" ]; then
         --menu \
 "An existing PiTweaks Security Monitor installation was detected.
 
-Installed files will be safely stopped before replacement.
+Existing services will be stopped safely before replacement.
 
 What would you like to do?" \
         17 78 4 \
         "RECONFIGURE" "Keep monitor and change settings" \
         "REINSTALL" "Replace monitor, service and timer" \
         "STATUS" "View current installation status" \
-        "CANCEL" "Exit without making changes" \
+        "CANCEL" "Exit without changes" \
         3>&1 1>&2 2>&3)
 
     if [ $? -ne 0 ]; then
@@ -151,6 +165,33 @@ What would you like to do?" \
             SERVICE_STATE="$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || true)"
             ENABLE_STATE="$(systemctl is-enabled "$TIMER_NAME" 2>/dev/null || true)"
 
+            DISCORD_CONFIGURED="No"
+
+            if [ -f "$CONFIG_FILE" ]; then
+
+                SAVED_WEBHOOK="$(
+                    awk '
+                        index($0,"DISCORD_WEBHOOK_URL=")==1 {
+                            line=$0
+                            sub("^[^=]*=","",line)
+
+                            if (line ~ /^".*"$/) {
+                                sub(/^"/,"",line)
+                                sub(/"$/,"",line)
+                            }
+
+                            print line
+                            exit
+                        }
+                    ' "$CONFIG_FILE" 2>/dev/null
+                )"
+
+                if [ -n "$SAVED_WEBHOOK" ]; then
+                    DISCORD_CONFIGURED="Yes"
+                fi
+
+            fi
+
             whiptail \
                 --title "PiTweaks Security Monitor Status" \
                 --msgbox \
@@ -168,6 +209,9 @@ Service:
 $SERVICE_NAME
 Active: ${SERVICE_STATE:-unknown}
 
+Discord webhook configured:
+$DISCORD_CONFIGURED
+
 Configuration:
 $CONFIG_FILE
 
@@ -176,7 +220,7 @@ $MONITOR_SCRIPT
 
 Runtime state:
 $STATE_DIR" \
-                21 78
+                22 80
 
             exit 0
             ;;
@@ -188,6 +232,7 @@ $STATE_DIR" \
         *)
             exit 1
             ;;
+
     esac
 fi
 
@@ -209,9 +254,6 @@ DISCORD_WEBHOOK_URL=""
 
 # ------------------------------------------------------------------------------
 # 5. CONFIGURATION READER
-#
-# Configuration is treated as DATA.
-# It is never sourced as executable shell code.
 # ------------------------------------------------------------------------------
 
 read_config_value() {
@@ -251,16 +293,14 @@ if [ "$EXISTING_INSTALL" = "Y" ] &&
         --yesno \
 "An existing configuration was found.
 
-Would you like to keep your current settings?
+Keep your current settings?
 
 YES:
 • Monitoring choices retained
 • Bandwidth threshold retained
 • GeoIP setting retained
 • Discord setting retained
-• Discord webhook retained
-
-You can still change everything afterward.
+• Saved Discord webhook retained
 
 NO:
 • Start with recommended defaults." \
@@ -275,8 +315,13 @@ NO:
         ENABLE_GEOIP="$(read_config_value ENABLE_GEOIP "$CONFIG_FILE")"
         ENABLE_DISCORD="$(read_config_value ENABLE_DISCORD "$CONFIG_FILE")"
 
-        BANDWIDTH_THRESHOLD_MB="$(read_config_value BANDWIDTH_THRESHOLD_MB "$CONFIG_FILE")"
-        DISCORD_WEBHOOK_URL="$(read_config_value DISCORD_WEBHOOK_URL "$CONFIG_FILE")"
+        BANDWIDTH_THRESHOLD_MB="$(
+            read_config_value BANDWIDTH_THRESHOLD_MB "$CONFIG_FILE"
+        )"
+
+        DISCORD_WEBHOOK_URL="$(
+            read_config_value DISCORD_WEBHOOK_URL "$CONFIG_FILE"
+        )"
 
         TRACK_SSH="${TRACK_SSH:-Y}"
         TRACK_SUDO="${TRACK_SUDO:-Y}"
@@ -289,6 +334,7 @@ NO:
 
         BANDWIDTH_THRESHOLD_MB="${BANDWIDTH_THRESHOLD_MB:-100}"
         DISCORD_WEBHOOK_URL="${DISCORD_WEBHOOK_URL:-}"
+
     fi
 fi
 
@@ -304,23 +350,22 @@ CHOICES=$(whiptail \
 SPACE = toggle
 ENTER = continue
 
-The monitor is designed to use very little CPU and
-avoid intentional persistent SD-card writes." \
+Runtime monitoring state is stored in RAM under /run." \
     23 92 7 \
     "SSH" \
     "SSH login monitoring - failed and successful logins" \
     "$([ "$TRACK_SSH" = "Y" ] && echo ON || echo OFF)" \
     "SUDO" \
-    "Sudo activity - monitors privileged command activity" \
+    "Sudo activity - privileged command activity" \
     "$([ "$TRACK_SUDO" = "Y" ] && echo ON || echo OFF)" \
     "UFW" \
-    "UFW blocks - detects connections rejected by firewall" \
+    "UFW blocks - rejected firewall connections" \
     "$([ "$TRACK_UFW" = "Y" ] && echo ON || echo OFF)" \
     "PIHOLE" \
-    "Pi-hole activity - monitors compatible admin logs" \
+    "Pi-hole activity - compatible admin activity" \
     "$([ "$TRACK_PIHOLE" = "Y" ] && echo ON || echo OFF)" \
     "BANDWIDTH" \
-    "Bandwidth anomaly - detects unusually high traffic" \
+    "Bandwidth anomaly - unusually high traffic" \
     "$([ "$TRACK_BANDWIDTH" = "Y" ] && echo ON || echo OFF)" \
     "GEOIP" \
     "OPTIONAL - approximate location/ISP for public IPs" \
@@ -347,13 +392,26 @@ TRACK_BANDWIDTH="N"
 ENABLE_GEOIP="N"
 ENABLE_DISCORD="N"
 
-[[ "$CHOICES" == *'"SSH"'* ]] && TRACK_SSH="Y"
-[[ "$CHOICES" == *'"SUDO"'* ]] && TRACK_SUDO="Y"
-[[ "$CHOICES" == *'"UFW"'* ]] && TRACK_UFW="Y"
-[[ "$CHOICES" == *'"PIHOLE"'* ]] && TRACK_PIHOLE="Y"
-[[ "$CHOICES" == *'"BANDWIDTH"'* ]] && TRACK_BANDWIDTH="Y"
-[[ "$CHOICES" == *'"GEOIP"'* ]] && ENABLE_GEOIP="Y"
-[[ "$CHOICES" == *'"DISCORD"'* ]] && ENABLE_DISCORD="Y"
+[[ "$CHOICES" == *'"SSH"'* ]] &&
+    TRACK_SSH="Y"
+
+[[ "$CHOICES" == *'"SUDO"'* ]] &&
+    TRACK_SUDO="Y"
+
+[[ "$CHOICES" == *'"UFW"'* ]] &&
+    TRACK_UFW="Y"
+
+[[ "$CHOICES" == *'"PIHOLE"'* ]] &&
+    TRACK_PIHOLE="Y"
+
+[[ "$CHOICES" == *'"BANDWIDTH"'* ]] &&
+    TRACK_BANDWIDTH="Y"
+
+[[ "$CHOICES" == *'"GEOIP"'* ]] &&
+    ENABLE_GEOIP="Y"
+
+[[ "$CHOICES" == *'"DISCORD"'* ]] &&
+    ENABLE_DISCORD="Y"
 
 # ------------------------------------------------------------------------------
 # 9. REQUIRE ONE MONITOR
@@ -430,7 +488,7 @@ It is not required for security detection.
 When enabled, public source IP addresses may be sent
 to an external GeoIP service.
 
-This can provide approximate:
+Possible information:
 • Country
 • Region
 • City
@@ -447,56 +505,200 @@ Enable GeoIP?" \
 fi
 
 # ------------------------------------------------------------------------------
-# 12. DISCORD CONFIGURATION
+# 12. DISCORD URL VALIDATION
+# ------------------------------------------------------------------------------
+
+validate_discord_url() {
+
+    local url="$1"
+
+    [ -z "$url" ] && return 1
+
+    # Reject whitespace and shell/config-breaking characters.
+    [[ "$url" == *$'\n'* ]] && return 1
+    [[ "$url" == *$'\r'* ]] && return 1
+    [[ "$url" == *" "* ]] && return 1
+    [[ "$url" == *'"'* ]] && return 1
+
+    if [[ "$url" =~ ^https://(discord\.com|discordapp\.com)/api/webhooks/[0-9]+/[A-Za-z0-9._-]+([?].*)?$ ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
+# ------------------------------------------------------------------------------
+# 13. DISCORD TEST FUNCTION
+# ------------------------------------------------------------------------------
+
+test_discord_webhook() {
+
+    local webhook="$1"
+    local response_file="$STATE_DIR/discord_test_response.txt"
+    local http_code
+    local response_body
+
+    mkdir -p "$STATE_DIR"
+    chmod 700 "$STATE_DIR"
+
+    rm -f "$response_file"
+
+    if ! command -v curl >/dev/null 2>&1; then
+
+        apt-get update >/dev/null 2>&1 || return 1
+        apt-get install -y curl >/dev/null 2>&1 || return 1
+
+    fi
+
+    http_code="$(
+        curl \
+            -sS \
+            -o "$response_file" \
+            -w '%{http_code}' \
+            --connect-timeout 5 \
+            --max-time 10 \
+            -H "Content-Type: application/json" \
+            -X POST \
+            -d '{"content":"PiTweaks Security Monitor test - Discord webhook is working."}' \
+            "$webhook" \
+            2>/dev/null
+    )"
+
+    if [ -z "$http_code" ]; then
+        http_code="000"
+    fi
+
+    response_body="$(
+        head -c 500 "$response_file" 2>/dev/null |
+            tr '\r\n' ' ' |
+            sed 's/[[:space:]][[:space:]]*/ /g'
+    )"
+
+    rm -f "$response_file"
+
+    TEST_HTTP_CODE="$http_code"
+    TEST_RESPONSE="$response_body"
+
+    if [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
+# ------------------------------------------------------------------------------
+# 14. DISCORD CONFIGURATION
 # ------------------------------------------------------------------------------
 
 if [ "$ENABLE_DISCORD" = "Y" ]; then
 
-    DISCORD_WEBHOOK_URL=$(whiptail \
-        --title "Discord Notifications" \
-        --passwordbox \
-"Enter the Discord webhook URL.
+    if [ -n "$DISCORD_WEBHOOK_URL" ] &&
+       validate_discord_url "$DISCORD_WEBHOOK_URL"; then
+
+        USE_SAVED=$(whiptail \
+            --title "Discord Webhook Found" \
+            --menu \
+"A Discord webhook is already stored in the
+current configuration.
+
+The actual webhook secret will not be displayed.
+
+What would you like to do?" \
+            13 72 2 \
+            "USE_SAVED" "Use the existing webhook" \
+            "REPLACE" "Enter a new webhook" \
+            3>&1 1>&2 2>&3)
+
+        if [ $? -ne 0 ]; then
+            exit 0
+        fi
+
+        if [ "$USE_SAVED" = "REPLACE" ]; then
+
+            DISCORD_WEBHOOK_URL=$(whiptail \
+                --title "Discord Notifications" \
+                --passwordbox \
+"Enter the Discord incoming webhook URL.
 
 The URL will be stored root-only with permissions 600.
 
-Leave blank to disable Discord." \
-        12 82 \
-        "$DISCORD_WEBHOOK_URL" \
-        3>&1 1>&2 2>&3)
+The value is never displayed after entry." \
+                12 82 \
+                "" \
+                3>&1 1>&2 2>&3)
 
-    if [ $? -ne 0 ]; then
-        exit 0
+            if [ $? -ne 0 ]; then
+                exit 0
+            fi
+
+        fi
+
+    else
+
+        DISCORD_WEBHOOK_URL=$(whiptail \
+            --title "Discord Notifications" \
+            --passwordbox \
+"Enter the Discord incoming webhook URL.
+
+Example:
+
+https://discord.com/api/webhooks/...
+
+The URL will be stored root-only with permissions 600." \
+            13 82 \
+            "" \
+            3>&1 1>&2 2>&3)
+
+        if [ $? -ne 0 ]; then
+            exit 0
+        fi
+
     fi
+
+    # --------------------------------------------------------------------------
+    # Validate supplied URL
+    # --------------------------------------------------------------------------
 
     if [ -z "$DISCORD_WEBHOOK_URL" ]; then
-        ENABLE_DISCORD="N"
-    fi
 
-    # Basic validation without exposing the secret.
-    if [ "$ENABLE_DISCORD" = "Y" ] &&
-       ! [[ "$DISCORD_WEBHOOK_URL" =~ ^https://(discord\.com|discordapp\.com)/api/webhooks/ ]]; then
+        whiptail \
+            --title "Discord Disabled" \
+            --msgbox \
+"No Discord webhook was supplied.
+
+Discord notifications have been disabled.
+
+The security monitor itself will continue normally." \
+            11 68
+
+        ENABLE_DISCORD="N"
+        DISCORD_WEBHOOK_URL=""
+
+    elif ! validate_discord_url "$DISCORD_WEBHOOK_URL"; then
 
         whiptail \
             --title "Invalid Discord Webhook" \
             --msgbox \
-"The supplied value does not look like a standard Discord webhook URL.
+"The supplied value does not look like a valid
+Discord incoming webhook URL.
 
 Expected format:
 
 https://discord.com/api/webhooks/...
 
-Discord notifications have been disabled for this installation.
+Discord has been disabled for this installation.
 
-You can reconfigure the webhook later." \
-            14 76
+You can configure it again later." \
+            15 76
 
         ENABLE_DISCORD="N"
         DISCORD_WEBHOOK_URL=""
+
     fi
 fi
 
 # ------------------------------------------------------------------------------
-# 13. OPTIONAL DISCORD TEST
+# 15. OPTIONAL DISCORD TEST
 # ------------------------------------------------------------------------------
 
 if [ "$ENABLE_DISCORD" = "Y" ] &&
@@ -505,44 +707,15 @@ if [ "$ENABLE_DISCORD" = "Y" ] &&
     if whiptail \
         --title "Test Discord Webhook?" \
         --yesno \
-"Would you like to send a temporary test message to Discord now?
+"Would you like to test this Discord webhook now?
 
-This verifies that the webhook actually accepts messages.
+A temporary test message will be sent.
 
-The test message will say:
+The security monitor will NOT depend on Discord
+working in order to operate." \
+        14 76; then
 
-PiTweaks Security Monitor test - webhook working." \
-        15 76; then
-
-        if ! command -v curl >/dev/null 2>&1; then
-            apt-get update
-            apt-get install -y curl
-        fi
-
-        if ! command -v jq >/dev/null 2>&1; then
-            apt-get update
-            apt-get install -y jq
-        fi
-
-        TEST_PAYLOAD="$(jq -n \
-            --arg content "🛡️ PiTweaks Security Monitor test — Discord webhook is working." \
-            '{content:$content}')"
-
-        TEST_HTTP_CODE="$(
-            curl \
-                -sS \
-                -o /dev/null \
-                -w '%{http_code}' \
-                --connect-timeout 5 \
-                --max-time 10 \
-                -H "Content-Type: application/json" \
-                -X POST \
-                -d "$TEST_PAYLOAD" \
-                "$DISCORD_WEBHOOK_URL" \
-                2>/dev/null || echo "000"
-        )"
-
-        if [[ "$TEST_HTTP_CODE" =~ ^2[0-9][0-9]$ ]]; then
+        if test_discord_webhook "$DISCORD_WEBHOOK_URL"; then
 
             whiptail \
                 --title "Discord Test Successful" \
@@ -552,37 +725,109 @@ PiTweaks Security Monitor test - webhook working." \
 HTTP status:
 $TEST_HTTP_CODE
 
+The webhook is working.
+
 Discord notifications will remain enabled." \
-                11 68
+                12 68
 
         else
+
+            case "$TEST_HTTP_CODE" in
+
+                400)
+                    ERROR_HINT="Discord rejected the request as malformed.
+
+Check that this is an Incoming Webhook URL and that
+the webhook URL was copied completely."
+
+                    ;;
+
+                401)
+                    ERROR_HINT="Discord rejected the webhook authentication.
+
+The webhook URL/token may be invalid, regenerated,
+revoked, or copied incorrectly."
+
+                    ;;
+
+                403)
+                    ERROR_HINT="Discord refused access to the webhook.
+
+The webhook may have been deleted, disabled, or
+otherwise no longer usable."
+
+                    ;;
+
+                404)
+                    ERROR_HINT="Discord could not find the webhook.
+
+The webhook may have been deleted or the URL may
+refer to an invalid endpoint."
+
+                    ;;
+
+                429)
+                    ERROR_HINT="Discord rate-limited the request.
+
+Wait before testing again."
+
+                    ;;
+
+                000)
+                    ERROR_HINT="No HTTP response was received.
+
+Check network connectivity and that curl can reach
+Discord from this Pi."
+
+                    ;;
+
+                *)
+                    ERROR_HINT="Discord returned an unexpected HTTP status."
+
+                    ;;
+
+            esac
+
+            RESPONSE_DISPLAY="${TEST_RESPONSE:-No response body received.}"
+
+            if [ ${#RESPONSE_DISPLAY} -gt 450 ]; then
+                RESPONSE_DISPLAY="${RESPONSE_DISPLAY:0:450}..."
+            fi
 
             if whiptail \
                 --title "Discord Test Failed" \
                 --yesno \
-"Discord rejected the test message.
+"Discord test failed.
 
 HTTP status:
 $TEST_HTTP_CODE
 
-This does NOT disable the security monitor.
+$ERROR_HINT
 
-Would you like to:
-YES - keep Discord enabled and investigate later
-NO  - disable Discord for now" \
-                14 76; then
+Response:
+$RESPONSE_DISPLAY
+
+Keep Discord enabled anyway?
+
+YES = keep enabled
+NO  = disable Discord" \
+                21 82; then
 
                 :
+
             else
+
                 ENABLE_DISCORD="N"
                 DISCORD_WEBHOOK_URL=""
+
             fi
+
         fi
     fi
 fi
 
 # ------------------------------------------------------------------------------
-# 14. CONFIRM
+# 16. CONFIRM
 # ------------------------------------------------------------------------------
 
 SUMMARY="PiTweaks Security Monitor $MODULE_VERSION
@@ -624,10 +869,11 @@ SD-card protection:
 
 ✓ No persistent security event database
 ✓ Runtime state under /run
-✓ No PiTweaks security log file
+✓ No security log file
 ✓ No cron logging
 ✓ Approximately one monitor run per minute
-✓ Discord failure does not stop monitoring
+✓ Discord failure cannot stop monitoring
+✓ Discord diagnostics use RAM-only temporary state
 
 Installation mode:
 $INSTALL_MODE
@@ -637,24 +883,25 @@ Continue?"
 if ! whiptail \
     --title "Confirm Installation" \
     --yesno "$SUMMARY" \
-    24 80; then
+    25 82; then
 
     echo "Installation cancelled."
     exit 0
 fi
 
 # ------------------------------------------------------------------------------
-# 15. STOP EXISTING MONITOR
+# 17. STOP EXISTING MONITOR
 # ------------------------------------------------------------------------------
 
 if [ "$EXISTING_INSTALL" = "Y" ]; then
 
     systemctl stop "$TIMER_NAME" 2>/dev/null || true
     systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+
 fi
 
 # ------------------------------------------------------------------------------
-# 16. CREATE INSTALL DIRECTORY
+# 18. CREATE INSTALL DIRECTORY
 # ------------------------------------------------------------------------------
 
 mkdir -p "$SEC_DIR"
@@ -665,7 +912,7 @@ chown root:root "$SEC_DIR"
 chmod 755 "$SEC_DIR"
 
 # ------------------------------------------------------------------------------
-# 17. BACK UP EXISTING CONFIG
+# 19. BACK UP EXISTING CONFIGURATION
 # ------------------------------------------------------------------------------
 
 if [ -f "$CONFIG_FILE" ]; then
@@ -676,15 +923,16 @@ if [ -f "$CONFIG_FILE" ]; then
 
     chown root:root "$BACKUP_FILE"
     chmod 600 "$BACKUP_FILE"
+
 fi
 
 # ------------------------------------------------------------------------------
-# 18. WRITE CONFIGURATION
+# 20. WRITE CONFIGURATION ATOMICALLY
 # ------------------------------------------------------------------------------
 
 umask 077
 
-TEMP_CONFIG="${CONFIG_FILE}.new"
+TEMP_CONFIG="${CONFIG_FILE}.new.$$"
 
 cat > "$TEMP_CONFIG" <<EOF
 # PiTweaks Security Monitor Configuration
@@ -713,10 +961,10 @@ chmod 600 "$TEMP_CONFIG"
 mv -f "$TEMP_CONFIG" "$CONFIG_FILE"
 
 # ------------------------------------------------------------------------------
-# 19. WRITE MONITOR
+# 21. WRITE MONITOR
 # ------------------------------------------------------------------------------
 
-TEMP_MONITOR="${MONITOR_SCRIPT}.new"
+TEMP_MONITOR="${MONITOR_SCRIPT}.new.$$"
 
 cat > "$TEMP_MONITOR" <<'SCRIPT'
 #!/bin/bash
@@ -787,8 +1035,12 @@ get_config() {
     ' "$CONFIG_FILE" 2>/dev/null
 }
 
+# ==============================================================================
+# SAFE EXIT
+# ==============================================================================
+
 if [ ! -r "$CONFIG_FILE" ]; then
-    exit 1
+    exit 0
 fi
 
 TRACK_SSH="$(get_config TRACK_SSH)"
@@ -807,42 +1059,28 @@ DISCORD_WEBHOOK_URL="$(get_config DISCORD_WEBHOOK_URL)"
 # CONFIGURATION VALIDATION
 # ==============================================================================
 
-case "$TRACK_SSH" in
-    Y|N) ;;
-    *) TRACK_SSH="N" ;;
-esac
+for setting in \
+    TRACK_SSH \
+    TRACK_SUDO \
+    TRACK_UFW \
+    TRACK_PIHOLE \
+    TRACK_BANDWIDTH \
+    ENABLE_GEOIP \
+    ENABLE_DISCORD; do
 
-case "$TRACK_SUDO" in
-    Y|N) ;;
-    *) TRACK_SUDO="N" ;;
-esac
+    value="${!setting:-N}"
 
-case "$TRACK_UFW" in
-    Y|N) ;;
-    *) TRACK_UFW="N" ;;
-esac
+    case "$value" in
+        Y|N)
+            ;;
+        *)
+            printf -v "$setting" '%s' "N"
+            ;;
+    esac
 
-case "$TRACK_PIHOLE" in
-    Y|N) ;;
-    *) TRACK_PIHOLE="N" ;;
-esac
+done
 
-case "$TRACK_BANDWIDTH" in
-    Y|N) ;;
-    *) TRACK_BANDWIDTH="N" ;;
-esac
-
-case "$ENABLE_GEOIP" in
-    Y|N) ;;
-    *) ENABLE_GEOIP="N" ;;
-esac
-
-case "$ENABLE_DISCORD" in
-    Y|N) ;;
-    *) ENABLE_DISCORD="N" ;;
-esac
-
-if ! [[ "$BANDWIDTH_THRESHOLD_MB" =~ ^[0-9]+$ ]]; then
+if ! [[ "${BANDWIDTH_THRESHOLD_MB:-}" =~ ^[0-9]+$ ]]; then
     BANDWIDTH_THRESHOLD_MB="100"
 fi
 
@@ -865,9 +1103,12 @@ add_alert() {
 
 # ==============================================================================
 # EVENT DEDUPLICATION
+# ==============================================================================
 #
-# Uses one small RAM state file.
-# No persistent security database is created.
+# Runtime-only.
+# This file exists in /run, which is normally tmpfs on Raspberry Pi OS.
+#
+# The state is deliberately capped.
 # ==============================================================================
 
 event_is_new() {
@@ -879,7 +1120,9 @@ event_is_new() {
 
     if [ -f "$EVENT_STATE" ] &&
        grep -qF "$hash" "$EVENT_STATE" 2>/dev/null; then
+
         return 1
+
     fi
 
     printf '%s\n' "$hash" >> "$EVENT_STATE"
@@ -889,6 +1132,7 @@ event_is_new() {
         tail -n 200 "$EVENT_STATE" > "${EVENT_STATE}.tmp"
 
         mv -f "${EVENT_STATE}.tmp" "$EVENT_STATE"
+
     fi
 
     return 0
@@ -896,9 +1140,6 @@ event_is_new() {
 
 # ==============================================================================
 # OPTIONAL GEOIP
-#
-# Cache is process-local only.
-# No persistent GeoIP cache is written.
 # ==============================================================================
 
 declare -A GEO_CACHE
@@ -908,7 +1149,6 @@ get_geo_info() {
     local ip="$1"
 
     [ "$ENABLE_GEOIP" != "Y" ] && return 0
-
     [ -z "$ip" ] && return 0
 
     if [[ ! "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
@@ -919,6 +1159,7 @@ get_geo_info() {
        [[ "$ip" =~ ^192\.168\. ]] ||
        [[ "$ip" =~ ^172\.(1[6-9]|2[0-9]|3[0-1])\. ]] ||
        [[ "$ip" =~ ^127\. ]]; then
+
         return 0
     fi
 
@@ -927,8 +1168,21 @@ get_geo_info() {
         return 0
     fi
 
-    local response=""
-    local result=""
+    if ! command -v curl >/dev/null 2>&1 ||
+       ! command -v jq >/dev/null 2>&1; then
+
+        GEO_CACHE[$ip]=""
+        return 0
+
+    fi
+
+    local response
+    local success
+    local country
+    local region
+    local city
+    local isp
+    local result
 
     response="$(
         curl \
@@ -939,61 +1193,53 @@ get_geo_info() {
             2>/dev/null || true
     )"
 
-    if [ -z "$response" ]; then
-        GEO_CACHE[$ip]=""
-        return 0
-    fi
+    [ -z "$response" ] && return 0
 
-    if command -v jq >/dev/null 2>&1; then
+    success="$(
+        printf '%s' "$response" |
+            jq -r '.success // false' 2>/dev/null
+    )"
 
-        local success country region city isp
+    [ "$success" = "true" ] || return 0
 
-        success="$(
-            printf '%s' "$response" |
-                jq -r '.success // false' 2>/dev/null
-        )"
+    country="$(
+        printf '%s' "$response" |
+            jq -r '.country // empty' 2>/dev/null
+    )"
 
-        if [ "$success" != "true" ]; then
-            GEO_CACHE[$ip]=""
-            return 0
-        fi
+    region="$(
+        printf '%s' "$response" |
+            jq -r '.region // empty' 2>/dev/null
+    )"
 
-        country="$(
-            printf '%s' "$response" |
-                jq -r '.country // empty' 2>/dev/null
-        )"
+    city="$(
+        printf '%s' "$response" |
+            jq -r '.city // empty' 2>/dev/null
+    )"
 
-        region="$(
-            printf '%s' "$response" |
-                jq -r '.region // empty' 2>/dev/null
-        )"
+    isp="$(
+        printf '%s' "$response" |
+            jq -r '.connection.isp // empty' 2>/dev/null
+    )"
 
-        city="$(
-            printf '%s' "$response" |
-                jq -r '.city // empty' 2>/dev/null
-        )"
+    result="${city:-Unknown}, ${region:-Unknown}, ${country:-Unknown} (${isp:-Unknown})"
 
-        isp="$(
-            printf '%s' "$response" |
-                jq -r '.connection.isp // empty' 2>/dev/null
-        )"
+    GEO_CACHE[$ip]="$result"
 
-        result="${city:-Unknown}, ${region:-Unknown}, ${country:-Unknown} (${isp:-Unknown})"
-
-        GEO_CACHE[$ip]="$result"
-
-        printf '%s' "$result"
-    fi
+    printf '%s' "$result"
 }
 
 # ==============================================================================
-# JOURNAL TIME WINDOW
+# JOURNAL WINDOW
+# ==============================================================================
 #
-# A small overlap catches timer-boundary events.
-# RAM-based hashes prevent duplicate notifications.
+# A small overlap catches events occurring around timer boundaries.
+# Event hashes prevent duplicate alerts.
 # ==============================================================================
 
 SINCE_TIME="$(date -d '90 seconds ago' '+%Y-%m-%d %H:%M:%S')"
+
+CURRENT_ALERT_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 
 # ==============================================================================
 # SSH MONITORING
@@ -1020,13 +1266,14 @@ if [ "$TRACK_SSH" = "Y" ]; then
                 -o short-iso \
                 2>/dev/null || true
         )"
+
     fi
 
     while IFS= read -r line; do
 
         [ -z "$line" ] && continue
 
-        if printf '%s\n' "$line" | grep -q "Failed password"; then
+        if [[ "$line" == *"Failed password"* ]]; then
 
             event_is_new "$line" || continue
 
@@ -1059,12 +1306,11 @@ if [ "$TRACK_SSH" = "Y" ]; then
 • Approx. Origin: $GEO"
 
             MSG="$MSG
-• Time: $(date '+%Y-%m-%d %H:%M:%S')"
+• Time: $CURRENT_ALERT_TIME"
 
             add_alert "$MSG"
 
-        elif printf '%s\n' "$line" |
-             grep -qE "Accepted (publickey|password)"; then
+        elif [[ "$line" =~ Accepted[[:space:]](publickey|password) ]]; then
 
             event_is_new "$line" || continue
 
@@ -1097,12 +1343,14 @@ if [ "$TRACK_SSH" = "Y" ]; then
 • Approx. Origin: $GEO"
 
             MSG="$MSG
-• Time: $(date '+%Y-%m-%d %H:%M:%S')"
+• Time: $CURRENT_ALERT_TIME"
 
             add_alert "$MSG"
+
         fi
 
     done <<< "$LOGS"
+
 fi
 
 # ==============================================================================
@@ -1124,7 +1372,7 @@ if [ "$TRACK_SUDO" = "Y" ]; then
 
         [ -z "$line" ] && continue
 
-        if printf '%s\n' "$line" | grep -q "COMMAND="; then
+        if [[ "$line" == *"COMMAND="* ]]; then
 
             event_is_new "$line" || continue
 
@@ -1142,11 +1390,12 @@ if [ "$TRACK_SUDO" = "Y" ]; then
             add_alert "⚠️ SECURITY AUDIT: Sudo Command
 • User: ${USER_SUDO:-Unknown}
 • Command: ${CMD_RUN:-Unknown}
-• Time: $(date '+%Y-%m-%d %H:%M:%S')"
+• Time: $CURRENT_ALERT_TIME"
 
         fi
 
     done <<< "$LOGS"
+
 fi
 
 # ==============================================================================
@@ -1199,19 +1448,16 @@ if [ "$TRACK_UFW" = "Y" ]; then
 • Approx. Origin: $GEO"
 
         MSG="$MSG
-• Time: $(date '+%Y-%m-%d %H:%M:%S')"
+• Time: $CURRENT_ALERT_TIME"
 
         add_alert "$MSG"
 
     done <<< "$LOGS"
+
 fi
 
 # ==============================================================================
 # PI-HOLE MONITORING
-#
-# This is deliberately conservative.
-# It reports relevant admin/login activity rather than claiming
-# every matching request is a successful login.
 # ==============================================================================
 
 if [ "$TRACK_PIHOLE" = "Y" ]; then
@@ -1247,9 +1493,10 @@ if [ "$TRACK_PIHOLE" = "Y" ]; then
             add_alert "🌐 PI-HOLE ADMIN ACTIVITY
 • Source IP: ${SRC_IP:-Unknown}
 • Log: $TARGET_LOG
-• Time: $(date '+%Y-%m-%d %H:%M:%S')"
+• Time: $CURRENT_ALERT_TIME"
 
         done <<< "$RECENT_LOGS"
+
     fi
 fi
 
@@ -1261,8 +1508,7 @@ if [ "$TRACK_BANDWIDTH" = "Y" ]; then
 
     DEFAULT_IFACE="$(
         ip route show default 2>/dev/null |
-            awk '/default/ {print $5}' |
-            head -n 1
+            awk '/default/ {print $5; exit}'
     )"
 
     if [ -n "$DEFAULT_IFACE" ]; then
@@ -1299,15 +1545,15 @@ if [ "$TRACK_BANDWIDTH" = "Y" ]; then
                     BYTES_PER_SEC=$((BYTES_DIFF / TIME_DIFF))
                     MB_PER_MIN=$((BYTES_PER_SEC * 60 / 1024 / 1024))
 
-                    # Do not repeatedly alert every minute for one
-                    # continuously high traffic condition.
                     ALERT_COOLDOWN=300
 
                     if [ "$MB_PER_MIN" -gt "$BANDWIDTH_THRESHOLD_MB" ] &&
-                       { [ "$LAST_ALERT_TIME" = "0" ] ||
-                         [ $((CURRENT_TIME - LAST_ALERT_TIME)) -ge "$ALERT_COOLDOWN" ]; }; then
+                       {
+                           [ "$LAST_ALERT_TIME" = "0" ] ||
+                           [ $((CURRENT_TIME - LAST_ALERT_TIME)) -ge "$ALERT_COOLDOWN" ]
+                       }; then
 
-                        EVENT="BANDWIDTH|$DEFAULT_IFACE|$MB_PER_MIN|$BANDWIDTH_THRESHOLD_MB"
+                        EVENT="BANDWIDTH|$DEFAULT_IFACE|$MB_PER_MIN"
 
                         if event_is_new "$EVENT"; then
 
@@ -1315,40 +1561,54 @@ if [ "$TRACK_BANDWIDTH" = "Y" ]; then
 • Interface: $DEFAULT_IFACE
 • Usage Rate: ~${MB_PER_MIN} MB/min
 • Threshold: ${BANDWIDTH_THRESHOLD_MB} MB/min
-• Time: $(date '+%Y-%m-%d %H:%M:%S')"
+• Time: $CURRENT_ALERT_TIME"
 
                             LAST_ALERT_TIME="$CURRENT_TIME"
+
                         fi
+
                     fi
+
                 fi
+
             fi
 
             printf '%s %s %s\n' \
                 "$CURRENT_BYTES" \
                 "$CURRENT_TIME" \
                 "${LAST_ALERT_TIME:-0}" > "$BW_STATE"
+
         fi
+
     fi
+
 fi
 
 # ==============================================================================
 # DISCORD NOTIFICATIONS
+# ==============================================================================
 #
-# IMPORTANT:
-# Discord is an OPTIONAL OUTPUT.
+# Discord is ONLY an output.
 #
-# A Discord failure MUST NEVER cause this security monitor
-# to return a failure status.
+# It can NEVER determine whether the security monitor succeeds.
+#
+# HTTP failures:
+#   400 / 401 / 403 / 404 / 429 / 5xx
+#
+# Network failures:
+#   timeout / DNS / connection failure
+#
+# All of these are ignored by the monitor.
+#
+# No persistent Discord error log is created.
 # ==============================================================================
 
 if [ "$ENABLE_DISCORD" = "Y" ] &&
    [ -n "$DISCORD_WEBHOOK_URL" ] &&
    [ -n "$ALERT_BUFFER" ]; then
 
-    # If jq isn't installed, silently skip Discord.
-    # Monitoring itself continues normally.
-    if command -v jq >/dev/null 2>&1 &&
-       command -v curl >/dev/null 2>&1; then
+    if command -v curl >/dev/null 2>&1 &&
+       command -v jq >/dev/null 2>&1; then
 
         JSON_PAYLOAD="$(
             jq -n \
@@ -1359,7 +1619,7 @@ if [ "$ENABLE_DISCORD" = "Y" ] &&
 
         if [ -n "$JSON_PAYLOAD" ]; then
 
-            HTTP_CODE="$(
+            DISCORD_HTTP_CODE="$(
                 curl \
                     -sS \
                     -o /dev/null \
@@ -1370,21 +1630,23 @@ if [ "$ENABLE_DISCORD" = "Y" ] &&
                     -X POST \
                     -d "$JSON_PAYLOAD" \
                     "$DISCORD_WEBHOOK_URL" \
-                    2>/dev/null || echo "000"
+                    2>/dev/null
             )"
 
-            # Successful Discord response.
-            if [[ "$HTTP_CODE" =~ ^2[0-9][0-9]$ ]]; then
-                :
-            else
-                # Deliberately do nothing.
-                #
-                # 401 / 403 / 404 / 429 / 5xx / network failure
-                # must not break the security monitor.
-                :
-            fi
+            # Deliberately ignore the result.
+            #
+            # Discord is not allowed to influence monitor success.
+            case "$DISCORD_HTTP_CODE" in
+                2??)
+                    ;;
+                *)
+                    ;;
+            esac
+
         fi
+
     fi
+
 fi
 
 # ==============================================================================
@@ -1400,7 +1662,7 @@ chmod 755 "$TEMP_MONITOR"
 mv -f "$TEMP_MONITOR" "$MONITOR_SCRIPT"
 
 # ------------------------------------------------------------------------------
-# 20. INSTALL REQUIRED DEPENDENCIES
+# 22. INSTALL REQUIRED DEPENDENCIES
 # ------------------------------------------------------------------------------
 
 PACKAGES=()
@@ -1413,8 +1675,10 @@ command -v flock >/dev/null 2>&1 ||
 
 if [ "$ENABLE_DISCORD" = "Y" ] ||
    [ "$ENABLE_GEOIP" = "Y" ]; then
+
     command -v jq >/dev/null 2>&1 ||
         PACKAGES+=("jq")
+
 fi
 
 if [ "${#PACKAGES[@]}" -gt 0 ]; then
@@ -1427,13 +1691,14 @@ if [ "${#PACKAGES[@]}" -gt 0 ]; then
     )
 
     apt-get install -y "${PACKAGES[@]}"
+
 fi
 
 # ------------------------------------------------------------------------------
-# 21. CREATE SYSTEMD SERVICE
+# 23. CREATE SYSTEMD SERVICE
 # ------------------------------------------------------------------------------
 
-TEMP_SERVICE="${SERVICE_FILE}.new"
+TEMP_SERVICE="${SERVICE_FILE}.new.$$"
 
 cat > "$TEMP_SERVICE" <<EOF
 [Unit]
@@ -1449,14 +1714,13 @@ Group=root
 
 ExecStart=$MONITOR_SCRIPT
 
-# Security restrictions.
+# --------------------------------------------------------------------------
+# Security restrictions
+# --------------------------------------------------------------------------
+
 NoNewPrivileges=true
 PrivateTmp=true
 
-# Required access:
-# - system journal
-# - /proc/net
-# - Pi-hole logs when enabled
 ProtectSystem=full
 ProtectHome=false
 
@@ -1466,14 +1730,12 @@ ReadOnlyPaths=/proc/net
 # Runtime state is the only location intentionally written.
 ReadWritePaths=$STATE_DIR
 
-# Prevent privilege-changing behaviour.
 RestrictSUIDSGID=true
 LockPersonality=true
 
-# No core dumps.
 LimitCORE=0
 
-# Avoid generating normal service output.
+# The monitor intentionally produces no normal output.
 StandardOutput=null
 StandardError=null
 EOF
@@ -1483,10 +1745,10 @@ chmod 644 "$TEMP_SERVICE"
 mv -f "$TEMP_SERVICE" "$SERVICE_FILE"
 
 # ------------------------------------------------------------------------------
-# 22. CREATE SYSTEMD TIMER
+# 24. CREATE SYSTEMD TIMER
 # ------------------------------------------------------------------------------
 
-TEMP_TIMER="${TIMER_FILE}.new"
+TEMP_TIMER="${TIMER_FILE}.new.$$"
 
 cat > "$TEMP_TIMER" <<EOF
 [Unit]
@@ -1494,17 +1756,13 @@ Description=PiTweaks Security Monitor Timer
 
 [Timer]
 
-# Start shortly after boot.
 OnBootSec=30s
 
-# Run approximately once per minute.
 OnUnitActiveSec=60s
 
-# Small scheduling tolerance reduces unnecessary wakeups.
 AccuracySec=5s
 
 # Do not perform catch-up runs after downtime.
-# This is preferable for the low-wear monitoring design.
 Persistent=false
 
 [Install]
@@ -1516,13 +1774,25 @@ chmod 644 "$TEMP_TIMER"
 mv -f "$TEMP_TIMER" "$TIMER_FILE"
 
 # ------------------------------------------------------------------------------
-# 23. SYSTEMD RELOAD
+# 25. SYSTEMD RELOAD
 # ------------------------------------------------------------------------------
 
-systemctl daemon-reload
+if ! systemctl daemon-reload; then
+
+    whiptail \
+        --title "Installation Error" \
+        --msgbox \
+"systemd failed to reload the new configuration.
+
+The files were written but the installation could not
+be activated safely." \
+        11 70
+
+    exit 1
+fi
 
 # ------------------------------------------------------------------------------
-# 24. ENABLE TIMER
+# 26. ENABLE TIMER
 # ------------------------------------------------------------------------------
 
 if ! systemctl enable "$TIMER_NAME" >/dev/null 2>&1; then
@@ -1544,7 +1814,7 @@ systemctl status $TIMER_NAME" \
 fi
 
 # ------------------------------------------------------------------------------
-# 25. START TIMER
+# 27. START TIMER
 # ------------------------------------------------------------------------------
 
 if ! systemctl restart "$TIMER_NAME"; then
@@ -1557,14 +1827,14 @@ if ! systemctl restart "$TIMER_NAME"; then
 Check:
 
 systemctl status $TIMER_NAME
-journalctl -u $TIMER_NAME" \
-        14 72
+systemctl status $SERVICE_NAME" \
+        15 72
 
     exit 1
 fi
 
 # ------------------------------------------------------------------------------
-# 26. INITIAL MONITOR TEST
+# 28. INITIAL MONITOR TEST
 # ------------------------------------------------------------------------------
 
 TEST_RESULT="FAILED"
@@ -1574,7 +1844,7 @@ if "$MONITOR_SCRIPT"; then
 fi
 
 # ------------------------------------------------------------------------------
-# 27. VERIFY TIMER
+# 29. VERIFY TIMER
 # ------------------------------------------------------------------------------
 
 TIMER_STATUS="$(
@@ -1586,7 +1856,7 @@ TIMER_ENABLED="$(
 )"
 
 # ------------------------------------------------------------------------------
-# 28. FINAL STATUS
+# 30. FINAL STATUS
 # ------------------------------------------------------------------------------
 
 if [ "$TEST_RESULT" = "PASSED" ] &&
@@ -1656,12 +1926,8 @@ $TEST_RESULT
 Check:
 
 systemctl status $TIMER_NAME
-systemctl status $SERVICE_NAME
-
-For details:
-
-journalctl -u $SERVICE_NAME" \
-        20 78
+systemctl status $SERVICE_NAME" \
+        19 78
 
     exit 1
 fi
