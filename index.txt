@@ -12,7 +12,7 @@ Tools|img_backup.sh|Modular Pi Imager Utility with Dynamic USB Detection and Net
 Scripts|log2ram.sh|Interactive installer for log2ram with whiptail configuration.
 Tools|net_auditor.sh|Enhanced network utility featuring an interactive menu for Ookla Speed Tests, open port auditing, ping checks, DNS tests, and Wi-Fi diagnostics.
 Tools|overclock.sh|Smart Raspberry Pi overclocking manager with live thermal monitoring and safe backups.
-Scripts|security_module_upgrade.sh|PiTweaks Security Event Monitor & Network Watchdog
+Scripts|security_module_upgrade.sh|PiTweaks Security Event Monitor & Network Watchdog V1.1
 Tools|stress_test.sh|PiTweaks All-in-One Continuous Stress Suite & Telemetry V2.0
 Tools|swap_manager.sh|Smart memory and swap manager with auto-detection and recommendations
 Tools|sys_info.sh|System information and telemtry, condensed.
