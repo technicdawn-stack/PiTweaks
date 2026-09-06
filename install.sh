@@ -2,7 +2,7 @@
 
 # ============================================================
 # PiTweaks Installer
-# UI-focused version
+# UI V6
 # ============================================================
 
 set -e
@@ -16,7 +16,6 @@ REPO="PiTweaks"
 BRANCH="main"
 
 BASE_URL="https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}"
-
 INDEX_URL="${BASE_URL}/index.txt"
 
 # ------------------------------------------------------------
@@ -35,7 +34,7 @@ if (( TERM_WIDTH < 70 )); then
 fi
 
 # ------------------------------------------------------------
-# Dependency check
+# Dependency checks
 # ------------------------------------------------------------
 
 if ! command -v curl >/dev/null 2>&1; then
@@ -55,7 +54,7 @@ if ! command -v whiptail >/dev/null 2>&1; then
 fi
 
 # ------------------------------------------------------------
-# Temporary files
+# Temporary directory
 # ------------------------------------------------------------
 
 TMP_DIR=$(mktemp -d)
@@ -69,7 +68,7 @@ trap cleanup EXIT
 INDEX_FILE="${TMP_DIR}/index.txt"
 
 # ------------------------------------------------------------
-# Download index
+# Download module index
 # ------------------------------------------------------------
 
 if ! curl -fsSL \
@@ -77,10 +76,12 @@ if ! curl -fsSL \
     -o "$INDEX_FILE"; then
 
     whiptail \
-        --title "PiTweaks" \
+        --title "PiTweaks | Error" \
         --msgbox \
-        "Unable to download the PiTweaks module index.\n\nPlease check your internet connection and try again." \
-        10 60
+        "Unable to download the PiTweaks module index.
+
+Please check your internet connection and try again." \
+        11 68
 
     exit 1
 fi
@@ -101,6 +102,7 @@ declare -A SCRIPT_VERSIONS
 # ------------------------------------------------------------
 
 extract_version() {
+
     local description="$1"
     local version=""
 
@@ -118,11 +120,11 @@ extract_version() {
 # ------------------------------------------------------------
 # Parse index
 #
-# Supported:
+# Current format:
 #
 # category|script|description
 #
-# Legacy:
+# Legacy format:
 #
 # script|description
 # ------------------------------------------------------------
@@ -135,33 +137,36 @@ while IFS='|' read -r category script desc; do
     # Ignore comments
     [[ "$category" == \#* ]] && continue
 
-    # Legacy two-field format
+    # --------------------------------------------------------
+    # Legacy two-field compatibility
+    # --------------------------------------------------------
+
     if [[ -z "$desc" && -n "$script" ]]; then
+
         desc="$script"
         script="$category"
         category="Uncategorized"
+
     elif [[ -z "$category" ]]; then
+
         category="Uncategorized"
+
     fi
 
     # Skip malformed entries
     [[ -z "$script" ]] && continue
 
+    # --------------------------------------------------------
+    # Metadata
+    # --------------------------------------------------------
+
     version=$(extract_version "$desc")
 
     CATEGORIES["$category"]+="$script|$desc"$'\n'
 
-    CATEGORY_COUNTS["$category"]=$(
-        printf '%s' "${CATEGORY_COUNTS["$category"]:-0}"
-    )
-
-    CATEGORY_COUNTS["$category"]=$(
-        (
-            count="${CATEGORY_COUNTS["$category"]:-0}"
-            count=$((count + 1))
-            echo "$count"
-        )
-    )
+    count="${CATEGORY_COUNTS["$category"]:-0}"
+    count=$((count + 1))
+    CATEGORY_COUNTS["$category"]="$count"
 
     SCRIPT_DESCRIPTIONS["$script"]="$desc"
     SCRIPT_CATEGORIES["$script"]="$category"
@@ -170,15 +175,23 @@ while IFS='|' read -r category script desc; do
 done < "$INDEX_FILE"
 
 # ------------------------------------------------------------
-# Get sorted categories
+# Sorted categories
 # ------------------------------------------------------------
 
 get_sorted_categories() {
+
     printf '%s\n' "${!CATEGORIES[@]}" | sort
 }
 
 # ------------------------------------------------------------
-# Run script
+# Run selected script
+#
+# IMPORTANT:
+# Once a script is launched, the installer does NOT return
+# to the PiTweaks UI.
+#
+# This prevents temporary modules such as SysInfo from having
+# their output cleared/replaced by the installer.
 # ------------------------------------------------------------
 
 run_script() {
@@ -188,14 +201,19 @@ run_script() {
 
     local selected="${TMP_DIR}/${script}"
 
+    # --------------------------------------------------------
+    # Download
+    # --------------------------------------------------------
+
     clear
 
+    echo
     echo "============================================================"
     echo " PiTweaks"
     echo "============================================================"
     echo
-    echo " Category : $category"
-    echo " Script   : $script"
+    echo " Category : ${category}"
+    echo " Script   : ${script}"
     echo
     echo " Downloading module..."
     echo
@@ -205,9 +223,13 @@ run_script() {
         -o "$selected"; then
 
         whiptail \
-            --title "PiTweaks | Error" \
+            --title "PiTweaks | Download Error" \
             --msgbox \
-            "Failed to download:\n\n${script}\n\nPlease check your network connection or repository configuration." \
+            "Failed to download:
+
+${script}
+
+Please check your network connection or repository configuration." \
             12 70
 
         return
@@ -223,7 +245,9 @@ run_script() {
 
     if grep -qi "# PERSISTENT: TRUE" "${selected}" || \
        [[ "${selected}" == *"monitor"* ]]; then
+
         IS_PERSISTENT=true
+
     fi
 
     echo "Module downloaded."
@@ -231,25 +255,49 @@ run_script() {
 
     if [[ "$IS_PERSISTENT" == true ]]; then
         echo "Persistent module detected."
+        echo
     fi
 
+    echo "Launching ${script}..."
     echo
-    echo "Launching module..."
+    echo "------------------------------------------------------------"
     echo
+
+    # --------------------------------------------------------
+    # Run module
+    #
+    # Do NOT clear afterwards.
+    # Do NOT return to the installer.
+    # --------------------------------------------------------
 
     bash "$selected"
 
+    SCRIPT_EXIT_CODE=$?
+
+    # --------------------------------------------------------
+    # Remove downloaded temporary module
+    # --------------------------------------------------------
+
     rm -f "$selected"
+
+    # --------------------------------------------------------
+    # Leave the terminal exactly where the script left it.
+    #
+    # The installer intentionally exits here.
+    # --------------------------------------------------------
+
+    exit "$SCRIPT_EXIT_CODE"
 }
 
 # ------------------------------------------------------------
-# Script details screen
+# Script details
 # ------------------------------------------------------------
 
 show_script_details() {
 
     local category="$1"
     local script="$2"
+
     local description="${SCRIPT_DESCRIPTIONS["$script"]}"
     local version="${SCRIPT_VERSIONS["$script"]}"
 
@@ -259,27 +307,35 @@ show_script_details() {
 
         local details=""
 
-        details+="SCRIPT     ${script}"$'\n'
-        details+="CATEGORY   ${category}"$'\n'
-        details+="VERSION    ${version}"$'\n'
+        details+="SCRIPT       ${script}"
         details+=$'\n'
-        details+="DESCRIPTION"$'\n'
-        details+="${description}"$'\n'
+        details+="CATEGORY     ${category}"
         details+=$'\n'
-        details+="PERSISTENCE   ${persistence}"
+        details+="VERSION      ${version}"
+        details+=$'\n'
+        details+=$'\n'
+        details+="DESCRIPTION"
+        details+=$'\n'
+        details+="${description}"
+        details+=$'\n'
+        details+=$'\n'
+        details+="PERSISTENCE  ${persistence}"
 
         if whiptail \
             --title "PiTweaks | Script Information" \
             --ok-button "RUN" \
             --cancel-button "BACK" \
             --yesno "$details" \
-            18 76; then
+            17 76; then
 
             run_script "$category" "$script"
 
             return
+
         else
+
             return
+
         fi
 
     done
@@ -298,50 +354,62 @@ show_search() {
         query=$(whiptail \
             --title "PiTweaks | Search" \
             --inputbox \
-            "Search scripts by name or description:" \
-            10 70 \
+            "Search by script name or description.
+
+Press ESC to return to the home screen." \
+            11 72 \
             3>&1 1>&2 2>&3) || return
 
         [[ -z "$query" ]] && continue
 
         local results=()
-        local seen=()
 
-        for script in "${!SCRIPT_DESCRIPTIONS[@]}"; do
+        while IFS= read -r script; do
+
+            [[ -z "$script" ]] && continue
 
             local description="${SCRIPT_DESCRIPTIONS["$script"]}"
 
             if [[ "${script,,}" == *"${query,,}"* ]] || \
                [[ "${description,,}" == *"${query,,}"* ]]; then
 
-                local category="${SCRIPT_CATEGORIES["$script"]}"
-
                 results+=("$script")
-                seen+=("$category|$script")
+
             fi
 
-        done
+        done < <(printf '%s\n' "${!SCRIPT_DESCRIPTIONS[@]}" | sort)
+
+        # ----------------------------------------------------
+        # No results
+        # ----------------------------------------------------
 
         if (( ${#results[@]} == 0 )); then
 
             whiptail \
                 --title "PiTweaks | Search" \
                 --msgbox \
-                "No scripts matched:\n\n${query}" \
+                "No scripts matched:
+
+${query}" \
                 10 60
 
             continue
         fi
 
+        # ----------------------------------------------------
+        # Build result menu
+        # ----------------------------------------------------
+
         local menu_items=()
 
-        for entry in "${seen[@]}"; do
+        for script in "${results[@]}"; do
 
-            IFS='|' read -r category script <<< "$entry"
+            local category="${SCRIPT_CATEGORIES["$script"]}"
+            local description="${SCRIPT_DESCRIPTIONS["$script"]}"
 
             menu_items+=(
                 "$script"
-                "${category} — ${SCRIPT_DESCRIPTIONS["$script"]}"
+                "${category} | ${description}"
             )
 
         done
@@ -351,7 +419,9 @@ show_search() {
         selection=$(whiptail \
             --title "PiTweaks | Search Results" \
             --menu \
-            "Search results for: ${query}" \
+            "Results for: ${query}
+
+Select a module to view its information." \
             "$TERM_HEIGHT" \
             "$TERM_WIDTH" \
             12 \
@@ -368,7 +438,7 @@ show_search() {
 }
 
 # ------------------------------------------------------------
-# Category script menu
+# Category menu
 # ------------------------------------------------------------
 
 show_category() {
@@ -379,10 +449,15 @@ show_category() {
 
         local menu_items=()
 
+        # Back option
         menu_items+=(
             "__BACK__"
-            "Return to categories"
+            "Return to PiTweaks home"
         )
+
+        # ----------------------------------------------------
+        # Add scripts
+        # ----------------------------------------------------
 
         while IFS= read -r entry; do
 
@@ -405,7 +480,9 @@ show_category() {
         selection=$(whiptail \
             --title "PiTweaks | ${category}" \
             --menu \
-            "Select a script" \
+            "MODULES
+
+Select a module to view its information." \
             "$TERM_HEIGHT" \
             "$TERM_WIDTH" \
             12 \
@@ -418,13 +495,15 @@ show_category() {
 
         [[ -z "$selection" ]] && return
 
-        show_script_details "$category" "$selection"
+        show_script_details \
+            "$category" \
+            "$selection"
 
     done
 }
 
 # ------------------------------------------------------------
-# Main homepage
+# Home screen
 # ------------------------------------------------------------
 
 show_home() {
@@ -433,51 +512,85 @@ show_home() {
 
         local menu_items=()
 
-        # Search
+        # ----------------------------------------------------
+        # Search section
+        # ----------------------------------------------------
+
         menu_items+=(
-            "__SEARCH__"
-            "Search all scripts"
+            "SEARCH"
+            "Search all PiTweaks modules"
         )
 
-        # Categories
+        # ----------------------------------------------------
+        # Category section
+        # ----------------------------------------------------
+
         while IFS= read -r category; do
 
             [[ -z "$category" ]] && continue
 
             local count="${CATEGORY_COUNTS["$category"]:-0}"
 
+            if (( count == 1 )); then
+                count_text="1 module"
+            else
+                count_text="${count} modules"
+            fi
+
             menu_items+=(
                 "$category"
-                "${count} script(s)"
+                "${count_text} | Browse category"
             )
 
         done < <(get_sorted_categories)
 
+        # ----------------------------------------------------
         # Exit
+        # ----------------------------------------------------
+
         menu_items+=(
-            "__EXIT__"
-            "Exit PiTweaks"
+            "EXIT"
+            "Close PiTweaks"
         )
+
+        # ----------------------------------------------------
+        # Home prompt
+        # ----------------------------------------------------
 
         local selection
 
         selection=$(whiptail \
+            --backtitle "PiTweaks | Raspberry Pi Toolkit" \
             --title "PiTweaks" \
             --menu \
-            "Select an option" \
+            "HOME
+
+Manage and run your Raspberry Pi modules.
+
+SEARCH
+Find a module by name or description.
+
+MODULES
+Browse modules by category.
+
+Choose an option below." \
             "$TERM_HEIGHT" \
             "$TERM_WIDTH" \
-            14 \
+            15 \
             "${menu_items[@]}" \
             3>&1 1>&2 2>&3) || continue
 
+        # ----------------------------------------------------
+        # Selection
+        # ----------------------------------------------------
+
         case "$selection" in
 
-            "__SEARCH__")
+            SEARCH)
                 show_search
                 ;;
 
-            "__EXIT__")
+            EXIT)
                 clear
                 exit 0
                 ;;
@@ -496,7 +609,7 @@ show_home() {
 }
 
 # ------------------------------------------------------------
-# Start
+# Start PiTweaks
 # ------------------------------------------------------------
 
 show_home
