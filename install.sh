@@ -1,107 +1,94 @@
 #!/bin/bash
 
-# ==============================================================================
-# PI TWEAKS INSTALLER — SCRIPT LAUNCHER V5
-# ==============================================================================
-#
-# Current index.txt format:
-#
-# category|script|description
-#
-# Example:
-# 1st_Set|A_Test.sh|Loops the install url for faster and easier refreshing. V1.1
-#
-# Legacy two-field format is also supported:
-#
-# script|description
-#
-# ==============================================================================
+# ============================================================
+# PiTweaks Installer
+# UI-focused version
+# ============================================================
 
-set -eo pipefail
+set -e
+
+# ------------------------------------------------------------
+# Configuration
+# ------------------------------------------------------------
 
 USER="technicdawn-stack"
 REPO="PiTweaks"
 BRANCH="main"
 
-# ==============================================================================
-# DEPENDENCIES
-# ==============================================================================
+BASE_URL="https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}"
 
-if ! command -v curl &>/dev/null; then
-    echo "curl is required but not installed."
+INDEX_URL="${BASE_URL}/index.txt"
+
+# ------------------------------------------------------------
+# Terminal sizing
+# ------------------------------------------------------------
+
+TERM_HEIGHT=$(tput lines)
+TERM_WIDTH=$(tput cols)
+
+if (( TERM_HEIGHT < 20 )); then
+    TERM_HEIGHT=20
+fi
+
+if (( TERM_WIDTH < 70 )); then
+    TERM_WIDTH=70
+fi
+
+# ------------------------------------------------------------
+# Dependency check
+# ------------------------------------------------------------
+
+if ! command -v curl >/dev/null 2>&1; then
+    echo "curl is required."
+    echo "Installing curl..."
+
+    sudo apt-get update
+    sudo apt-get install -y curl
+fi
+
+if ! command -v whiptail >/dev/null 2>&1; then
+    echo "whiptail is required."
+    echo "Installing whiptail..."
+
+    sudo apt-get update
+    sudo apt-get install -y whiptail
+fi
+
+# ------------------------------------------------------------
+# Temporary files
+# ------------------------------------------------------------
+
+TMP_DIR=$(mktemp -d)
+
+cleanup() {
+    rm -rf "$TMP_DIR"
+}
+
+trap cleanup EXIT
+
+INDEX_FILE="${TMP_DIR}/index.txt"
+
+# ------------------------------------------------------------
+# Download index
+# ------------------------------------------------------------
+
+if ! curl -fsSL \
+    "${INDEX_URL}?cachebuster=$(date +%s)" \
+    -o "$INDEX_FILE"; then
+
+    whiptail \
+        --title "PiTweaks" \
+        --msgbox \
+        "Unable to download the PiTweaks module index.\n\nPlease check your internet connection and try again." \
+        10 60
+
     exit 1
 fi
 
-if ! command -v whiptail &>/dev/null; then
-    echo "Installing whiptail..."
-    sudo apt-get update -qq
-    sudo apt-get install -y whiptail -qq
-fi
+# ------------------------------------------------------------
+# Data storage
+# ------------------------------------------------------------
 
-# ==============================================================================
-# FETCH INDEX
-# ==============================================================================
-
-INDEX_DATA=$(curl -fsSL \
-    "https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/index.txt?cb=$(date +%s)" \
-    2>/dev/null) || {
-        echo "Could not load index.txt from GitHub."
-        exit 1
-    }
-
-SEARCH_QUERY=""
-
-# ==============================================================================
-# TERMINAL SIZING
-# ==============================================================================
-
-get_terminal_size() {
-
-    TERM_HEIGHT=$(stty size 2>/dev/null | awk '{print $1}')
-    TERM_WIDTH=$(stty size 2>/dev/null | awk '{print $2}')
-
-    TERM_HEIGHT=${TERM_HEIGHT:-24}
-    TERM_WIDTH=${TERM_WIDTH:-80}
-
-    if (( TERM_HEIGHT < 15 )); then
-        TERM_HEIGHT=15
-    fi
-
-    if (( TERM_WIDTH < 60 )); then
-        TERM_WIDTH=60
-    fi
-
-    BOX_HEIGHT=$((TERM_HEIGHT - 2))
-    BOX_WIDTH=$((TERM_WIDTH - 4))
-
-    MENU_HEIGHT=$((BOX_HEIGHT - 8))
-
-    if (( MENU_HEIGHT < 5 )); then
-        MENU_HEIGHT=5
-    fi
-}
-
-# ==============================================================================
-# METADATA STORAGE
-# ==============================================================================
-#
-# These arrays keep the UI data separate from the menu system.
-#
-# This gives us a clean place to add future metadata later without having to
-# redesign the navigation system.
-#
-# Future possibilities:
-#
-# SCRIPT_VERSIONS
-# SCRIPT_TYPES
-# SCRIPT_REQUIREMENTS
-# SCRIPT_SUDO
-# SCRIPT_NETWORK
-# SCRIPT_PERSISTENCE
-#
-# ==============================================================================
-
-unset CATEGORIES
 declare -A CATEGORIES
 declare -A CATEGORY_COUNTS
 
@@ -109,37 +96,27 @@ declare -A SCRIPT_DESCRIPTIONS
 declare -A SCRIPT_CATEGORIES
 declare -A SCRIPT_VERSIONS
 
-# ==============================================================================
-# VERSION EXTRACTION
-# ==============================================================================
-#
-# Extracts a trailing version such as:
-#
-# V1.1
-# V1.3.7
-# v2.0
-#
-# from the description.
-#
-# The complete description remains stored unchanged.
-#
-# ==============================================================================
+# ------------------------------------------------------------
+# Version extraction
+# ------------------------------------------------------------
 
 extract_version() {
-
     local description="$1"
     local version=""
 
-    if [[ "$description" =~ [[:space:]]([Vv][0-9]+([.][0-9]+)*)[[:space:]]*$ ]]; then
+    if [[ "$description" =~ ([Vv][0-9]+([.][0-9]+)*)[[:space:]]*$ ]]; then
         version="${BASH_REMATCH[1]}"
     fi
 
-    printf "%s" "$version"
+    if [[ -n "$version" ]]; then
+        echo "$version"
+    else
+        echo "Not specified"
+    fi
 }
 
-# ==============================================================================
-# PARSE INDEX.TXT
-# ==============================================================================
+# ------------------------------------------------------------
+# Parse index
 #
 # Supported:
 #
@@ -148,640 +125,378 @@ extract_version() {
 # Legacy:
 #
 # script|description
-#
-# Empty category:
-#
-# |script|description
-#
-# ==============================================================================
+# ------------------------------------------------------------
 
 while IFS='|' read -r category script desc; do
 
-    category=$(echo "$category" | tr -d '\r' | xargs)
-    script=$(echo "$script" | tr -d '\r' | xargs)
-    desc=$(echo "$desc" | tr -d '\r' | xargs)
+    # Ignore blank lines
+    [[ -z "$category" ]] && continue
 
-    # Skip blank lines and comments.
-    [[ -z "$script" || "$script" =~ ^# ]] && continue
+    # Ignore comments
+    [[ "$category" == \#* ]] && continue
 
-    # --------------------------------------------------------------------------
-    # Legacy two-field compatibility
-    #
-    # Old:
-    #
-    # A_Test.sh|Description
-    #
-    # Becomes:
-    #
-    # Uncategorized|A_Test.sh|Description
-    # --------------------------------------------------------------------------
-
+    # Legacy two-field format
     if [[ -z "$desc" && -n "$script" ]]; then
-
         desc="$script"
         script="$category"
         category="Uncategorized"
-
     elif [[ -z "$category" ]]; then
-
         category="Uncategorized"
-
     fi
 
-    # --------------------------------------------------------------------------
-    # Store script information
-    # --------------------------------------------------------------------------
+    # Skip malformed entries
+    [[ -z "$script" ]] && continue
+
+    version=$(extract_version "$desc")
 
     CATEGORIES["$category"]+="$script|$desc"$'\n'
 
     CATEGORY_COUNTS["$category"]=$(
-        printf "%s" "${CATEGORY_COUNTS["$category"]:-0}" |
-        awk '{print $1 + 1}'
+        printf '%s' "${CATEGORY_COUNTS["$category"]:-0}"
+    )
+
+    CATEGORY_COUNTS["$category"]=$(
+        (
+            count="${CATEGORY_COUNTS["$category"]:-0}"
+            count=$((count + 1))
+            echo "$count"
+        )
     )
 
     SCRIPT_DESCRIPTIONS["$script"]="$desc"
     SCRIPT_CATEGORIES["$script"]="$category"
+    SCRIPT_VERSIONS["$script"]="$version"
 
-    version=$(extract_version "$desc")
+done < "$INDEX_FILE"
 
-    if [[ -n "$version" ]]; then
-        SCRIPT_VERSIONS["$script"]="$version"
-    else
-        SCRIPT_VERSIONS["$script"]=""
+# ------------------------------------------------------------
+# Get sorted categories
+# ------------------------------------------------------------
+
+get_sorted_categories() {
+    printf '%s\n' "${!CATEGORIES[@]}" | sort
+}
+
+# ------------------------------------------------------------
+# Run script
+# ------------------------------------------------------------
+
+run_script() {
+
+    local category="$1"
+    local script="$2"
+
+    local selected="${TMP_DIR}/${script}"
+
+    clear
+
+    echo "============================================================"
+    echo " PiTweaks"
+    echo "============================================================"
+    echo
+    echo " Category : $category"
+    echo " Script   : $script"
+    echo
+    echo " Downloading module..."
+    echo
+
+    if ! curl -fsSL \
+        "${BASE_URL}/${script}?cachebuster=$(date +%s)" \
+        -o "$selected"; then
+
+        whiptail \
+            --title "PiTweaks | Error" \
+            --msgbox \
+            "Failed to download:\n\n${script}\n\nPlease check your network connection or repository configuration." \
+            12 70
+
+        return
     fi
 
-done <<< "$INDEX_DATA"
+    chmod +x "$selected"
 
-# ==============================================================================
-# SCRIPT DETAILS SCREEN
-# ==============================================================================
-#
-# Uses a msgbox for information and a separate menu for actions.
-#
-# This avoids the rendering problem from V4 where the information was supplied
-# as a menu prompt.
-#
-# Return:
-#
-#   0 = RUN selected
-#   1 = BACK / ESC selected
-#
-# ==============================================================================
+    # --------------------------------------------------------
+    # Existing persistence detection
+    # --------------------------------------------------------
+
+    IS_PERSISTENT=false
+
+    if grep -qi "# PERSISTENT: TRUE" "${selected}" || \
+       [[ "${selected}" == *"monitor"* ]]; then
+        IS_PERSISTENT=true
+    fi
+
+    echo "Module downloaded."
+    echo
+
+    if [[ "$IS_PERSISTENT" == true ]]; then
+        echo "Persistent module detected."
+    fi
+
+    echo
+    echo "Launching module..."
+    echo
+
+    bash "$selected"
+
+    rm -f "$selected"
+}
+
+# ------------------------------------------------------------
+# Script details screen
+# ------------------------------------------------------------
 
 show_script_details() {
 
-    local script="$1"
-    local category="$2"
-    local description="$3"
+    local category="$1"
+    local script="$2"
+    local description="${SCRIPT_DESCRIPTIONS["$script"]}"
+    local version="${SCRIPT_VERSIONS["$script"]}"
 
-    local version="${SCRIPT_VERSIONS[$script]:-}"
-    local DETAILS_MESSAGE
-    local DETAILS_SELECTED
+    local persistence="Detected at runtime"
 
-    description="${description:-No description provided.}"
+    while true; do
 
-    # --------------------------------------------------------------------------
-    # Version display
-    # --------------------------------------------------------------------------
+        local details=""
 
-    if [[ -n "$version" ]]; then
+        details+="SCRIPT     ${script}"$'\n'
+        details+="CATEGORY   ${category}"$'\n'
+        details+="VERSION    ${version}"$'\n'
+        details+=$'\n'
+        details+="DESCRIPTION"$'\n'
+        details+="${description}"$'\n'
+        details+=$'\n'
+        details+="PERSISTENCE   ${persistence}"
 
-        version_text="$version"
+        if whiptail \
+            --title "PiTweaks | Script Information" \
+            --ok-button "RUN" \
+            --cancel-button "BACK" \
+            --yesno "$details" \
+            18 76; then
 
-    else
+            run_script "$category" "$script"
 
-        version_text="Not specified"
+            return
+        else
+            return
+        fi
 
-    fi
-
-    # --------------------------------------------------------------------------
-    # Persistence cannot safely be determined until the actual script is
-    # downloaded. Keep this informational rather than guessing.
-    # --------------------------------------------------------------------------
-
-    persistence_text="Detected at runtime"
-
-    # --------------------------------------------------------------------------
-    # Build information panel
-    # --------------------------------------------------------------------------
-
-    DETAILS_MESSAGE="Script
-
-${script}
-
-Category
-
-${category}
-
-Version
-
-${version_text}
-
-Description
-
-${description}
-
-Persistence
-
-${persistence_text}"
-
-    get_terminal_size
-
-    # --------------------------------------------------------------------------
-    # Display information
-    # --------------------------------------------------------------------------
-
-    whiptail \
-        --clear \
-        --backtitle "PiTweaks  |  ${category}" \
-        --title "Script Information" \
-        --msgbox \
-        "$DETAILS_MESSAGE" \
-        "$BOX_HEIGHT" \
-        "$BOX_WIDTH" || {
-            # ESC = return to previous screen.
-            return 1
-        }
-
-    # --------------------------------------------------------------------------
-    # Action menu
-    # --------------------------------------------------------------------------
-
-    local DETAILS_OPTIONS=(
-        "RUN"
-        "Run this script"
-        "BACK"
-        "Return to the previous menu"
-    )
-
-    DETAILS_SELECTED=$(
-        whiptail \
-            --clear \
-            --backtitle "PiTweaks  |  ${category}  |  ${script}" \
-            --title "Script Actions" \
-            --menu \
-            "Choose an action:" \
-            10 \
-            60 \
-            2 \
-            "${DETAILS_OPTIONS[@]}" \
-            3>&1 1>&2 2>&3
-    ) || {
-        # ESC = return to previous screen.
-        return 1
-    }
-
-    if [[ "$DETAILS_SELECTED" == "RUN" ]]; then
-        return 0
-    fi
-
-    return 1
+    done
 }
 
-# ==============================================================================
-# SEARCH RESULTS
-# ==============================================================================
+# ------------------------------------------------------------
+# Search
+# ------------------------------------------------------------
 
 show_search() {
 
     while true; do
 
-        SEARCH_PROMPT="Search by script name, description, or category."
+        local query
 
-        if [[ -n "$SEARCH_QUERY" ]]; then
+        query=$(whiptail \
+            --title "PiTweaks | Search" \
+            --inputbox \
+            "Search scripts by name or description:" \
+            10 70 \
+            3>&1 1>&2 2>&3) || return
 
-            SEARCH_PROMPT+="
+        [[ -z "$query" ]] && continue
 
-Current search: $SEARCH_QUERY"
+        local results=()
+        local seen=()
 
-        fi
+        for script in "${!SCRIPT_DESCRIPTIONS[@]}"; do
 
-        NEW_SEARCH=$(
-            whiptail \
-                --clear \
-                --backtitle "PiTweaks  |  Script Search" \
-                --title "Search" \
-                --inputbox \
-                "$SEARCH_PROMPT" \
-                12 \
-                68 \
-                "$SEARCH_QUERY" \
-                3>&1 1>&2 2>&3
-        ) || {
-            # ESC = homepage.
-            return 1
-        }
+            local description="${SCRIPT_DESCRIPTIONS["$script"]}"
 
-        SEARCH_QUERY=$(
-            echo "$NEW_SEARCH" |
-            tr '[:upper:]' '[:lower:]' |
-            xargs
-        )
+            if [[ "${script,,}" == *"${query,,}"* ]] || \
+               [[ "${description,,}" == *"${query,,}"* ]]; then
 
-        if [[ -z "$SEARCH_QUERY" ]]; then
-            return 1
-        fi
+                local category="${SCRIPT_CATEGORIES["$script"]}"
 
-        # ----------------------------------------------------------------------
-        # Build search results
-        # ----------------------------------------------------------------------
-
-        SEARCH_OPTIONS=()
-
-        while IFS='|' read -r category script desc; do
-
-            category=$(echo "$category" | tr -d '\r' | xargs)
-            script=$(echo "$script" | tr -d '\r' | xargs)
-            desc=$(echo "$desc" | tr -d '\r' | xargs)
-
-            [[ -z "$script" || "$script" =~ ^# ]] && continue
-
-            # Legacy compatibility.
-            if [[ -z "$desc" && -n "$script" ]]; then
-
-                desc="$script"
-                script="$category"
-                category="Uncategorized"
-
-            elif [[ -z "$category" ]]; then
-
-                category="Uncategorized"
-
+                results+=("$script")
+                seen+=("$category|$script")
             fi
 
-            combined_text=$(
-                printf "%s %s %s" \
-                    "$script" \
-                    "$desc" \
-                    "$category" |
-                tr '[:upper:]' '[:lower:]'
-            )
+        done
 
-            if [[ "$combined_text" == *"$SEARCH_QUERY"* ]]; then
-
-                short_desc="$desc"
-
-                if (( ${#short_desc} > 62 )); then
-                    short_desc="${short_desc:0:59}..."
-                fi
-
-                SEARCH_OPTIONS+=(
-                    "$script"
-                    "${category}: ${short_desc:-No description}"
-                )
-
-            fi
-
-        done <<< "$INDEX_DATA"
-
-        # ----------------------------------------------------------------------
-        # No results
-        # ----------------------------------------------------------------------
-
-        if [[ "${#SEARCH_OPTIONS[@]}" -eq 0 ]]; then
+        if (( ${#results[@]} == 0 )); then
 
             whiptail \
-                --clear \
-                --title "No Results" \
+                --title "PiTweaks | Search" \
                 --msgbox \
-                "No scripts matched:
-
-$SEARCH_QUERY
-
-Try another search term." \
-                10 \
-                55
+                "No scripts matched:\n\n${query}" \
+                10 60
 
             continue
         fi
 
-        # ----------------------------------------------------------------------
-        # Navigation
-        # ----------------------------------------------------------------------
+        local menu_items=()
 
-        SEARCH_OPTIONS+=(
-            "BACK"
-            "Return to the PiTweaks homepage"
-        )
+        for entry in "${seen[@]}"; do
 
-        get_terminal_size
+            IFS='|' read -r category script <<< "$entry"
 
-        SEARCH_SELECTED=$(
-            whiptail \
-                --clear \
-                --backtitle "PiTweaks  |  Search: ${SEARCH_QUERY}" \
-                --title "Search Results" \
-                --menu \
-                "Select a script:" \
-                "$BOX_HEIGHT" \
-                "$BOX_WIDTH" \
-                "$MENU_HEIGHT" \
-                "${SEARCH_OPTIONS[@]}" \
-                3>&1 1>&2 2>&3
-        ) || {
-            # ESC = homepage.
-            return 1
-        }
+            menu_items+=(
+                "$script"
+                "${category} — ${SCRIPT_DESCRIPTIONS["$script"]}"
+            )
 
-        if [[ "$SEARCH_SELECTED" == "BACK" ]]; then
-            return 1
-        fi
+        done
 
-        # ----------------------------------------------------------------------
-        # Script selected
-        # ----------------------------------------------------------------------
+        local selection
 
-        SELECTED="$SEARCH_SELECTED"
+        selection=$(whiptail \
+            --title "PiTweaks | Search Results" \
+            --menu \
+            "Search results for: ${query}" \
+            "$TERM_HEIGHT" \
+            "$TERM_WIDTH" \
+            12 \
+            "${menu_items[@]}" \
+            3>&1 1>&2 2>&3) || return
 
-        CATEGORY="${SCRIPT_CATEGORIES[$SELECTED]:-Uncategorized}"
-        DESCRIPTION="${SCRIPT_DESCRIPTIONS[$SELECTED]:-No description provided.}"
+        [[ -z "$selection" ]] && return
 
-        # ----------------------------------------------------------------------
-        # Details screen
-        # ----------------------------------------------------------------------
-
-        if show_script_details \
-            "$SELECTED" \
-            "$CATEGORY" \
-            "$DESCRIPTION"; then
-
-            return 0
-
-        fi
+        show_script_details \
+            "${SCRIPT_CATEGORIES["$selection"]}" \
+            "$selection"
 
     done
 }
 
-# ==============================================================================
-# MAIN HOME / CATEGORY MENU
-# ==============================================================================
+# ------------------------------------------------------------
+# Category script menu
+# ------------------------------------------------------------
 
-while true; do
+show_category() {
 
-    get_terminal_size
-
-    MENU_OPTIONS=()
-
-    # ==========================================================================
-    # SEARCH
-    # ==========================================================================
-
-    if [[ -n "$SEARCH_QUERY" ]]; then
-
-        MENU_OPTIONS+=(
-            "SEARCH"
-            "Search: ${SEARCH_QUERY}"
-        )
-
-    else
-
-        MENU_OPTIONS+=(
-            "SEARCH"
-            "Find a script by name, category or description"
-        )
-
-    fi
-
-    # ==========================================================================
-    # CATEGORY LIST
-    # ==========================================================================
-
-    while IFS= read -r category; do
-
-        [[ -z "$category" ]] && continue
-
-        count=${CATEGORY_COUNTS[$category]:-0}
-
-        if (( count == 1 )); then
-            count_text="1 script"
-        else
-            count_text="${count} scripts"
-        fi
-
-        MENU_OPTIONS+=(
-            "$category"
-            "$count_text"
-        )
-
-    done < <(
-        printf "%s\n" "${!CATEGORIES[@]}" |
-        sort -f
-    )
-
-    # ==========================================================================
-    # EXIT
-    # ==========================================================================
-
-    MENU_OPTIONS+=(
-        "EXIT"
-        "Close PiTweaks installer"
-    )
-
-    # ==========================================================================
-    # HOME SCREEN
-    # ==========================================================================
-
-    SELECTED=$(
-        whiptail \
-            --clear \
-            --backtitle "PiTweaks  |  Raspberry Pi Script Manager" \
-            --title "PiTweaks" \
-            --menu \
-            "Browse and run PiTweaks scripts:" \
-            "$BOX_HEIGHT" \
-            "$BOX_WIDTH" \
-            "$MENU_HEIGHT" \
-            "${MENU_OPTIONS[@]}" \
-            3>&1 1>&2 2>&3
-    ) || {
-        # ESC on homepage = stay on homepage.
-        continue
-    }
-
-    # ==========================================================================
-    # SEARCH
-    # ==========================================================================
-
-    if [[ "$SELECTED" == "SEARCH" ]]; then
-
-        if show_search; then
-            break
-        fi
-
-        continue
-    fi
-
-    # ==========================================================================
-    # EXIT
-    # ==========================================================================
-
-    if [[ "$SELECTED" == "EXIT" ]]; then
-
-        clear
-        echo "PiTweaks installer closed."
-        exit 0
-
-    fi
-
-    # ==========================================================================
-    # CATEGORY SELECTED
-    # ==========================================================================
-
-    CATEGORY="$SELECTED"
+    local category="$1"
 
     while true; do
 
-        get_terminal_size
+        local menu_items=()
 
-        SCRIPT_OPTIONS=()
-
-        # ----------------------------------------------------------------------
-        # Scripts in selected category
-        # ----------------------------------------------------------------------
-
-        while IFS='|' read -r script desc; do
-
-            [[ -z "$script" ]] && continue
-
-            short_desc="$desc"
-
-            if (( ${#short_desc} > 68 )); then
-                short_desc="${short_desc:0:65}..."
-            fi
-
-            SCRIPT_OPTIONS+=(
-                "$script"
-                "${short_desc:-No description provided}"
-            )
-
-        done < <(
-            printf "%s" "${CATEGORIES[$CATEGORY]}" |
-            sort -f
-        )
-
-        # ----------------------------------------------------------------------
-        # Navigation
-        # ----------------------------------------------------------------------
-
-        SCRIPT_OPTIONS+=(
-            "BACK"
+        menu_items+=(
+            "__BACK__"
             "Return to categories"
         )
 
-        # ----------------------------------------------------------------------
-        # Category screen
-        # ----------------------------------------------------------------------
+        while IFS= read -r entry; do
 
-        SCRIPT_SELECTED=$(
-            whiptail \
-                --clear \
-                --backtitle "PiTweaks  |  ${CATEGORY}" \
-                --title "${CATEGORY}" \
-                --menu \
-                "Select a script:" \
-                "$BOX_HEIGHT" \
-                "$BOX_WIDTH" \
-                "$MENU_HEIGHT" \
-                "${SCRIPT_OPTIONS[@]}" \
-                3>&1 1>&2 2>&3
-        ) || {
-            # ESC = homepage.
-            break
-        }
+            [[ -z "$entry" ]] && continue
 
-        if [[ "$SCRIPT_SELECTED" == "BACK" ]]; then
-            break
+            local script
+            local description
+
+            IFS='|' read -r script description <<< "$entry"
+
+            menu_items+=(
+                "$script"
+                "$description"
+            )
+
+        done <<< "${CATEGORIES["$category"]}"
+
+        local selection
+
+        selection=$(whiptail \
+            --title "PiTweaks | ${category}" \
+            --menu \
+            "Select a script" \
+            "$TERM_HEIGHT" \
+            "$TERM_WIDTH" \
+            12 \
+            "${menu_items[@]}" \
+            3>&1 1>&2 2>&3) || return
+
+        if [[ "$selection" == "__BACK__" ]]; then
+            return
         fi
 
-        # ----------------------------------------------------------------------
-        # Script selected
-        # ----------------------------------------------------------------------
+        [[ -z "$selection" ]] && return
 
-        SELECTED="$SCRIPT_SELECTED"
-
-        DESCRIPTION="${SCRIPT_DESCRIPTIONS[$SELECTED]:-No description provided.}"
-
-        # ----------------------------------------------------------------------
-        # Script details
-        # ----------------------------------------------------------------------
-
-        if show_script_details \
-            "$SELECTED" \
-            "$CATEGORY" \
-            "$DESCRIPTION"; then
-
-            break 2
-
-        fi
+        show_script_details "$category" "$selection"
 
     done
+}
 
-done
+# ------------------------------------------------------------
+# Main homepage
+# ------------------------------------------------------------
 
-# ==============================================================================
-# EXISTING INSTALL / EXECUTION FLOW
-# ==============================================================================
-#
-# This section deliberately remains functionally equivalent to the previous
-# installer versions.
-#
-# ==============================================================================
+show_home() {
 
-clear
+    while true; do
 
-echo "Downloading and preparing ${SELECTED}..."
-echo "=========================================="
-echo ""
+        local menu_items=()
 
-# ==============================================================================
-# DOWNLOAD SCRIPT
-# ==============================================================================
+        # Search
+        menu_items+=(
+            "__SEARCH__"
+            "Search all scripts"
+        )
 
-curl -fsSL \
-    "https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/${SELECTED}?cb=$(date +%s)" \
-    -o "${SELECTED}"
+        # Categories
+        while IFS= read -r category; do
 
-# ==============================================================================
-# MAKE EXECUTABLE
-# ==============================================================================
+            [[ -z "$category" ]] && continue
 
-chmod +x "${SELECTED}"
+            local count="${CATEGORY_COUNTS["$category"]:-0}"
 
-# ==============================================================================
-# CHECK PERSISTENCE
-# ==============================================================================
+            menu_items+=(
+                "$category"
+                "${count} script(s)"
+            )
 
-IS_PERSISTENT=false
+        done < <(get_sorted_categories)
 
-if grep -qi "# PERSISTENT: TRUE" "${SELECTED}" ||
-   [[ "${SELECTED}" == *"monitor"* ]]; then
+        # Exit
+        menu_items+=(
+            "__EXIT__"
+            "Exit PiTweaks"
+        )
 
-    IS_PERSISTENT=true
+        local selection
 
-fi
+        selection=$(whiptail \
+            --title "PiTweaks" \
+            --menu \
+            "Select an option" \
+            "$TERM_HEIGHT" \
+            "$TERM_WIDTH" \
+            14 \
+            "${menu_items[@]}" \
+            3>&1 1>&2 2>&3) || continue
 
-# ==============================================================================
-# RUN LOCALLY
-# ==============================================================================
+        case "$selection" in
 
-./"${SELECTED}"
+            "__SEARCH__")
+                show_search
+                ;;
 
-# ==============================================================================
-# SMART CLEANUP
-# ==============================================================================
+            "__EXIT__")
+                clear
+                exit 0
+                ;;
 
-if [ "$IS_PERSISTENT" = false ]; then
+            "")
+                continue
+                ;;
 
-    rm -f "${SELECTED}"
+            *)
+                show_category "$selection"
+                ;;
 
-    echo ""
-    echo "=========================================="
-    echo "Temporary script executed and cleaned up."
+        esac
 
-else
+    done
+}
 
-    echo ""
-    echo "=========================================="
-    echo "Persistent script installed and saved to disk (Cron/Daemon ready!)."
+# ------------------------------------------------------------
+# Start
+# ------------------------------------------------------------
 
-fi
+show_home
