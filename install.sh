@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# PI TWEAKS INSTALLER — SCRIPT LAUNCHER
+# PI TWEAKS INSTALLER — SCRIPT LAUNCHER V4
 # ==============================================================================
 set -eo pipefail
 
@@ -74,6 +74,8 @@ get_terminal_size() {
 unset CATEGORIES
 declare -A CATEGORIES
 declare -A CATEGORY_COUNTS
+declare -A SCRIPT_DESCRIPTIONS
+declare -A SCRIPT_CATEGORIES
 
 while IFS='|' read -r category script desc; do
 
@@ -96,11 +98,104 @@ while IFS='|' read -r category script desc; do
         category="Uncategorized"
     fi
 
+    # --------------------------------------------------------------------------
+    # Store category/script information
+    # --------------------------------------------------------------------------
+
     CATEGORIES["$category"]+="$script|$desc"$'\n'
 
     CATEGORY_COUNTS["$category"]=$(( ${CATEGORY_COUNTS["$category"]:-0} + 1 ))
 
+    SCRIPT_DESCRIPTIONS["$script"]="$desc"
+    SCRIPT_CATEGORIES["$script"]="$category"
+
 done <<< "$INDEX_DATA"
+
+# ==============================================================================
+# SCRIPT INFORMATION SCREEN
+# ==============================================================================
+
+show_script_details() {
+
+    local script="$1"
+    local category="$2"
+    local description="$3"
+
+    description="${description:-No description provided.}"
+
+    # --------------------------------------------------------------------------
+    # Determine whether this script appears to be persistent.
+    #
+    # This is informational only at this stage.
+    # The existing persistence check below remains authoritative.
+    # --------------------------------------------------------------------------
+
+    local persistence_status="Temporary"
+
+    if [[ "$script" == *"monitor"* ]]; then
+        persistence_status="Persistent"
+    fi
+
+    # --------------------------------------------------------------------------
+    # Build information message
+    # --------------------------------------------------------------------------
+
+    local DETAILS_MESSAGE
+
+    DETAILS_MESSAGE="Script
+
+${script}
+
+Category
+
+${category}
+
+Description
+
+${description}
+
+Type
+
+${persistence_status}"
+
+    get_terminal_size
+
+    # --------------------------------------------------------------------------
+    # Details menu
+    # --------------------------------------------------------------------------
+
+    local DETAILS_OPTIONS=(
+        "RUN"
+        "Run this script"
+        "BACK"
+        "Return to the previous menu"
+    )
+
+    local DETAILS_SELECTED
+
+    DETAILS_SELECTED=$(
+        whiptail \
+            --clear \
+            --backtitle "PiTweaks  |  ${category}" \
+            --title "Script Information" \
+            --menu \
+            "$DETAILS_MESSAGE" \
+            "$BOX_HEIGHT" \
+            "$BOX_WIDTH" \
+            "$MENU_HEIGHT" \
+            "${DETAILS_OPTIONS[@]}" \
+            3>&1 1>&2 2>&3
+    ) || {
+        # ESC = return to previous menu.
+        return 1
+    }
+
+    if [[ "$DETAILS_SELECTED" == "RUN" ]]; then
+        return 0
+    fi
+
+    return 1
+}
 
 # ==============================================================================
 # MAIN HOME / CATEGORY MENU
@@ -117,15 +212,19 @@ while true; do
     # ==========================================================================
 
     if [[ -n "$SEARCH_QUERY" ]]; then
+
         MENU_OPTIONS+=(
             "SEARCH"
             "Search: ${SEARCH_QUERY}"
         )
+
     else
+
         MENU_OPTIONS+=(
             "SEARCH"
             "Find a script by name, category or description"
         )
+
     fi
 
     # ==========================================================================
@@ -242,12 +341,15 @@ Current search: $SEARCH_QUERY"
 
                 # Legacy format compatibility
                 if [[ -z "$desc" && -n "$script" ]]; then
+
                     desc="$script"
                     script="$category"
                     category="Uncategorized"
 
                 elif [[ -z "$category" ]]; then
+
                     category="Uncategorized"
+
                 fi
 
                 combined_text=$(
@@ -270,6 +372,7 @@ Current search: $SEARCH_QUERY"
                         "$script"
                         "${category}: ${short_desc:-No description}"
                     )
+
                 fi
 
             done <<< "$INDEX_DATA"
@@ -296,7 +399,7 @@ Try another search term." \
             fi
 
             # ------------------------------------------------------------------
-            # Add navigation
+            # Navigation
             # ------------------------------------------------------------------
 
             SEARCH_OPTIONS+=(
@@ -312,7 +415,7 @@ Try another search term." \
                     --backtitle "PiTweaks  |  Search: ${SEARCH_QUERY}" \
                     --title "Search Results" \
                     --menu \
-                    "Select a script to run:" \
+                    "Select a script:" \
                     "$BOX_HEIGHT" \
                     "$BOX_WIDTH" \
                     "$MENU_HEIGHT" \
@@ -327,10 +430,30 @@ Try another search term." \
                 break
             fi
 
-            SELECTED="$SEARCH_SELECTED"
+            # ------------------------------------------------------------------
+            # Search result selected
+            # ------------------------------------------------------------------
 
-            # Script selected from search.
-            break 2
+            SELECTED="$SEARCH_SELECTED"
+            CATEGORY="${SCRIPT_CATEGORIES[$SELECTED]:-Uncategorized}"
+            DESCRIPTION="${SCRIPT_DESCRIPTIONS[$SELECTED]:-No description provided.}"
+
+            # ------------------------------------------------------------------
+            # Show script details
+            # ------------------------------------------------------------------
+
+            if show_script_details \
+                "$SELECTED" \
+                "$CATEGORY" \
+                "$DESCRIPTION"; then
+
+                break 2
+
+            else
+
+                continue
+
+            fi
 
         done
 
@@ -342,9 +465,11 @@ Try another search term." \
     # ==========================================================================
 
     if [[ "$SELECTED" == "EXIT" ]]; then
+
         clear
         echo "PiTweaks installer closed."
         exit 0
+
     fi
 
     # ==========================================================================
@@ -402,7 +527,7 @@ Try another search term." \
                 --backtitle "PiTweaks  |  ${CATEGORY}" \
                 --title "${CATEGORY}" \
                 --menu \
-                "Select a script to run:" \
+                "Select a script:" \
                 "$BOX_HEIGHT" \
                 "$BOX_WIDTH" \
                 "$MENU_HEIGHT" \
@@ -418,8 +543,20 @@ Try another search term." \
         fi
 
         SELECTED="$SCRIPT_SELECTED"
+        DESCRIPTION="${SCRIPT_DESCRIPTIONS[$SELECTED]:-No description provided.}"
 
-        break 2
+        # ----------------------------------------------------------------------
+        # Script details
+        # ----------------------------------------------------------------------
+
+        if show_script_details \
+            "$SELECTED" \
+            "$CATEGORY" \
+            "$DESCRIPTION"; then
+
+            break 2
+
+        fi
 
     done
 
@@ -430,42 +567,60 @@ done
 # ==============================================================================
 
 clear
-echo "🚀 Downloading and preparing ${SELECTED}..."
+
+echo "Downloading and preparing ${SELECTED}..."
 echo "=========================================="
 echo ""
 
-# Download script to disk using raw URL
+# ==============================================================================
+# DOWNLOAD
+# ==============================================================================
+
 curl -fsSL \
     "https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/${SELECTED}?cb=$(date +%s)" \
     -o "${SELECTED}"
 
-# Make it executable
+# ==============================================================================
+# MAKE EXECUTABLE
+# ==============================================================================
+
 chmod +x "${SELECTED}"
 
-# Check if the script requires persistence
+# ==============================================================================
+# PERSISTENCE DETECTION
+# ==============================================================================
+
 IS_PERSISTENT=false
 
 if grep -qi "# PERSISTENT: TRUE" "${SELECTED}" ||
    [[ "${SELECTED}" == *"monitor"* ]]; then
+
     IS_PERSISTENT=true
+
 fi
 
-# Run locally
+# ==============================================================================
+# RUN LOCALLY
+# ==============================================================================
+
 ./"${SELECTED}"
 
-# Smart Cleanup
+# ==============================================================================
+# SMART CLEANUP
+# ==============================================================================
+
 if [ "$IS_PERSISTENT" = false ]; then
 
     rm -f "${SELECTED}"
 
     echo ""
     echo "=========================================="
-    echo "✔ Temporary script executed and cleaned up."
+    echo "Temporary script executed and cleaned up."
 
 else
 
     echo ""
     echo "=========================================="
-    echo "✔ Persistent script installed and saved to disk (Cron/Daemon ready!)"
+    echo "Persistent script installed and saved to disk (Cron/Daemon ready!)."
 
 fi
