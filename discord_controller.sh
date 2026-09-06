@@ -2,7 +2,7 @@
 
 # Description: Discord bot installer
 # PERSISTENT: FALSE
-# Category: Scripts
+# Category: Discord
 
 # ==============================================================================
 # 🤖 PiTweaks - Discord Bot Installer (Whiptail TUI & Dual-Channel Routing)
