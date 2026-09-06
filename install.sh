@@ -98,8 +98,9 @@ while IFS='|' read -r category script desc; do
 
     CATEGORIES["$category"]+="$script|$desc"$'\n'
 
-    CATEGORY_COUNTS["$category"]=$(
-        ( ${CATEGORY_COUNTS["$category"]:-0} + 1 )
+    CATEGORIES["$category"]+="$script|$desc"$'\n'
+
+    CATEGORY_COUNTS["$category"]=$(( ${CATEGORY_COUNTS["$category"]:-0} + 1 ))
     )
 
 done <<< "$INDEX_DATA"
