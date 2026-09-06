@@ -4,10 +4,11 @@
 # PiTweaks - Service Manager
 # Service_Manager.sh
 
+# PERSISTENT: TRUE
 # Category: Administration
 # Description: Friendly systemd service manager for viewing and controlling system services, custom scripts, startup settings, and logs. V1.0
 # Friendly systemd service management for Raspberry Pi.
-#
+
 # Features:
 #   - Running / stopped / failed service overview
 #   - Custom service detection
@@ -16,7 +17,7 @@
 #   - Enable / Disable
 #   - Service logs
 #   - Refresh
-#
+
 # Requirements:
 #   - bash
 #   - whiptail
