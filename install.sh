@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# 🍓 PI TWEAKS INSTALLER (SMART PERSISTENCE & DYNAMIC HEADERS)
+# 🍓 PI TWEAKS INSTALLER — CATEGORY UI
 # ==============================================================================
 set -eo pipefail
 
@@ -27,110 +27,287 @@ INDEX_DATA=$(curl -fsSL "https://raw.githubusercontent.com/${USER}/${REPO}/${BRA
 
 SEARCH_QUERY=""
 
+# ==============================================================================
+# UI HELPERS
+# ==============================================================================
+
+get_terminal_size() {
+    TERM_HEIGHT=$(stty size 2>/dev/null | awk '{print $1}')
+    TERM_WIDTH=$(stty size 2>/dev/null | awk '{print $2}')
+
+    TERM_HEIGHT=${TERM_HEIGHT:-24}
+    TERM_WIDTH=${TERM_WIDTH:-80}
+
+    # Keep Whiptail usable on smaller terminals
+    (( TERM_HEIGHT < 15 )) && TERM_HEIGHT=15
+    (( TERM_WIDTH < 60 )) && TERM_WIDTH=60
+
+    BOX_HEIGHT=$((TERM_HEIGHT - 2))
+    BOX_WIDTH=$((TERM_WIDTH - 4))
+}
+
+# ==============================================================================
+# PARSE INDEX.TXT
+# ==============================================================================
+
+unset CATEGORIES
+declare -A CATEGORIES
+declare -A CATEGORY_COUNTS
+
+while IFS='|' read -r category script desc; do
+    category=$(echo "$category" | tr -d '\r' | xargs)
+    script=$(echo "$script" | tr -d '\r' | xargs)
+    desc=$(echo "$desc" | tr -d '\r' | xargs)
+
+    [[ -z "$script" || "$script" =~ ^# ]] && continue
+
+    # Legacy format compatibility
+    if [[ -z "$desc" && -n "$script" ]]; then
+        desc="$script"
+        script="$category"
+        category="Uncategorized"
+    elif [[ -z "$category" ]]; then
+        category="Uncategorized"
+    fi
+
+    CATEGORIES["$category"]+="$script|$desc"$'\n'
+    ((CATEGORY_COUNTS["$category"]++)) || true
+
+done <<< "$INDEX_DATA"
+
+# ==============================================================================
+# CATEGORY MENU
+# ==============================================================================
+
 while true; do
-    # Clear the associative array on each loop iteration to prevent item duplication
-    unset CATEGORIES
-    declare -A CATEGORIES
 
-    # 2. Parse index.txt and group items alphabetically by Category
-    while IFS='|' read -r category script desc; do
-        category=$(echo "$category" | tr -d '\r' | xargs)
-        script=$(echo "$script" | tr -d '\r' | xargs)
-        desc=$(echo "$desc" | tr -d '\r' | xargs)
+    get_terminal_size
 
-        [[ -z "$script" || "$script" =~ ^# ]] && continue
-
-        if [[ -z "$desc" && -n "$script" ]]; then
-            desc="$script"
-            script="$category"
-            category="Uncategorized"
-        elif [[ -z "$category" ]]; then
-            category="Uncategorized"
-        fi
-
-        # Filter by script name, description, and category if a search query exists
-        if [[ -n "$SEARCH_QUERY" ]]; then
-            combined_text=$(echo "$script $desc $category" | tr '[:upper:]' '[:lower:]')
-            if [[ "$combined_text" != *"$SEARCH_QUERY"* ]]; then
-                continue
-            fi
-        fi
-
-        CATEGORIES["$category"]+="$script|$desc"$'\n'
-    done <<< "$INDEX_DATA"
-
-    # 3. Build whiptail menu options with the Search Action Button at the very top
     MENU_OPTIONS=()
 
-    if [[ -n "$SEARCH_QUERY" ]]; then
-        MENU_OPTIONS+=("🔍 [CLEAR SEARCH: '$SEARCH_QUERY']" "Reset and view all available scripts")
-    else
-        MENU_OPTIONS+=("🔍 [SEARCH SCRIPTS...]" "Type a keyword to filter the menu list")
-    fi
-    MENU_OPTIONS+=("========================================" "")
+    # --------------------------------------------------------------------------
+    # Search
+    # --------------------------------------------------------------------------
 
-    sorted_categories=$(printf "%s\n" "${!CATEGORIES[@]}" | sort)
+    if [[ -n "$SEARCH_QUERY" ]]; then
+        MENU_OPTIONS+=(
+            "SEARCH"
+            "Current search: \"$SEARCH_QUERY\""
+        )
+    else
+        MENU_OPTIONS+=(
+            "SEARCH"
+            "Search all scripts by name, description or category"
+        )
+    fi
+
+    # --------------------------------------------------------------------------
+    # Categories
+    # --------------------------------------------------------------------------
+
+    sorted_categories=$(printf "%s\n" "${!CATEGORIES[@]}" | sort -f)
 
     for cat in $sorted_categories; do
-        MENU_OPTIONS+=("=== ${cat^^} ===" "")
-        
-        sorted_scripts=$(printf "%s" "${CATEGORIES[$cat]}" | sort)
-        
-        while IFS='|' read -r script desc; do
-            [[ -z "$script" ]] && continue
-            MENU_OPTIONS+=("$script" "    └─ ${desc:-No description provided}")
-        done <<< "$sorted_scripts"
+        count=${CATEGORY_COUNTS[$cat]}
+
+        if (( count == 1 )); then
+            label="1 script"
+        else
+            label="${count} scripts"
+        fi
+
+        MENU_OPTIONS+=(
+            "$cat"
+            "$label"
+        )
     done
 
-    if [ "${#MENU_OPTIONS[@]}" -le 3 ]; then
-        whiptail --title "Notice" --msgbox "No matching scripts found for your search query." 8 50
-        SEARCH_QUERY=""
-        continue
-    fi
+    MENU_OPTIONS+=(
+        "EXIT"
+        "Exit PiTweaks installer"
+    )
 
-    # 4. Get terminal size for responsive menu
-    TERM_HEIGHT=$(stty size 2>/dev/null | awk '{print $1}' || echo 20)
-    TERM_WIDTH=$(stty size 2>/dev/null | awk '{print $2}' || echo 80)
-
-    BOX_HEIGHT=$(( TERM_HEIGHT - 4 ))
-    BOX_WIDTH=$(( TERM_WIDTH - 6 ))
-    MENU_HEIGHT=$(( BOX_HEIGHT - 8 ))
-
-    # 5. Launch Whiptail TUI loop
     SELECTED=$(whiptail --clear \
         --backtitle "PiTweaks Script Manager" \
-        --title "Script Selection Menu" \
-        --menu "Select a script to execute:" "$BOX_HEIGHT" "$BOX_WIDTH" "$MENU_HEIGHT" \
-        "${MENU_OPTIONS[@]}" 3>&1 1>&2 2>&3) || {
+        --title "PiTweaks — Categories" \
+        --menu "Select a category:" \
+        "$BOX_HEIGHT" "$BOX_WIDTH" "$((BOX_HEIGHT - 8))" \
+        "${MENU_OPTIONS[@]}" \
+        3>&1 1>&2 2>&3) || {
             clear
             echo "Cancelled."
             exit 0
         }
 
-    # Handle Search Button action
-    if [[ "$SELECTED" == "🔍 [SEARCH SCRIPTS...]" ]]; then
+    # ==============================================================================
+    # SEARCH
+    # ==============================================================================
+
+    if [[ "$SELECTED" == "SEARCH" ]]; then
+
         SEARCH_QUERY=$(whiptail --clear \
             --backtitle "PiTweaks Script Manager" \
             --title "Search Scripts" \
-            --inputbox "Search by script name, description, or category:" 10 60 3>&1 1>&2 2>&3) || SEARCH_QUERY=""
+            --inputbox \
+            "Search by script name, description, or category:" \
+            10 65 \
+            "$SEARCH_QUERY" \
+            3>&1 1>&2 2>&3) || {
+                continue
+            }
+
         SEARCH_QUERY=$(echo "$SEARCH_QUERY" | tr '[:upper:]' '[:lower:]' | xargs)
-        continue
+
+        if [[ -z "$SEARCH_QUERY" ]]; then
+            continue
+        fi
+
+        # ----------------------------------------------------------------------
+        # Build search results
+        # ----------------------------------------------------------------------
+
+        SEARCH_OPTIONS=()
+
+        while IFS='|' read -r category script desc; do
+            category=$(echo "$category" | tr -d '\r' | xargs)
+            script=$(echo "$script" | tr -d '\r' | xargs)
+            desc=$(echo "$desc" | tr -d '\r' | xargs)
+
+            [[ -z "$script" || "$script" =~ ^# ]] && continue
+
+            if [[ -z "$desc" && -n "$script" ]]; then
+                desc="$script"
+                script="$category"
+                category="Uncategorized"
+            elif [[ -z "$category" ]]; then
+                category="Uncategorized"
+            fi
+
+            combined_text=$(echo "$script $desc $category" | tr '[:upper:]' '[:lower:]')
+
+            if [[ "$combined_text" == *"$SEARCH_QUERY"* ]]; then
+                SEARCH_OPTIONS+=(
+                    "$script"
+                    "[$category] ${desc:-No description provided}"
+                )
+            fi
+
+        done <<< "$INDEX_DATA"
+
+        # ----------------------------------------------------------------------
+        # No results
+        # ----------------------------------------------------------------------
+
+        if [[ "${#SEARCH_OPTIONS[@]}" -eq 0 ]]; then
+
+            whiptail --clear \
+                --title "No Results" \
+                --msgbox \
+                "No scripts matched:
+
+\"$SEARCH_QUERY\"
+
+Try another search term." \
+                10 55
+
+            SEARCH_QUERY=""
+            continue
+        fi
+
+        # ----------------------------------------------------------------------
+        # Search results menu
+        # ----------------------------------------------------------------------
+
+        get_terminal_size
+
+        SEARCH_OPTIONS+=(
+            "BACK"
+            "Return to categories"
+        )
+
+        SELECTED=$(whiptail --clear \
+            --backtitle "PiTweaks Script Manager" \
+            --title "PiTweaks — Search Results" \
+            --menu \
+            "Search results for: \"$SEARCH_QUERY\"" \
+            "$BOX_HEIGHT" "$BOX_WIDTH" "$((BOX_HEIGHT - 8))" \
+            "${SEARCH_OPTIONS[@]}" \
+            3>&1 1>&2 2>&3) || {
+                continue
+            }
+
+        if [[ "$SELECTED" == "BACK" ]]; then
+            continue
+        fi
+
+        break
     fi
 
-    # Handle Clear Search action
-    if [[ "$SELECTED" == "🔍 [CLEAR SEARCH"* ]]; then
-        SEARCH_QUERY=""
-        continue
+    # ==============================================================================
+    # EXIT
+    # ==============================================================================
+
+    if [[ "$SELECTED" == "EXIT" ]]; then
+        clear
+        echo "PiTweaks installer closed."
+        exit 0
     fi
 
-    # Prevent selection of headers or divider lines
-    if [[ "$SELECTED" == "==="%* || "$SELECTED" == "="* ]]; then
-        whiptail --title "Notice" --msgbox "Please select an actual script or the search option." 8 45
-        continue
-    fi
+    # ==============================================================================
+    # CATEGORY SELECTED
+    # ==============================================================================
 
-    break
+    CATEGORY="$SELECTED"
+
+    while true; do
+
+        get_terminal_size
+
+        SCRIPT_OPTIONS=()
+
+        SCRIPT_OPTIONS+=(
+            "BACK"
+            "Return to categories"
+        )
+
+        sorted_scripts=$(printf "%s" "${CATEGORIES[$CATEGORY]}" | sort -f)
+
+        while IFS='|' read -r script desc; do
+
+            [[ -z "$script" ]] && continue
+
+            SCRIPT_OPTIONS+=(
+                "$script"
+                "${desc:-No description provided}"
+            )
+
+        done <<< "$sorted_scripts"
+
+        SELECTED=$(whiptail --clear \
+            --backtitle "PiTweaks Script Manager" \
+            --title "PiTweaks — ${CATEGORY}" \
+            --menu \
+            "Select a script:" \
+            "$BOX_HEIGHT" "$BOX_WIDTH" "$((BOX_HEIGHT - 8))" \
+            "${SCRIPT_OPTIONS[@]}" \
+            3>&1 1>&2 2>&3) || {
+                break
+            }
+
+        if [[ "$SELECTED" == "BACK" ]]; then
+            break
+        fi
+
+        # A real script has been selected
+        break 2
+
+    done
+
 done
+
+# ==============================================================================
+# EXISTING INSTALL / EXECUTION FLOW
+# ==============================================================================
 
 clear
 echo "🚀 Downloading and preparing ${SELECTED}..."
