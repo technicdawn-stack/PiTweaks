@@ -5,7 +5,7 @@
 # Service_Manager.sh
 
 # Category: Administration
-# Description:
+# Description: Friendly systemd service manager for viewing and controlling system services, custom scripts, startup settings, and logs. V1.0
 # Friendly systemd service management for Raspberry Pi.
 #
 # Features:
