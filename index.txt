@@ -5,7 +5,7 @@ Webpages|Ramdrop.sh|RAM Drop v1.3.7 All-in-One Self-Contained Deployment & Manag
 Webpages|SSLguide.sh|Interactive Installer & Systemd Service Setup for SSL Guide Utility
 Webpages|Subnet_Calc.sh|HomeLab Subnet & IP Calculator Management Console with Systemd Service Control
 Tools|conspy_control.sh|Standalone Conspy screen mirroring controller and setup manager v1.1
-Scripts|discord_controller.sh|Discord bot installer
+Discord|discord_controller.sh|Discord bot installer
 Discord|discord_monitor.sh|Pre Ping working version of temperature alerts, alert scheduling and resource testing with Instant Watchdog Triggers. V2.0
 Tools|disk_check.sh|Advanced disk and SD card health monitor and cleaner.
 Tools|img_backup.sh|Modular Pi Imager Utility with Dynamic USB Detection and Network Streaming V1.3.3
