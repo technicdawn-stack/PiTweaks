@@ -1,8 +1,22 @@
 #!/bin/bash
 
 # ==============================================================================
-# PI TWEAKS INSTALLER — SCRIPT LAUNCHER V4
+# PI TWEAKS INSTALLER — SCRIPT LAUNCHER V5
 # ==============================================================================
+#
+# Current index.txt format:
+#
+# category|script|description
+#
+# Example:
+# 1st_Set|A_Test.sh|Loops the install url for faster and easier refreshing. V1.1
+#
+# Legacy two-field format is also supported:
+#
+# script|description
+#
+# ==============================================================================
+
 set -eo pipefail
 
 USER="technicdawn-stack"
@@ -68,14 +82,78 @@ get_terminal_size() {
 }
 
 # ==============================================================================
-# PARSE INDEX.TXT
+# METADATA STORAGE
+# ==============================================================================
+#
+# These arrays keep the UI data separate from the menu system.
+#
+# This gives us a clean place to add future metadata later without having to
+# redesign the navigation system.
+#
+# Future possibilities:
+#
+# SCRIPT_VERSIONS
+# SCRIPT_TYPES
+# SCRIPT_REQUIREMENTS
+# SCRIPT_SUDO
+# SCRIPT_NETWORK
+# SCRIPT_PERSISTENCE
+#
 # ==============================================================================
 
 unset CATEGORIES
 declare -A CATEGORIES
 declare -A CATEGORY_COUNTS
+
 declare -A SCRIPT_DESCRIPTIONS
 declare -A SCRIPT_CATEGORIES
+declare -A SCRIPT_VERSIONS
+
+# ==============================================================================
+# VERSION EXTRACTION
+# ==============================================================================
+#
+# Extracts a trailing version such as:
+#
+# V1.1
+# V1.3.7
+# v2.0
+#
+# from the description.
+#
+# The complete description remains stored unchanged.
+#
+# ==============================================================================
+
+extract_version() {
+
+    local description="$1"
+    local version=""
+
+    if [[ "$description" =~ [[:space:]]([Vv][0-9]+([.][0-9]+)*)[[:space:]]*$ ]]; then
+        version="${BASH_REMATCH[1]}"
+    fi
+
+    printf "%s" "$version"
+}
+
+# ==============================================================================
+# PARSE INDEX.TXT
+# ==============================================================================
+#
+# Supported:
+#
+# category|script|description
+#
+# Legacy:
+#
+# script|description
+#
+# Empty category:
+#
+# |script|description
+#
+# ==============================================================================
 
 while IFS='|' read -r category script desc; do
 
@@ -83,36 +161,71 @@ while IFS='|' read -r category script desc; do
     script=$(echo "$script" | tr -d '\r' | xargs)
     desc=$(echo "$desc" | tr -d '\r' | xargs)
 
+    # Skip blank lines and comments.
     [[ -z "$script" || "$script" =~ ^# ]] && continue
 
     # --------------------------------------------------------------------------
-    # Legacy index.txt compatibility
+    # Legacy two-field compatibility
+    #
+    # Old:
+    #
+    # A_Test.sh|Description
+    #
+    # Becomes:
+    #
+    # Uncategorized|A_Test.sh|Description
     # --------------------------------------------------------------------------
 
     if [[ -z "$desc" && -n "$script" ]]; then
+
         desc="$script"
         script="$category"
         category="Uncategorized"
 
     elif [[ -z "$category" ]]; then
+
         category="Uncategorized"
+
     fi
 
     # --------------------------------------------------------------------------
-    # Store category/script information
+    # Store script information
     # --------------------------------------------------------------------------
 
     CATEGORIES["$category"]+="$script|$desc"$'\n'
 
-    CATEGORY_COUNTS["$category"]=$(( ${CATEGORY_COUNTS["$category"]:-0} + 1 ))
+    CATEGORY_COUNTS["$category"]=$(
+        printf "%s" "${CATEGORY_COUNTS["$category"]:-0}" |
+        awk '{print $1 + 1}'
+    )
 
     SCRIPT_DESCRIPTIONS["$script"]="$desc"
     SCRIPT_CATEGORIES["$script"]="$category"
 
+    version=$(extract_version "$desc")
+
+    if [[ -n "$version" ]]; then
+        SCRIPT_VERSIONS["$script"]="$version"
+    else
+        SCRIPT_VERSIONS["$script"]=""
+    fi
+
 done <<< "$INDEX_DATA"
 
 # ==============================================================================
-# SCRIPT INFORMATION SCREEN
+# SCRIPT DETAILS SCREEN
+# ==============================================================================
+#
+# Uses a msgbox for information and a separate menu for actions.
+#
+# This avoids the rendering problem from V4 where the information was supplied
+# as a menu prompt.
+#
+# Return:
+#
+#   0 = RUN selected
+#   1 = BACK / ESC selected
+#
 # ==============================================================================
 
 show_script_details() {
@@ -121,26 +234,36 @@ show_script_details() {
     local category="$2"
     local description="$3"
 
+    local version="${SCRIPT_VERSIONS[$script]:-}"
+    local DETAILS_MESSAGE
+    local DETAILS_SELECTED
+
     description="${description:-No description provided.}"
 
     # --------------------------------------------------------------------------
-    # Determine whether this script appears to be persistent.
-    #
-    # This is informational only at this stage.
-    # The existing persistence check below remains authoritative.
+    # Version display
     # --------------------------------------------------------------------------
 
-    local persistence_status="Temporary"
+    if [[ -n "$version" ]]; then
 
-    if [[ "$script" == *"monitor"* ]]; then
-        persistence_status="Persistent"
+        version_text="$version"
+
+    else
+
+        version_text="Not specified"
+
     fi
 
     # --------------------------------------------------------------------------
-    # Build information message
+    # Persistence cannot safely be determined until the actual script is
+    # downloaded. Keep this informational rather than guessing.
     # --------------------------------------------------------------------------
 
-    local DETAILS_MESSAGE
+    persistence_text="Detected at runtime"
+
+    # --------------------------------------------------------------------------
+    # Build information panel
+    # --------------------------------------------------------------------------
 
     DETAILS_MESSAGE="Script
 
@@ -150,18 +273,38 @@ Category
 
 ${category}
 
+Version
+
+${version_text}
+
 Description
 
 ${description}
 
-Type
+Persistence
 
-${persistence_status}"
+${persistence_text}"
 
     get_terminal_size
 
     # --------------------------------------------------------------------------
-    # Details menu
+    # Display information
+    # --------------------------------------------------------------------------
+
+    whiptail \
+        --clear \
+        --backtitle "PiTweaks  |  ${category}" \
+        --title "Script Information" \
+        --msgbox \
+        "$DETAILS_MESSAGE" \
+        "$BOX_HEIGHT" \
+        "$BOX_WIDTH" || {
+            # ESC = return to previous screen.
+            return 1
+        }
+
+    # --------------------------------------------------------------------------
+    # Action menu
     # --------------------------------------------------------------------------
 
     local DETAILS_OPTIONS=(
@@ -171,22 +314,20 @@ ${persistence_status}"
         "Return to the previous menu"
     )
 
-    local DETAILS_SELECTED
-
     DETAILS_SELECTED=$(
         whiptail \
             --clear \
-            --backtitle "PiTweaks  |  ${category}" \
-            --title "Script Information" \
+            --backtitle "PiTweaks  |  ${category}  |  ${script}" \
+            --title "Script Actions" \
             --menu \
-            "$DETAILS_MESSAGE" \
-            "$BOX_HEIGHT" \
-            "$BOX_WIDTH" \
-            "$MENU_HEIGHT" \
+            "Choose an action:" \
+            10 \
+            60 \
+            2 \
             "${DETAILS_OPTIONS[@]}" \
             3>&1 1>&2 2>&3
     ) || {
-        # ESC = return to previous menu.
+        # ESC = return to previous screen.
         return 1
     }
 
@@ -195,6 +336,180 @@ ${persistence_status}"
     fi
 
     return 1
+}
+
+# ==============================================================================
+# SEARCH RESULTS
+# ==============================================================================
+
+show_search() {
+
+    while true; do
+
+        SEARCH_PROMPT="Search by script name, description, or category."
+
+        if [[ -n "$SEARCH_QUERY" ]]; then
+
+            SEARCH_PROMPT+="
+
+Current search: $SEARCH_QUERY"
+
+        fi
+
+        NEW_SEARCH=$(
+            whiptail \
+                --clear \
+                --backtitle "PiTweaks  |  Script Search" \
+                --title "Search" \
+                --inputbox \
+                "$SEARCH_PROMPT" \
+                12 \
+                68 \
+                "$SEARCH_QUERY" \
+                3>&1 1>&2 2>&3
+        ) || {
+            # ESC = homepage.
+            return 1
+        }
+
+        SEARCH_QUERY=$(
+            echo "$NEW_SEARCH" |
+            tr '[:upper:]' '[:lower:]' |
+            xargs
+        )
+
+        if [[ -z "$SEARCH_QUERY" ]]; then
+            return 1
+        fi
+
+        # ----------------------------------------------------------------------
+        # Build search results
+        # ----------------------------------------------------------------------
+
+        SEARCH_OPTIONS=()
+
+        while IFS='|' read -r category script desc; do
+
+            category=$(echo "$category" | tr -d '\r' | xargs)
+            script=$(echo "$script" | tr -d '\r' | xargs)
+            desc=$(echo "$desc" | tr -d '\r' | xargs)
+
+            [[ -z "$script" || "$script" =~ ^# ]] && continue
+
+            # Legacy compatibility.
+            if [[ -z "$desc" && -n "$script" ]]; then
+
+                desc="$script"
+                script="$category"
+                category="Uncategorized"
+
+            elif [[ -z "$category" ]]; then
+
+                category="Uncategorized"
+
+            fi
+
+            combined_text=$(
+                printf "%s %s %s" \
+                    "$script" \
+                    "$desc" \
+                    "$category" |
+                tr '[:upper:]' '[:lower:]'
+            )
+
+            if [[ "$combined_text" == *"$SEARCH_QUERY"* ]]; then
+
+                short_desc="$desc"
+
+                if (( ${#short_desc} > 62 )); then
+                    short_desc="${short_desc:0:59}..."
+                fi
+
+                SEARCH_OPTIONS+=(
+                    "$script"
+                    "${category}: ${short_desc:-No description}"
+                )
+
+            fi
+
+        done <<< "$INDEX_DATA"
+
+        # ----------------------------------------------------------------------
+        # No results
+        # ----------------------------------------------------------------------
+
+        if [[ "${#SEARCH_OPTIONS[@]}" -eq 0 ]]; then
+
+            whiptail \
+                --clear \
+                --title "No Results" \
+                --msgbox \
+                "No scripts matched:
+
+$SEARCH_QUERY
+
+Try another search term." \
+                10 \
+                55
+
+            continue
+        fi
+
+        # ----------------------------------------------------------------------
+        # Navigation
+        # ----------------------------------------------------------------------
+
+        SEARCH_OPTIONS+=(
+            "BACK"
+            "Return to the PiTweaks homepage"
+        )
+
+        get_terminal_size
+
+        SEARCH_SELECTED=$(
+            whiptail \
+                --clear \
+                --backtitle "PiTweaks  |  Search: ${SEARCH_QUERY}" \
+                --title "Search Results" \
+                --menu \
+                "Select a script:" \
+                "$BOX_HEIGHT" \
+                "$BOX_WIDTH" \
+                "$MENU_HEIGHT" \
+                "${SEARCH_OPTIONS[@]}" \
+                3>&1 1>&2 2>&3
+        ) || {
+            # ESC = homepage.
+            return 1
+        }
+
+        if [[ "$SEARCH_SELECTED" == "BACK" ]]; then
+            return 1
+        fi
+
+        # ----------------------------------------------------------------------
+        # Script selected
+        # ----------------------------------------------------------------------
+
+        SELECTED="$SEARCH_SELECTED"
+
+        CATEGORY="${SCRIPT_CATEGORIES[$SELECTED]:-Uncategorized}"
+        DESCRIPTION="${SCRIPT_DESCRIPTIONS[$SELECTED]:-No description provided.}"
+
+        # ----------------------------------------------------------------------
+        # Details screen
+        # ----------------------------------------------------------------------
+
+        if show_script_details \
+            "$SELECTED" \
+            "$CATEGORY" \
+            "$DESCRIPTION"; then
+
+            return 0
+
+        fi
+
+    done
 }
 
 # ==============================================================================
@@ -289,173 +604,9 @@ while true; do
 
     if [[ "$SELECTED" == "SEARCH" ]]; then
 
-        while true; do
-
-            SEARCH_PROMPT="Search by script name, description, or category."
-
-            if [[ -n "$SEARCH_QUERY" ]]; then
-                SEARCH_PROMPT+="
-
-Current search: $SEARCH_QUERY"
-            fi
-
-            NEW_SEARCH=$(
-                whiptail \
-                    --clear \
-                    --backtitle "PiTweaks  |  Script Search" \
-                    --title "Search" \
-                    --inputbox \
-                    "$SEARCH_PROMPT" \
-                    12 \
-                    68 \
-                    "$SEARCH_QUERY" \
-                    3>&1 1>&2 2>&3
-            ) || {
-                # ESC = back to homepage.
-                break
-            }
-
-            SEARCH_QUERY=$(
-                echo "$NEW_SEARCH" |
-                tr '[:upper:]' '[:lower:]' |
-                xargs
-            )
-
-            if [[ -z "$SEARCH_QUERY" ]]; then
-                break
-            fi
-
-            # ------------------------------------------------------------------
-            # Build search results
-            # ------------------------------------------------------------------
-
-            SEARCH_OPTIONS=()
-
-            while IFS='|' read -r category script desc; do
-
-                category=$(echo "$category" | tr -d '\r' | xargs)
-                script=$(echo "$script" | tr -d '\r' | xargs)
-                desc=$(echo "$desc" | tr -d '\r' | xargs)
-
-                [[ -z "$script" || "$script" =~ ^# ]] && continue
-
-                # Legacy format compatibility
-                if [[ -z "$desc" && -n "$script" ]]; then
-
-                    desc="$script"
-                    script="$category"
-                    category="Uncategorized"
-
-                elif [[ -z "$category" ]]; then
-
-                    category="Uncategorized"
-
-                fi
-
-                combined_text=$(
-                    printf "%s %s %s" \
-                        "$script" \
-                        "$desc" \
-                        "$category" |
-                    tr '[:upper:]' '[:lower:]'
-                )
-
-                if [[ "$combined_text" == *"$SEARCH_QUERY"* ]]; then
-
-                    short_desc="$desc"
-
-                    if (( ${#short_desc} > 62 )); then
-                        short_desc="${short_desc:0:59}..."
-                    fi
-
-                    SEARCH_OPTIONS+=(
-                        "$script"
-                        "${category}: ${short_desc:-No description}"
-                    )
-
-                fi
-
-            done <<< "$INDEX_DATA"
-
-            # ------------------------------------------------------------------
-            # No results
-            # ------------------------------------------------------------------
-
-            if [[ "${#SEARCH_OPTIONS[@]}" -eq 0 ]]; then
-
-                whiptail \
-                    --clear \
-                    --title "No Results" \
-                    --msgbox \
-                    "No scripts matched:
-
-$SEARCH_QUERY
-
-Try another search term." \
-                    10 \
-                    55
-
-                continue
-            fi
-
-            # ------------------------------------------------------------------
-            # Navigation
-            # ------------------------------------------------------------------
-
-            SEARCH_OPTIONS+=(
-                "BACK"
-                "Return to the PiTweaks homepage"
-            )
-
-            get_terminal_size
-
-            SEARCH_SELECTED=$(
-                whiptail \
-                    --clear \
-                    --backtitle "PiTweaks  |  Search: ${SEARCH_QUERY}" \
-                    --title "Search Results" \
-                    --menu \
-                    "Select a script:" \
-                    "$BOX_HEIGHT" \
-                    "$BOX_WIDTH" \
-                    "$MENU_HEIGHT" \
-                    "${SEARCH_OPTIONS[@]}" \
-                    3>&1 1>&2 2>&3
-            ) || {
-                # ESC = back to homepage.
-                break
-            }
-
-            if [[ "$SEARCH_SELECTED" == "BACK" ]]; then
-                break
-            fi
-
-            # ------------------------------------------------------------------
-            # Search result selected
-            # ------------------------------------------------------------------
-
-            SELECTED="$SEARCH_SELECTED"
-            CATEGORY="${SCRIPT_CATEGORIES[$SELECTED]:-Uncategorized}"
-            DESCRIPTION="${SCRIPT_DESCRIPTIONS[$SELECTED]:-No description provided.}"
-
-            # ------------------------------------------------------------------
-            # Show script details
-            # ------------------------------------------------------------------
-
-            if show_script_details \
-                "$SELECTED" \
-                "$CATEGORY" \
-                "$DESCRIPTION"; then
-
-                break 2
-
-            else
-
-                continue
-
-            fi
-
-        done
+        if show_search; then
+            break
+        fi
 
         continue
     fi
@@ -534,7 +685,7 @@ Try another search term." \
                 "${SCRIPT_OPTIONS[@]}" \
                 3>&1 1>&2 2>&3
         ) || {
-            # ESC = back to homepage.
+            # ESC = homepage.
             break
         }
 
@@ -542,7 +693,12 @@ Try another search term." \
             break
         fi
 
+        # ----------------------------------------------------------------------
+        # Script selected
+        # ----------------------------------------------------------------------
+
         SELECTED="$SCRIPT_SELECTED"
+
         DESCRIPTION="${SCRIPT_DESCRIPTIONS[$SELECTED]:-No description provided.}"
 
         # ----------------------------------------------------------------------
@@ -565,6 +721,11 @@ done
 # ==============================================================================
 # EXISTING INSTALL / EXECUTION FLOW
 # ==============================================================================
+#
+# This section deliberately remains functionally equivalent to the previous
+# installer versions.
+#
+# ==============================================================================
 
 clear
 
@@ -573,7 +734,7 @@ echo "=========================================="
 echo ""
 
 # ==============================================================================
-# DOWNLOAD
+# DOWNLOAD SCRIPT
 # ==============================================================================
 
 curl -fsSL \
@@ -587,7 +748,7 @@ curl -fsSL \
 chmod +x "${SELECTED}"
 
 # ==============================================================================
-# PERSISTENCE DETECTION
+# CHECK PERSISTENCE
 # ==============================================================================
 
 IS_PERSISTENT=false
