@@ -3,7 +3,7 @@ Administration|Caddy_Editor.sh|Interactive Caddyfile Configuration Manager & Syn
 Webpages|Ice_Cube.sh|CubeCooler v1.4.3 Management Console with Systemd Service Control
 Webpages|Ramdrop.sh|RAM Drop v1.3.7 All-in-One Self-Contained Deployment & Management Console
 Webpages|SSLguide.sh|Interactive Installer & Systemd Service Setup for SSL Guide Utility
-Administration|Service_Manager.sh|Friendly systemd service manager for viewing and controlling system services, custom scripts, startup settings, and logs. V1.2.1
+Administration|Service_Manager.sh|Advanced systemd service manager with search, filtering, failed-service monitoring, service status, dependencies, startup analysis, resource usage, logs, and service control. V1.3
 Webpages|Subnet_Calc.sh|HomeLab Subnet & IP Calculator Management Console with Systemd Service Control
 Tools|conspy_control.sh|Standalone Conspy screen mirroring controller and setup manager v1.1
 Discord|discord_controller.sh|Discord bot installer
