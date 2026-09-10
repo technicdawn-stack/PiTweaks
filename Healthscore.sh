@@ -1,1439 +1,3326 @@
 #!/bin/bash
 
-# Description: Adaptive Raspberry Pi Health Scoring & Diagnostic Utility
-# PERSISTENT: FALSE
-# Category: Diagnostics
-
+# ============================================================
 # PiTweaks - Health Score
 # Healthscore.sh
 #
-# Runs a broad set of health, reliability, configuration, networking,
-# storage, security, service, power and software diagnostics.
+# Description: Adaptive Raspberry Pi Health Scoring & Diagnostic Utility V1.5
+# PERSISTENT: FALSE
+# Category: Diagnostics
 #
-# The checker is adaptive:
-#   - Tests are only scored when applicable.
-#   - Missing optional software is not treated as a failure.
-#   - Every deduction has a reason.
-#   - Results are grouped by category.
+# Features:
+#   - Adaptive multi-category health scoring
+#   - 100+ potential diagnostic checks
+#   - CPU and frequency analysis
+#   - Thermal and undervoltage analysis
+#   - Memory and swap analysis
+#   - Storage and filesystem health
+#   - SMART and I/O diagnostics
+#   - systemd/service reliability
+#   - Service crash/restart history
+#   - Boot and kernel health
+#   - Network and packet-loss diagnostics
+#   - DNS / Pi-hole / Unbound chain testing
+#   - WireGuard diagnostics
+#   - SSH and firewall security checks
+#   - Package/update health
+#   - Raspberry Pi hardware diagnostics
+#   - Process reliability checks
+#   - Application-aware diagnostics
+#   - Historical/current issue distinction
+#   - Severity-weighted scoring
+#   - Adaptive applicability
+#   - Confidence score
+#   - "Why is my score X?" diagnostics
+#   - Recommended corrective actions
+#   - Whiptail interface
 #
 # Requirements:
 #   - bash
 #   - whiptail
-#   - common Linux utilities
 #
-# Optional utilities:
-#   - vcgencmd
-#   - smartctl
-#   - ip
-#   - ss
+# Optional:
 #   - systemctl
 #   - journalctl
-#   - timedatectl
-#   - systemd-analyze
+#   - vcgencmd
+#   - smartctl
+#   - dig
+#   - ping
+#   - wg
 #   - ufw
 #   - nft
 #   - iptables
 #   - fail2ban-client
-#   - wg
 #   - docker
+#   - caddy
+#   - tailscale
 #   - pihole
-#   - unbound-checkconf
+#   - unbound-control
 # ============================================================
 
-set -u
-export LC_ALL=C
+# ------------------------------------------------------------
+# Configuration
+# ------------------------------------------------------------
 
-SCRIPT_NAME="Pi Health Score"
-VERSION="1.0"
+TITLE="PiTweaks | Health Score"
+VERSION="1.5"
 
-TMP_DIR="/tmp/pitweaks_healthscore_$$"
+TMP_DIR=$(mktemp -d)
+
 RESULT_FILE="${TMP_DIR}/results"
 DETAIL_FILE="${TMP_DIR}/details"
+CATEGORY_FILE="${TMP_DIR}/categories"
+SUMMARY_FILE="${TMP_DIR}/summary"
+ISSUE_FILE="${TMP_DIR}/issues"
 SKIP_FILE="${TMP_DIR}/skipped"
+SERVICE_FILE="${TMP_DIR}/services"
 
-mkdir -p "$TMP_DIR"
-touch "$RESULT_FILE" "$DETAIL_FILE" "$SKIP_FILE"
+TOTAL_POSSIBLE=0
+TOTAL_APPLICABLE=0
+TOTAL_PASS=0
+TOTAL_WARN=0
+TOTAL_FAIL=0
+TOTAL_SKIP=0
+
+OVERALL_DEDUCTIONS=0
+OVERALL_WEIGHT=0
+
+CURRENT_CATEGORY=""
+
+# ------------------------------------------------------------
+# Cleanup
+# ------------------------------------------------------------
 
 cleanup() {
     rm -rf "$TMP_DIR"
 }
-trap cleanup EXIT INT TERM
+
+trap cleanup EXIT
 
 # ------------------------------------------------------------
-# REQUIREMENTS
+# Terminal sizing
+# ------------------------------------------------------------
+
+TERM_HEIGHT=$(tput lines 2>/dev/null || echo 24)
+TERM_WIDTH=$(tput cols 2>/dev/null || echo 80)
+
+(( TERM_HEIGHT < 20 )) && TERM_HEIGHT=20
+(( TERM_WIDTH < 75 )) && TERM_WIDTH=75
+
+# ------------------------------------------------------------
+# Dependency checks
 # ------------------------------------------------------------
 
 if ! command -v whiptail >/dev/null 2>&1; then
     echo "whiptail is required."
+    echo "Install it with:"
+    echo "sudo apt install whiptail"
     exit 1
 fi
 
 # ------------------------------------------------------------
-# GLOBAL SCORE DATA
-# ------------------------------------------------------------
-
-TOTAL_POINTS=0
-MAX_POINTS=0
-PASS_COUNT=0
-WARN_COUNT=0
-FAIL_COUNT=0
-SKIP_COUNT=0
-
-CURRENT_CATEGORY="General"
-
-# category totals
-declare -A CAT_SCORE
-declare -A CAT_MAX
-declare -A CAT_PASS
-declare -A CAT_WARN
-declare -A CAT_FAIL
-
-# ------------------------------------------------------------
-# TERMINAL
-# ------------------------------------------------------------
-
-TERM_WIDTH=$(tput cols 2>/dev/null || echo 100)
-TERM_HEIGHT=$(tput lines 2>/dev/null || echo 30)
-
-(( TERM_WIDTH < 80 )) && TERM_WIDTH=80
-(( TERM_HEIGHT < 24 )) && TERM_HEIGHT=24
-
-# ------------------------------------------------------------
-# HELPERS
+# Utility functions
 # ------------------------------------------------------------
 
 command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-add_category() {
-    local category="$1"
-
-    [[ -z "${CAT_SCORE[$category]+x}" ]] && CAT_SCORE["$category"]=0
-    [[ -z "${CAT_MAX[$category]+x}" ]] && CAT_MAX["$category"]=0
-    [[ -z "${CAT_PASS[$category]+x}" ]] && CAT_PASS["$category"]=0
-    [[ -z "${CAT_WARN[$category]+x}" ]] && CAT_WARN["$category"]=0
-    [[ -z "${CAT_FAIL[$category]+x}" ]] && CAT_FAIL["$category"]=0
+trim() {
+    local value="$1"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s' "$value"
 }
 
-set_category() {
-    CURRENT_CATEGORY="$1"
-    add_category "$CURRENT_CATEGORY"
-}
+safe_int() {
+    local value="$1"
 
-record_check() {
-    local status="$1"
-    local points="$2"
-    local max_points="$3"
-    local name="$4"
-    local explanation="$5"
-
-    (( MAX_POINTS += max_points ))
-
-    local actual_points="$points"
-
-    if (( points < 0 )); then
-        actual_points=0
+    if [[ "$value" =~ ^[0-9]+$ ]]; then
+        echo "$value"
+    else
+        echo "0"
     fi
+}
 
-    (( TOTAL_POINTS += actual_points ))
+show_message() {
+    whiptail \
+        --title "$TITLE" \
+        --msgbox \
+        "$1" \
+        "${2:-12}" \
+        "${3:-70}"
+}
 
-    add_category "$CURRENT_CATEGORY"
-    (( CAT_MAX["$CURRENT_CATEGORY"] += max_points ))
-    (( CAT_SCORE["$CURRENT_CATEGORY"] += actual_points ))
+show_text() {
+    local file="$1"
+    local title="$2"
+
+    whiptail \
+        --title "$TITLE | $title" \
+        --textbox \
+        "$file" \
+        "$TERM_HEIGHT" \
+        "$TERM_WIDTH"
+}
+
+# ------------------------------------------------------------
+# Result engine
+# ------------------------------------------------------------
+
+record_result() {
+    local category="$1"
+    local id="$2"
+    local status="$3"
+    local weight="$4"
+    local deduction="$5"
+    local title="$6"
+    local explanation="$7"
+    local recommendation="$8"
+
+    TOTAL_POSSIBLE=$((TOTAL_POSSIBLE + weight))
 
     case "$status" in
+
         PASS)
-            (( PASS_COUNT += 1 ))
-            (( CAT_PASS["$CURRENT_CATEGORY"] += 1 ))
+            TOTAL_PASS=$((TOTAL_PASS + 1))
+            TOTAL_APPLICABLE=$((TOTAL_APPLICABLE + 1))
             ;;
+
         WARN)
-            (( WARN_COUNT += 1 ))
-            (( CAT_WARN["$CURRENT_CATEGORY"] += 1 ))
+            TOTAL_WARN=$((TOTAL_WARN + 1))
+            TOTAL_APPLICABLE=$((TOTAL_APPLICABLE + 1))
+            OVERALL_DEDUCTIONS=$((OVERALL_DEDUCTIONS + deduction))
+            OVERALL_WEIGHT=$((OVERALL_WEIGHT + weight))
             ;;
+
         FAIL)
-            (( FAIL_COUNT += 1 ))
-            (( CAT_FAIL["$CURRENT_CATEGORY"] += 1 ))
+            TOTAL_FAIL=$((TOTAL_FAIL + 1))
+            TOTAL_APPLICABLE=$((TOTAL_APPLICABLE + 1))
+            OVERALL_DEDUCTIONS=$((OVERALL_DEDUCTIONS + deduction))
+            OVERALL_WEIGHT=$((OVERALL_WEIGHT + weight))
             ;;
+
+        SKIP)
+            TOTAL_SKIP=$((TOTAL_SKIP + 1))
+            printf '%s|%s|%s\n' \
+                "$category" \
+                "$title" \
+                "$explanation" >> "$SKIP_FILE"
+            return
+            ;;
+
     esac
 
-    printf '%s|%s|%s|%s|%s\n' \
+    printf '%s|%s|%s|%s|%s|%s|%s|%s\n' \
+        "$category" \
+        "$id" \
         "$status" \
-        "$CURRENT_CATEGORY" \
-        "$actual_points" \
-        "$max_points" \
-        "$name" >> "$RESULT_FILE"
+        "$weight" \
+        "$deduction" \
+        "$title" \
+        "$explanation" \
+        "$recommendation" >> "$RESULT_FILE"
 
-    printf '%s|%s|%s\n' \
-        "$status" \
-        "$name" \
-        "$explanation" >> "$DETAIL_FILE"
+    if [[ "$status" != "PASS" ]]; then
+        printf '%s|%s|%s|%s|%s|%s\n' \
+            "$category" \
+            "$status" \
+            "$deduction" \
+            "$title" \
+            "$explanation" \
+            "$recommendation" >> "$ISSUE_FILE"
+    fi
 }
 
-skip_check() {
-    local name="$1"
-    local reason="$2"
-
-    (( SKIP_COUNT += 1 ))
-    printf '%s|%s\n' "$name" "$reason" >> "$SKIP_FILE"
+check_pass() {
+    record_result \
+        "$1" "$2" PASS "$3" 0 "$4" "$5" "$6"
 }
 
-pass() {
-    record_check "PASS" "$2" "$2" "$1" "$3"
+check_warn() {
+    record_result \
+        "$1" "$2" WARN "$3" "$4" "$5" "$6" "$7"
 }
 
-warn() {
-    record_check "WARN" "$2" "$2" "$1" "$3"
+check_fail() {
+    record_result \
+        "$1" "$2" FAIL "$3" "$4" "$5" "$6" "$7"
 }
 
-fail() {
-    record_check "FAIL" "$2" "$2" "$1" "$3"
-}
-
-partial() {
-    record_check "WARN" "$2" "$3" "$1" "$4"
+check_skip() {
+    record_result \
+        "$1" "$2" SKIP 0 0 "$3" "$4" "$5"
 }
 
 # ------------------------------------------------------------
-# SYSTEM INFORMATION
+# Score calculation
 # ------------------------------------------------------------
 
-HOSTNAME_VALUE=$(hostname 2>/dev/null || echo "Unknown")
-KERNEL_VERSION=$(uname -r 2>/dev/null || echo "Unknown")
-ARCH=$(uname -m 2>/dev/null || echo "Unknown")
+calculate_score() {
 
-OS_NAME="Unknown"
-OS_VERSION="Unknown"
+    if (( TOTAL_APPLICABLE == 0 )); then
+        SCORE=0
+    else
+        SCORE=$((100 - OVERALL_DEDUCTIONS))
 
-if [[ -f /etc/os-release ]]; then
-    . /etc/os-release
-    OS_NAME="${PRETTY_NAME:-${NAME:-Unknown}}"
-    OS_VERSION="${VERSION_ID:-Unknown}"
-fi
+        (( SCORE < 0 )) && SCORE=0
+        (( SCORE > 100 )) && SCORE=100
+    fi
+
+    if (( TOTAL_APPLICABLE > 0 )); then
+        CONFIDENCE=$((TOTAL_APPLICABLE * 100 / TOTAL_POSSIBLE))
+    else
+        CONFIDENCE=0
+    fi
+
+    if (( CONFIDENCE > 100 )); then
+        CONFIDENCE=100
+    fi
+
+    if (( SCORE >= 90 )); then
+        GRADE="EXCELLENT"
+    elif (( SCORE >= 80 )); then
+        GRADE="GOOD"
+    elif (( SCORE >= 70 )); then
+        GRADE="FAIR"
+    elif (( SCORE >= 60 )); then
+        GRADE="POOR"
+    else
+        GRADE="CRITICAL"
+    fi
+}
 
 # ------------------------------------------------------------
-# CPU CHECKS
+# Category helper
+# ------------------------------------------------------------
+
+category_score() {
+
+    local category="$1"
+
+    local possible=0
+    local deductions=0
+    local applicable=0
+
+    while IFS='|' read -r cat id status weight deduction title explanation recommendation; do
+
+        [[ "$cat" != "$category" ]] && continue
+
+        case "$status" in
+            PASS|WARN|FAIL)
+                possible=$((possible + weight))
+                applicable=$((applicable + 1))
+                deductions=$((deductions + deduction))
+                ;;
+        esac
+
+    done < "$RESULT_FILE"
+
+    if (( possible == 0 )); then
+        echo "N/A"
+        return
+    fi
+
+    local result=$((100 - (deductions * 100 / possible)))
+
+    (( result < 0 )) && result=0
+    (( result > 100 )) && result=100
+
+    echo "$result"
+}
+
+# ------------------------------------------------------------
+# CPU
 # ------------------------------------------------------------
 
 run_cpu_checks() {
-    set_category "CPU"
 
-    local cpu_count
-    cpu_count=$(nproc 2>/dev/null || echo 1)
+    CURRENT_CATEGORY="CPU"
 
-    if (( cpu_count >= 1 )); then
-        pass "CPU cores detected" 2 \
-            "${cpu_count} logical CPU core(s) detected."
+    local cores
+    cores=$(nproc 2>/dev/null || echo 0)
+
+    if (( cores > 0 )); then
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "cpu_cores" \
+            2 \
+            "CPU cores detected" \
+            "${cores} logical CPU cores detected." \
+            "No action required."
     else
-        fail "CPU core detection" 0 \
-            "Unable to determine CPU core count."
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "CPU core count" \
+            "Unable to determine CPU core count." \
+            "CPU information is unavailable."
     fi
 
-    if [[ -r /proc/loadavg ]]; then
-        local load1
-        load1=$(awk '{print $1}' /proc/loadavg)
+    local model
+    model=$(awk -F: '/Model|Hardware/ {print $2; exit}' /proc/cpuinfo 2>/dev/null | xargs)
 
-        if awk -v l="$load1" -v c="$cpu_count" 'BEGIN {exit !(l <= c)}'; then
-            pass "Current CPU load" 2 \
-                "1-minute load average is ${load1}; within available CPU capacity."
-        elif awk -v l="$load1" -v c="$cpu_count" 'BEGIN {exit !(l <= c*2)}'; then
-            warn "Current CPU load" 1 \
-                "1-minute load average is ${load1}; CPU workload is elevated."
+    if [[ -n "$model" ]]; then
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "cpu_model" \
+            2 \
+            "CPU model identification" \
+            "$model" \
+            "No action required."
+    else
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "CPU model" \
+            "CPU model could not be identified." \
+            "No reliable CPU model information was found."
+    fi
+
+    local arch
+    arch=$(uname -m 2>/dev/null || true)
+
+    if [[ -n "$arch" ]]; then
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "cpu_arch" \
+            2 \
+            "CPU architecture" \
+            "Architecture: $arch" \
+            "No action required."
+    else
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "CPU architecture" \
+            "Architecture unavailable." \
+            "uname did not return an architecture."
+    fi
+
+    local load
+    load=$(awk '{print $1}' /proc/loadavg 2>/dev/null || echo 0)
+
+    if [[ "$load" =~ ^[0-9.]+$ ]] && (( cores > 0 )); then
+
+        local load10
+        load10=$(awk -v l="$load" -v c="$cores" 'BEGIN { if (c>0) print l/c; else print 0 }')
+
+        if awk -v l="$load10" 'BEGIN {exit !(l < 1)}'; then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "cpu_load" \
+                3 \
+                "CPU load" \
+                "Load average is $load across $cores logical CPU(s)." \
+                "No action required."
+
+        elif awk -v l="$load10" 'BEGIN {exit !(l < 2)}'; then
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "cpu_load" \
+                3 \
+                2 \
+                "Elevated CPU load" \
+                "Load average is $load across $cores logical CPU(s)." \
+                "Check the process list if high load is persistent."
+
         else
-            fail "Current CPU load" 0 \
-                "1-minute load average is ${load1}; system is heavily loaded."
+
+            check_fail \
+                "$CURRENT_CATEGORY" \
+                "cpu_load" \
+                3 \
+                4 \
+                "High CPU load" \
+                "Load average is $load across $cores logical CPU(s)." \
+                "Inspect top CPU-consuming processes."
+
         fi
+
     else
-        skip_check "Current CPU load" "/proc/loadavg unavailable."
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "CPU load" \
+            "Load average could not be evaluated." \
+            "Required CPU information is unavailable."
     fi
 
-    if [[ -r /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]]; then
-        local governor
-        governor=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)
+    local governor=""
+    for path in \
+        /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor \
+        /sys/devices/system/cpu/cpufreq/policy0/scaling_governor
+    do
+        if [[ -r "$path" ]]; then
+            governor=$(cat "$path")
+            break
+        fi
+    done
+
+    if [[ -n "$governor" ]]; then
 
         case "$governor" in
-            performance|schedutil|ondemand)
-                pass "CPU scaling governor" 2 \
-                    "CPU governor is ${governor}."
+            powersave|schedutil|ondemand|performance|conservative)
+                check_pass \
+                    "$CURRENT_CATEGORY" \
+                    "cpu_governor" \
+                    2 \
+                    "CPU governor" \
+                    "CPU governor: $governor" \
+                    "No action required."
                 ;;
             *)
-                warn "CPU scaling governor" 1 \
-                    "CPU governor is ${governor}; this may be intentional."
+                check_warn \
+                    "$CURRENT_CATEGORY" \
+                    "cpu_governor" \
+                    2 \
+                    1 \
+                    "Unusual CPU governor" \
+                    "CPU governor is '$governor'." \
+                    "Verify that this governor is intentional."
                 ;;
         esac
+
     else
-        skip_check "CPU scaling governor" "CPU frequency scaling information unavailable."
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "CPU governor" \
+            "CPU frequency governor is unavailable." \
+            "cpufreq information is not exposed."
     fi
 
-    if [[ -r /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq ]]; then
+    local cur_freq=""
+    local min_freq=""
+    local max_freq=""
+
+    for base in \
+        /sys/devices/system/cpu/cpu0/cpufreq \
+        /sys/devices/system/cpu/cpufreq/policy0
+    do
+
+        [[ -z "$cur_freq" && -r "$base/scaling_cur_freq" ]] &&
+            cur_freq=$(cat "$base/scaling_cur_freq")
+
+        [[ -z "$min_freq" && -r "$base/scaling_min_freq" ]] &&
+            min_freq=$(cat "$base/scaling_min_freq")
+
+        [[ -z "$max_freq" && -r "$base/scaling_max_freq" ]] &&
+            max_freq=$(cat "$base/scaling_max_freq")
+
+    done
+
+    if [[ -n "$cur_freq" ]]; then
+
+        local cur_mhz=$((cur_freq / 1000))
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "cpu_frequency" \
+            2 \
+            "Current CPU frequency" \
+            "Current CPU frequency: ${cur_mhz} MHz." \
+            "No action required."
+
+    elif command_exists vcgencmd; then
+
         local freq
-        freq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null || echo 0)
+        freq=$(vcgencmd measure_clock arm 2>/dev/null | awk -F= '{print $2}')
 
-        if [[ "$freq" =~ ^[0-9]+$ ]] && (( freq > 0 )); then
-            pass "CPU frequency control" 2 \
-                "Current CPU frequency information is available."
+        if [[ "$freq" =~ ^[0-9]+$ ]]; then
+
+            local mhz=$((freq / 1000000))
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "cpu_frequency" \
+                2 \
+                "Current CPU frequency" \
+                "Current ARM frequency: ${mhz} MHz." \
+                "No action required."
+
         else
-            warn "CPU frequency control" 1 \
-                "CPU frequency information is present but could not be read normally."
+            check_skip \
+                "$CURRENT_CATEGORY" \
+                "CPU frequency" \
+                "Unable to read current CPU frequency." \
+                "No compatible frequency interface was found."
         fi
+
     else
-        skip_check "CPU frequency control" "Frequency scaling interface unavailable."
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "CPU frequency" \
+            "Unable to read current CPU frequency." \
+            "No compatible frequency interface was found."
     fi
 
-    if [[ -r /proc/cpuinfo ]]; then
-        if grep -qiE 'Raspberry Pi|BCM|ARM' /proc/cpuinfo; then
-            pass "CPU hardware identification" 2 \
-                "Raspberry Pi/ARM hardware identified."
+    if [[ "$min_freq" =~ ^[0-9]+$ && "$max_freq" =~ ^[0-9]+$ ]]; then
+
+        local min_mhz=$((min_freq / 1000))
+        local max_mhz=$((max_freq / 1000))
+
+        if (( max_freq > min_freq )); then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "cpu_frequency_range" \
+                2 \
+                "CPU frequency range" \
+                "Configured frequency range: ${min_mhz}-${max_mhz} MHz." \
+                "No action required."
+
         else
-            pass "CPU hardware identification" 2 \
-                "Linux CPU information is available."
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "cpu_frequency_range" \
+                2 \
+                1 \
+                "Restricted CPU frequency range" \
+                "Minimum and maximum CPU frequencies are both ${max_mhz} MHz." \
+                "Check whether CPU frequency has intentionally been locked."
+
         fi
+
     else
-        skip_check "CPU hardware identification" "/proc/cpuinfo unavailable."
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "CPU frequency range" \
+            "CPU frequency limits unavailable." \
+            "cpufreq limits could not be read."
+    fi
+
+    local idle=""
+    if [[ -r /proc/stat ]]; then
+        idle=$(awk '/^cpu / {print $5; exit}' /proc/stat)
+
+        if [[ "$idle" =~ ^[0-9]+$ ]]; then
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "cpu_idle" \
+                2 \
+                "CPU idle availability" \
+                "CPU idle counter is available and currently reports $idle ticks." \
+                "No action required."
+        else
+            check_skip \
+                "$CURRENT_CATEGORY" \
+                "CPU idle" \
+                "CPU idle statistics unavailable." \
+                "The kernel did not expose usable CPU idle data."
+        fi
     fi
 }
 
 # ------------------------------------------------------------
-# TEMPERATURE / POWER
+# Thermal / power
 # ------------------------------------------------------------
 
 run_power_checks() {
-    set_category "Power & Thermal"
+
+    CURRENT_CATEGORY="Power & Thermal"
 
     local temp=""
-    local temp_c=""
 
     if command_exists vcgencmd; then
-        temp=$(vcgencmd measure_temp 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)?' | head -n1 || true)
-
-        if [[ -n "$temp" ]]; then
-            temp_c="$temp"
-
-            if awk -v t="$temp" 'BEGIN {exit !(t < 70)}'; then
-                pass "CPU temperature" 4 \
-                    "Temperature is ${temp}°C."
-            elif awk -v t="$temp" 'BEGIN {exit !(t < 80)}'; then
-                warn "CPU temperature" 2 \
-                    "Temperature is ${temp}°C; elevated but not immediately critical."
-            else
-                fail "CPU temperature" 0 \
-                    "Temperature is ${temp}°C; thermal conditions are poor."
-            fi
-        fi
+        temp=$(vcgencmd measure_temp 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)?' | head -1)
     fi
 
-    if [[ -z "$temp_c" && -r /sys/class/thermal/thermal_zone0/temp ]]; then
-        local raw_temp
-        raw_temp=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || echo 0)
+    if [[ -z "$temp" ]]; then
+        for thermal in /sys/class/thermal/thermal_zone*/temp; do
+            if [[ -r "$thermal" ]]; then
+                local raw
+                raw=$(cat "$thermal" 2>/dev/null)
 
-        if [[ "$raw_temp" =~ ^[0-9]+$ ]] && (( raw_temp > 0 )); then
-            temp_c=$(awk -v t="$raw_temp" 'BEGIN {printf "%.1f",t/1000}')
-
-            if awk -v t="$temp_c" 'BEGIN {exit !(t < 70)}'; then
-                pass "CPU temperature" 4 \
-                    "Temperature is ${temp_c}°C."
-            elif awk -v t="$temp_c" 'BEGIN {exit !(t < 80)}'; then
-                warn "CPU temperature" 2 \
-                    "Temperature is ${temp_c}°C; elevated."
-            else
-                fail "CPU temperature" 0 \
-                    "Temperature is ${temp_c}°C; excessive."
+                if [[ "$raw" =~ ^[0-9]+$ ]]; then
+                    temp=$(awk -v t="$raw" 'BEGIN {printf "%.1f", t/1000}')
+                    break
+                fi
             fi
-        fi
+        done
     fi
 
-    if [[ -z "$temp_c" ]]; then
-        skip_check "CPU temperature" "No compatible temperature source detected."
+    if [[ "$temp" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+
+        if awk -v t="$temp" 'BEGIN {exit !(t < 70)}'; then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "temperature" \
+                4 \
+                "CPU temperature" \
+                "Current temperature: ${temp}°C." \
+                "No action required."
+
+        elif awk -v t="$temp" 'BEGIN {exit !(t < 80)}'; then
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "temperature" \
+                4 \
+                3 \
+                "High CPU temperature" \
+                "Current temperature: ${temp}°C." \
+                "Improve cooling or investigate sustained CPU load."
+
+        else
+
+            check_fail \
+                "$CURRENT_CATEGORY" \
+                "temperature" \
+                5 \
+                5 \
+                "Critical CPU temperature" \
+                "Current temperature: ${temp}°C." \
+                "Reduce load and investigate cooling immediately."
+
+        fi
+
+    else
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "CPU temperature" \
+            "Temperature could not be read." \
+            "No compatible thermal sensor was found."
     fi
 
     if command_exists vcgencmd; then
+
         local throttle
-        throttle=$(vcgencmd get_throttled 2>/dev/null | grep -oE '0x[0-9a-fA-F]+' | head -n1 || true)
+        throttle=$(vcgencmd get_throttled 2>/dev/null | awk -F= '{print $2}')
 
-        if [[ "$throttle" == "0x0" ]]; then
-            pass "Undervoltage / throttling" 5 \
-                "Firmware reports no current or historical throttling flags."
-        elif [[ -n "$throttle" ]]; then
-            local value
-            value=$((throttle))
+        if [[ "$throttle" =~ ^0x[0-9a-fA-F]+$ ]]; then
 
-            local current_uv=$(( value & 0x1 ))
-            local current_throttle=$(( (value >> 2) & 0x1 ))
-            local historical_uv=$(( (value >> 16) & 0x1 ))
-            local historical_throttle=$(( (value >> 18) & 0x1 ))
+            if [[ "$throttle" == "0x0" ]]; then
 
-            if (( current_uv || current_throttle )); then
-                fail "Current undervoltage / throttling" 0 \
-                    "Firmware reports an active power or throttling condition (${throttle})."
-            elif (( historical_uv || historical_throttle )); then
-                warn "Historical undervoltage / throttling" 3 \
-                    "Firmware reports previous undervoltage or throttling events (${throttle})."
+                check_pass \
+                    "$CURRENT_CATEGORY" \
+                    "undervoltage" \
+                    6 \
+                    "Power / undervoltage state" \
+                    "No current or historical throttling flags reported." \
+                    "No action required."
+
             else
-                warn "Firmware throttle flags" 3 \
-                    "Firmware reports non-zero throttle flags (${throttle})."
+
+                local value
+                value=$((throttle))
+
+                local messages=""
+
+                (( value & 0x1 )) && messages+="currently undervolted; "
+                (( value & 0x2 )) && messages+="currently frequency capped; "
+                (( value & 0x4 )) && messages+="currently throttled; "
+                (( value & 0x8 )) && messages+="currently temperature limited; "
+                (( value & 0x10000 )) && messages+="historical undervoltage detected; "
+                (( value & 0x20000 )) && messages+="historical frequency capping detected; "
+                (( value & 0x40000 )) && messages+="historical throttling detected; "
+                (( value & 0x80000 )) && messages+="historical temperature limiting detected; "
+
+                if (( value & 0x1 )); then
+
+                    check_fail \
+                        "$CURRENT_CATEGORY" \
+                        "undervoltage_current" \
+                        6 \
+                        6 \
+                        "Current undervoltage detected" \
+                        "Firmware reports: ${messages}" \
+                        "Check the power supply, USB load, cable quality and connector voltage drop."
+
+                elif (( value & 0x10000 )); then
+
+                    check_warn \
+                        "$CURRENT_CATEGORY" \
+                        "undervoltage_history" \
+                        5 \
+                        4 \
+                        "Historical undervoltage detected" \
+                        "Firmware reports previous power instability: ${messages}" \
+                        "Use a suitable power supply and inspect the power cable."
+
+                elif (( value & 0x4 )); then
+
+                    check_warn \
+                        "$CURRENT_CATEGORY" \
+                        "throttle_history" \
+                        4 \
+                        2 \
+                        "CPU throttling detected" \
+                        "Firmware reports throttling: ${messages}" \
+                        "Investigate temperature, power and CPU frequency limits."
+
+                else
+
+                    check_warn \
+                        "$CURRENT_CATEGORY" \
+                        "power_flags" \
+                        4 \
+                        2 \
+                        "Power or thermal history detected" \
+                        "Firmware flags: ${messages}" \
+                        "Review power and cooling conditions."
+
+                fi
+
             fi
+
         else
-            skip_check "Undervoltage / throttling" "vcgencmd returned no usable result."
+            check_skip \
+                "$CURRENT_CATEGORY" \
+                "Undervoltage status" \
+                "vcgencmd returned no usable throttle state." \
+                "Firmware throttle information is unavailable."
         fi
+
     else
-        skip_check "Undervoltage / throttling" "vcgencmd is unavailable."
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Undervoltage status" \
+            "vcgencmd is unavailable." \
+            "This check requires Raspberry Pi firmware utilities."
     fi
 
-    if dmesg >/dev/null 2>&1; then
-        if dmesg 2>/dev/null | grep -qiE 'under-voltage|undervoltage|throttl'; then
-            warn "Kernel power / throttle messages" 2 \
-                "Kernel logs contain power or throttling related messages."
-        else
-            pass "Kernel power / throttle messages" 2 \
-                "No obvious undervoltage or throttling messages found."
-        fi
+    if [[ -r /proc/device-tree/model ]]; then
+
+        local pi_model
+        pi_model=$(tr -d '\0' < /proc/device-tree/model)
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "pi_model" \
+            2 \
+            "Raspberry Pi model" \
+            "$pi_model" \
+            "No action required."
+
     else
-        skip_check "Kernel power / throttle messages" "Kernel log access unavailable."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Raspberry Pi model" \
+            "Device-tree model unavailable." \
+            "The system does not expose Raspberry Pi model information."
+    fi
+
+    if command_exists vcgencmd; then
+
+        local firmware
+        firmware=$(vcgencmd version 2>/dev/null | head -1)
+
+        if [[ -n "$firmware" ]]; then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "firmware" \
+                2 \
+                "Firmware information" \
+                "$firmware" \
+                "No action required."
+
+        else
+            check_skip \
+                "$CURRENT_CATEGORY" \
+                "Firmware information" \
+                "Firmware version unavailable." \
+                "vcgencmd did not return firmware information."
+        fi
+
+    else
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Firmware information" \
+            "vcgencmd unavailable." \
+            "Raspberry Pi firmware tools are not installed."
     fi
 }
 
 # ------------------------------------------------------------
-# MEMORY
+# Memory
 # ------------------------------------------------------------
 
 run_memory_checks() {
-    set_category "Memory"
 
-    if [[ -r /proc/meminfo ]]; then
-        local total available used_percent
+    CURRENT_CATEGORY="Memory"
 
-        total=$(awk '/MemTotal:/ {print $2}' /proc/meminfo)
-        available=$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)
+    if command_exists free; then
 
-        if [[ "$total" =~ ^[0-9]+$ && "$available" =~ ^[0-9]+$ && "$total" -gt 0 ]]; then
-            used_percent=$(( (total - available) * 100 / total ))
+        local total used available swap_total swap_used
 
-            if (( used_percent < 80 )); then
-                pass "RAM utilisation" 3 \
-                    "Approximately ${used_percent}% of RAM is currently in use."
-            elif (( used_percent < 90 )); then
-                warn "RAM utilisation" 2 \
-                    "Approximately ${used_percent}% of RAM is currently in use."
+        total=$(free -m | awk '/^Mem:/ {print $2}')
+        used=$(free -m | awk '/^Mem:/ {print $3}')
+        available=$(free -m | awk '/^Mem:/ {print $7}')
+
+        swap_total=$(free -m | awk '/^Swap:/ {print $2}')
+        swap_used=$(free -m | awk '/^Swap:/ {print $3}')
+
+        if [[ "$total" =~ ^[0-9]+$ && "$available" =~ ^[0-9]+$ ]]; then
+
+            local used_pct=$((used * 100 / total))
+
+            if (( used_pct < 80 )); then
+
+                check_pass \
+                    "$CURRENT_CATEGORY" \
+                    "ram_usage" \
+                    5 \
+                    "RAM usage" \
+                    "${used} MB used of ${total} MB (${used_pct}%). ${available} MB available." \
+                    "No action required."
+
+            elif (( used_pct < 92 )); then
+
+                check_warn \
+                    "$CURRENT_CATEGORY" \
+                    "ram_usage" \
+                    5 \
+                    3 \
+                    "High RAM usage" \
+                    "${used} MB used of ${total} MB (${used_pct}%)." \
+                    "Check memory-heavy services and applications."
+
             else
-                fail "RAM utilisation" 0 \
-                    "Approximately ${used_percent}% of RAM is currently in use."
+
+                check_fail \
+                    "$CURRENT_CATEGORY" \
+                    "ram_usage" \
+                    5 \
+                    5 \
+                    "Critical RAM usage" \
+                    "${used} MB used of ${total} MB (${used_pct}%)." \
+                    "Investigate memory-consuming processes and possible leaks."
+
             fi
+
+        else
+
+            check_skip \
+                "$CURRENT_CATEGORY" \
+                "RAM usage" \
+                "RAM statistics unavailable." \
+                "free did not return usable information."
+
         fi
-
-        local swap_total swap_free
-
-        swap_total=$(awk '/SwapTotal:/ {print $2}' /proc/meminfo)
-        swap_free=$(awk '/SwapFree:/ {print $2}' /proc/meminfo)
 
         if [[ "$swap_total" =~ ^[0-9]+$ && "$swap_total" -gt 0 ]]; then
-            local swap_used=$((swap_total - swap_free))
-            local swap_percent=$((swap_used * 100 / swap_total))
 
-            if (( swap_percent < 50 )); then
-                pass "Swap usage" 2 \
-                    "Swap usage is approximately ${swap_percent}%."
-            elif (( swap_percent < 80 )); then
-                warn "Swap usage" 1 \
-                    "Swap usage is approximately ${swap_percent}%."
+            local swap_pct=$((swap_used * 100 / swap_total))
+
+            if (( swap_pct < 50 )); then
+
+                check_pass \
+                    "$CURRENT_CATEGORY" \
+                    "swap_usage" \
+                    3 \
+                    "Swap usage" \
+                    "${swap_used} MB of ${swap_total} MB swap used (${swap_pct}%)." \
+                    "No action required."
+
+            elif (( swap_pct < 85 )); then
+
+                check_warn \
+                    "$CURRENT_CATEGORY" \
+                    "swap_usage" \
+                    3 \
+                    2 \
+                    "Elevated swap usage" \
+                    "${swap_used} MB of ${swap_total} MB swap used (${swap_pct}%)." \
+                    "Check for memory pressure."
+
             else
-                fail "Swap usage" 0 \
-                    "Swap usage is approximately ${swap_percent}%."
+
+                check_fail \
+                    "$CURRENT_CATEGORY" \
+                    "swap_usage" \
+                    4 \
+                    4 \
+                    "Heavy swap usage" \
+                    "${swap_used} MB of ${swap_total} MB swap used." \
+                    "Investigate RAM pressure and memory-heavy processes."
+
             fi
+
         else
-            pass "Swap configuration" 2 \
-                "No active swap usage detected."
+
+            check_skip \
+                "$CURRENT_CATEGORY" \
+                "Swap usage" \
+                "No active swap device detected." \
+                "This is not necessarily a problem if sufficient RAM is available."
+
         fi
+
     else
-        skip_check "RAM utilisation" "/proc/meminfo unavailable."
-        skip_check "Swap usage" "/proc/meminfo unavailable."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Memory statistics" \
+            "free command unavailable." \
+            "Cannot read RAM statistics."
+
     fi
 
-    if dmesg >/dev/null 2>&1; then
-        if dmesg 2>/dev/null | grep -qiE 'out of memory|oom-killer|killed process'; then
-            fail "OOM events" 0 \
-                "Kernel logs contain out-of-memory events."
+    if [[ -r /proc/pressure/memory ]]; then
+
+        local psi
+        psi=$(cat /proc/pressure/memory 2>/dev/null)
+
+        if grep -q "avg10=0" <<< "$psi"; then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "memory_pressure" \
+                3 \
+                "Memory pressure" \
+                "No significant recent memory pressure reported." \
+                "No action required."
+
         else
-            pass "OOM events" 3 \
-                "No obvious OOM-killer events found in the available kernel log."
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "memory_pressure" \
+                3 \
+                2 \
+                "Memory pressure detected" \
+                "$psi" \
+                "Check applications and processes consuming RAM."
+
         fi
+
     else
-        skip_check "OOM events" "Kernel log access unavailable."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Memory pressure" \
+            "PSI memory statistics unavailable." \
+            "Kernel pressure statistics are not exposed."
+
     fi
 
-    if command_exists swapon; then
-        if swapon --show --noheadings 2>/dev/null | grep -q .; then
-            pass "Swap subsystem" 2 \
-                "Swap is configured and visible."
+    if [[ -r /proc/zoneinfo ]]; then
+
+        local oom_count
+        oom_count=$(journalctl -k --since "24 hours ago" --no-pager 2>/dev/null |
+            grep -Eic 'out of memory|oom-killer|killed process' || true)
+
+        if (( oom_count == 0 )); then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "oom_events" \
+                5 \
+                "OOM events" \
+                "No OOM-killer events detected in the last 24 hours." \
+                "No action required."
+
+        elif (( oom_count < 3 )); then
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "oom_events" \
+                5 \
+                3 \
+                "Recent OOM events" \
+                "$oom_count OOM-related event(s) detected in the last 24 hours." \
+                "Investigate RAM usage and memory-heavy services."
+
         else
-            warn "Swap subsystem" 1 \
-                "No active swap device/file is visible."
+
+            check_fail \
+                "$CURRENT_CATEGORY" \
+                "oom_events" \
+                6 \
+                6 \
+                "Repeated OOM events" \
+                "$oom_count OOM-related event(s) detected in the last 24 hours." \
+                "Investigate memory leaks, workloads and available RAM."
+
         fi
+
+    fi
+
+    if [[ -d /sys/block/zram0 ]]; then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "zram" \
+            2 \
+            "zram detected" \
+            "zram swap device is available." \
+            "No action required."
+
     else
-        skip_check "Swap subsystem" "swapon unavailable."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "zram" \
+            "zram is not configured." \
+            "This is informational and is not automatically considered a failure."
     fi
 }
 
 # ------------------------------------------------------------
-# STORAGE
+# Storage
 # ------------------------------------------------------------
 
 run_storage_checks() {
-    set_category "Storage"
 
-    local root_line root_usage
-    root_line=$(df -P / 2>/dev/null | tail -n1 || true)
+    CURRENT_CATEGORY="Storage"
 
-    if [[ -n "$root_line" ]]; then
-        root_usage=$(echo "$root_line" | awk '{gsub("%","",$5); print $5}')
+    local root_usage
+    root_usage=$(df -P / | awk 'NR==2 {gsub("%","",$5); print $5}')
 
-        if [[ "$root_usage" =~ ^[0-9]+$ ]]; then
-            if (( root_usage < 70 )); then
-                pass "Root filesystem usage" 4 \
-                    "Root filesystem is ${root_usage}% full."
-            elif (( root_usage < 85 )); then
-                warn "Root filesystem usage" 2 \
-                    "Root filesystem is ${root_usage}% full."
-            elif (( root_usage < 95 )); then
-                warn "Root filesystem usage" 1 \
-                    "Root filesystem is ${root_usage}% full; space is becoming limited."
-            else
-                fail "Root filesystem usage" 0 \
-                    "Root filesystem is ${root_usage}% full."
-            fi
-        fi
-    else
-        skip_check "Root filesystem usage" "df could not inspect the root filesystem."
-    fi
+    if [[ "$root_usage" =~ ^[0-9]+$ ]]; then
 
-    if command_exists df; then
-        local readonly_fs
-        readonly_fs=$(df -P -T 2>/dev/null | awk 'NR>1 && $7 !~ /^$/ {print $7}' | while read -r mount; do
-            mountpoint -q "$mount" 2>/dev/null || continue
-            findmnt -no OPTIONS "$mount" 2>/dev/null | grep -qw ro && echo "$mount"
-        done)
+        if (( root_usage < 80 )); then
 
-        if [[ -z "$readonly_fs" ]]; then
-            pass "Read-only filesystem detection" 2 \
-                "No mounted filesystem was detected as read-only."
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "root_usage" \
+                5 \
+                "Root filesystem usage" \
+                "Root filesystem is ${root_usage}% full." \
+                "No action required."
+
+        elif (( root_usage < 90 )); then
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "root_usage" \
+                5 \
+                3 \
+                "Root filesystem getting full" \
+                "Root filesystem is ${root_usage}% full." \
+                "Remove unnecessary files or expand storage."
+
         else
-            fail "Read-only filesystem detection" 0 \
-                "Read-only filesystem(s) detected: $readonly_fs"
+
+            check_fail \
+                "$CURRENT_CATEGORY" \
+                "root_usage" \
+                6 \
+                6 \
+                "Root filesystem critically full" \
+                "Root filesystem is ${root_usage}% full." \
+                "Free storage space immediately."
+
         fi
+
     else
-        skip_check "Read-only filesystem detection" "df unavailable."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Root filesystem usage" \
+            "Unable to determine root filesystem usage." \
+            "df did not return usable information."
     fi
 
-    if [[ -r /proc/mounts ]]; then
-        pass "Mounted filesystem table" 2 \
-            "Linux mount information is available."
-    else
-        skip_check "Mounted filesystem table" "/proc/mounts unavailable."
-    fi
+    local inode_usage
+    inode_usage=$(df -Pi / | awk 'NR==2 {gsub("%","",$5); print $5}')
 
-    if command_exists df; then
-        local inode_usage
-        inode_usage=$(df -Pi / 2>/dev/null | tail -n1 | awk '{gsub("%","",$5); print $5}')
+    if [[ "$inode_usage" =~ ^[0-9]+$ ]]; then
 
-        if [[ "$inode_usage" =~ ^[0-9]+$ ]]; then
-            if (( inode_usage < 80 )); then
-                pass "Root inode usage" 2 \
-                    "Root filesystem inode usage is ${inode_usage}%."
-            elif (( inode_usage < 95 )); then
-                warn "Root inode usage" 1 \
-                    "Root filesystem inode usage is ${inode_usage}%."
-            else
-                fail "Root inode usage" 0 \
-                    "Root filesystem inode usage is ${inode_usage}%."
-            fi
-        fi
-    fi
+        if (( inode_usage < 80 )); then
 
-    if dmesg >/dev/null 2>&1; then
-        if dmesg 2>/dev/null | grep -qiE 'I/O error|Buffer I/O error|EXT4-fs error|mmc.*error|ata.*error|blk_update_request'; then
-            fail "Storage kernel errors" 0 \
-                "Kernel logs contain storage or I/O error messages."
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "inode_usage" \
+                3 \
+                "Root inode usage" \
+                "Root filesystem inode usage is ${inode_usage}%." \
+                "No action required."
+
+        elif (( inode_usage < 95 )); then
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "inode_usage" \
+                3 \
+                2 \
+                "High inode usage" \
+                "Root filesystem inode usage is ${inode_usage}%." \
+                "Investigate directories containing very large numbers of small files."
+
         else
-            pass "Storage kernel errors" 3 \
-                "No obvious storage I/O errors found in the available kernel log."
+
+            check_fail \
+                "$CURRENT_CATEGORY" \
+                "inode_usage" \
+                4 \
+                4 \
+                "Critical inode usage" \
+                "Root filesystem inode usage is ${inode_usage}%." \
+                "Free files/inodes immediately."
+
         fi
-    else
-        skip_check "Storage kernel errors" "Kernel log access unavailable."
+
     fi
 
+    local fs_type
+    fs_type=$(findmnt -n -o FSTYPE / 2>/dev/null || true)
+
+    if [[ -n "$fs_type" ]]; then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "filesystem_type" \
+            2 \
+            "Root filesystem type" \
+            "Root filesystem uses $fs_type." \
+            "No action required."
+
+    else
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Filesystem type" \
+            "Unable to determine root filesystem type." \
+            "findmnt is unavailable or returned no result."
+    fi
+
+    local readonly_test
+    readonly_test=$(findmnt -n -o OPTIONS / 2>/dev/null | head -1 || true)
+
+    if grep -qw ro <<< "$readonly_test"; then
+
+        check_fail \
+            "$CURRENT_CATEGORY" \
+            "filesystem_readonly" \
+            7 \
+            7 \
+            "Root filesystem is read-only" \
+            "The root filesystem is mounted read-only." \
+            "Investigate filesystem errors and storage health."
+
+    else
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "filesystem_readonly" \
+            7 \
+            "Root filesystem writable" \
+            "The root filesystem is not mounted read-only." \
+            "No action required."
+
+    fi
+
+    local mount_errors
+    mount_errors=$(systemctl --failed --type=mount --no-legend 2>/dev/null | wc -l)
+
+    if (( mount_errors == 0 )); then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "failed_mounts" \
+            4 \
+            "Failed mount units" \
+            "No failed systemd mount units detected." \
+            "No action required."
+
+    else
+
+        check_fail \
+            "$CURRENT_CATEGORY" \
+            "failed_mounts" \
+            5 \
+            5 \
+            "Failed mount units" \
+            "$mount_errors failed mount unit(s) detected." \
+            "Inspect systemctl status for failed mount units and check /etc/fstab."
+
+    fi
+
+    local fstab_errors=0
+
+    if [[ -f /etc/fstab ]] && command_exists findmnt; then
+
+        if ! findmnt --verify --verbose >/dev/null 2>&1; then
+            fstab_errors=1
+        fi
+
+        if (( fstab_errors == 0 )); then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "fstab" \
+                4 \
+                "Filesystem configuration" \
+                "/etc/fstab verification completed without errors." \
+                "No action required."
+
+        else
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "fstab" \
+                4 \
+                3 \
+                "Filesystem configuration issue" \
+                "findmnt reported a problem while verifying /etc/fstab." \
+                "Run 'findmnt --verify --verbose' and review /etc/fstab."
+
+        fi
+
+    else
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "fstab verification" \
+            "Unable to verify /etc/fstab." \
+            "Required filesystem tools or configuration are unavailable."
+    fi
+
+    local io_errors
+    io_errors=$(journalctl -k --since "24 hours ago" --no-pager 2>/dev/null |
+        grep -Eic 'I/O error|Buffer I/O error|EXT4-fs error|FAT-fs error|XFS.*error|blk_update_request' || true)
+
+    if (( io_errors == 0 )); then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "storage_kernel_errors" \
+            6 \
+            "Storage kernel errors" \
+            "No major storage I/O/filesystem errors detected in the last 24 hours." \
+            "No action required."
+
+    elif (( io_errors < 5 )); then
+
+        check_warn \
+            "$CURRENT_CATEGORY" \
+            "storage_kernel_errors" \
+            6 \
+            4 \
+            "Storage errors detected" \
+            "$io_errors storage-related kernel event(s) detected in the last 24 hours." \
+            "Check storage health, cables and filesystem logs."
+
+    else
+
+        check_fail \
+            "$CURRENT_CATEGORY" \
+            "storage_kernel_errors" \
+            7 \
+            7 \
+            "Repeated storage errors" \
+            "$io_errors storage-related kernel events detected in the last 24 hours." \
+            "Back up important data and investigate the storage device."
+
+    fi
+
+    if command_exists smartctl; then
+
+        local smart_devices
+        smart_devices=$(lsblk -dn -o NAME,TYPE 2>/dev/null |
+            awk '$2=="disk" {print "/dev/"$1}')
+
+        if [[ -n "$smart_devices" ]]; then
+
+            local smart_bad=0
+            local smart_checked=0
+
+            while IFS= read -r device; do
+
+                [[ -z "$device" ]] && continue
+
+                smart_checked=$((smart_checked + 1))
+
+                if ! smartctl -H "$device" >/dev/null 2>&1; then
+                    continue
+                fi
+
+                if smartctl -H "$device" 2>/dev/null |
+                    grep -Eqi 'PASSED|OK|result:.*passed'; then
+                    :
+                else
+                    smart_bad=$((smart_bad + 1))
+                fi
+
+            done <<< "$smart_devices"
+
+            if (( smart_checked > 0 && smart_bad == 0 )); then
+
+                check_pass \
+                    "$CURRENT_CATEGORY" \
+                    "smart" \
+                    6 \
+                    "SMART health" \
+                    "SMART health checks completed without a reported failure." \
+                    "No action required."
+
+            elif (( smart_bad > 0 )); then
+
+                check_fail \
+                    "$CURRENT_CATEGORY" \
+                    "smart" \
+                    7 \
+                    7 \
+                    "SMART health warning" \
+                    "$smart_bad storage device(s) did not report a healthy SMART result." \
+                    "Back up data and investigate the affected storage device."
+
+            else
+
+                check_skip \
+                    "$CURRENT_CATEGORY" \
+                    "SMART health" \
+                    "SMART information could not be evaluated." \
+                    "The detected devices may not expose SMART information."
+
+            fi
+
+        else
+
+            check_skip \
+                "$CURRENT_CATEGORY" \
+                "SMART health" \
+                "No physical disk devices detected." \
+                "SMART requires a compatible storage device."
+
+        fi
+
+    else
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "SMART health" \
+            "smartctl is not installed." \
+            "Install smartmontools if SMART diagnostics are desired."
+    fi
+
+    local log_size
     if [[ -d /var/log ]]; then
-        local log_size
+
         log_size=$(du -sm /var/log 2>/dev/null | awk '{print $1}')
 
         if [[ "$log_size" =~ ^[0-9]+$ ]]; then
-            if (( log_size < 500 )); then
-                pass "Log directory size" 2 \
-                    "/var/log is approximately ${log_size} MB."
-            elif (( log_size < 1500 )); then
-                warn "Log directory size" 1 \
-                    "/var/log is approximately ${log_size} MB."
+
+            if (( log_size < 1024 )); then
+
+                check_pass \
+                    "$CURRENT_CATEGORY" \
+                    "log_size" \
+                    2 \
+                    "Log directory size" \
+                    "/var/log is ${log_size} MB." \
+                    "No action required."
+
+            elif (( log_size < 4096 )); then
+
+                check_warn \
+                    "$CURRENT_CATEGORY" \
+                    "log_size" \
+                    2 \
+                    1 \
+                    "Large log directory" \
+                    "/var/log is ${log_size} MB." \
+                    "Review log rotation and unusually large logs."
+
             else
-                warn "Log directory size" 0 \
-                    "/var/log is approximately ${log_size} MB and may deserve cleanup."
+
+                check_warn \
+                    "$CURRENT_CATEGORY" \
+                    "log_size" \
+                    3 \
+                    2 \
+                    "Very large log directory" \
+                    "/var/log is ${log_size} MB." \
+                    "Investigate large logs and log rotation."
+
             fi
+
         fi
-    else
-        skip_check "Log directory size" "/var/log is unavailable."
-    fi
 
-    if command_exists smartctl && command_exists lsblk; then
-        local smart_found=0
-        local smart_bad=0
-
-        while read -r disk; do
-            [[ -z "$disk" ]] && continue
-            smart_found=1
-
-            if ! sudo -n smartctl -H "/dev/$disk" >/dev/null 2>&1; then
-                # Try without sudo if already permitted.
-                smartctl -H "/dev/$disk" >/dev/null 2>&1 || continue
-            fi
-
-            local health
-            health=$(sudo -n smartctl -H "/dev/$disk" 2>/dev/null || smartctl -H "/dev/$disk" 2>/dev/null || true)
-
-            if echo "$health" | grep -qiE 'PASSED|OK'; then
-                :
-            elif echo "$health" | grep -qiE 'FAILED|FAILING'; then
-                smart_bad=1
-            fi
-        done < <(lsblk -dn -o NAME,TYPE 2>/dev/null | awk '$2=="disk"{print $1}')
-
-        if (( smart_found == 0 )); then
-            skip_check "SMART health" "No suitable SMART-capable disks detected."
-        elif (( smart_bad )); then
-            fail "SMART health" 0 \
-                "At least one disk reported an unhealthy SMART status."
-        else
-            pass "SMART health" 3 \
-                "No failing SMART health status was detected."
-        fi
-    else
-        skip_check "SMART health" "smartctl or lsblk unavailable."
     fi
 }
 
 # ------------------------------------------------------------
-# SERVICES
+# Services
 # ------------------------------------------------------------
 
 run_service_checks() {
-    set_category "Services"
+
+    CURRENT_CATEGORY="Services"
 
     if ! command_exists systemctl; then
-        skip_check "Failed systemd services" "systemctl unavailable."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "systemd" \
+            "systemctl is unavailable." \
+            "This system does not appear to use systemd."
+
         return
     fi
 
     local failed_services
-    failed_services=$(systemctl --failed --no-legend --no-pager 2>/dev/null | awk '{print $1}')
+    failed_services=$(systemctl --failed --type=service --no-legend 2>/dev/null | wc -l)
 
-    if [[ -z "$failed_services" ]]; then
-        pass "Failed systemd services" 5 \
-            "No failed systemd units were detected."
+    if (( failed_services == 0 )); then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "failed_services" \
+            7 \
+            "Failed services" \
+            "No failed systemd services detected." \
+            "No action required."
+
+    elif (( failed_services < 3 )); then
+
+        check_warn \
+            "$CURRENT_CATEGORY" \
+            "failed_services" \
+            7 \
+            4 \
+            "Failed services detected" \
+            "$failed_services failed service(s) detected." \
+            "Inspect 'systemctl --failed' and review the affected service logs."
+
     else
-        local count
-        count=$(echo "$failed_services" | grep -c . || true)
 
-        if (( count == 1 )); then
-            fail "Failed systemd services" 0 \
-                "1 failed systemd service/unit detected: $failed_services"
-        else
-            fail "Failed systemd services" 0 \
-                "${count} failed systemd services/units detected."
-        fi
+        check_fail \
+            "$CURRENT_CATEGORY" \
+            "failed_services" \
+            8 \
+            8 \
+            "Multiple failed services" \
+            "$failed_services failed service(s) detected." \
+            "Investigate failed services and their journal logs."
+
     fi
 
     local activating
-    activating=$(systemctl list-units --type=service --state=activating --no-legend --no-pager 2>/dev/null | wc -l)
+    activating=$(systemctl list-units --type=service --state=activating --no-legend 2>/dev/null | wc -l)
 
     if (( activating == 0 )); then
-        pass "Services stuck activating" 2 \
-            "No services are currently stuck in the activating state."
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "activating_services" \
+            3 \
+            "Stuck activating services" \
+            "No services appear stuck in the activating state." \
+            "No action required."
+
     else
-        warn "Services stuck activating" 1 \
-            "${activating} service(s) are currently activating."
+
+        check_warn \
+            "$CURRENT_CATEGORY" \
+            "activating_services" \
+            4 \
+            2 \
+            "Services still activating" \
+            "$activating service(s) are currently activating." \
+            "Check these services if they remain stuck for an extended period."
+
     fi
 
-    local services_total
-    services_total=$(systemctl list-unit-files --type=service --no-legend --no-pager 2>/dev/null | wc -l)
+    local failed_units
+    failed_units=$(systemctl --failed --no-legend 2>/dev/null | wc -l)
 
-    if (( services_total > 0 )); then
-        pass "Systemd service database" 2 \
-            "${services_total} service unit definitions are visible."
+    if (( failed_units == 0 )); then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "failed_units" \
+            4 \
+            "Systemd failed units" \
+            "No failed systemd units detected." \
+            "No action required."
+
     else
-        warn "Systemd service database" 1 \
-            "No service definitions were returned."
+
+        check_warn \
+            "$CURRENT_CATEGORY" \
+            "failed_units" \
+            4 \
+            2 \
+            "Failed systemd units" \
+            "$failed_units failed unit(s) detected." \
+            "Run 'systemctl --failed' to inspect them."
+
     fi
 
     if command_exists systemd-analyze; then
-        if systemd-analyze verify /etc/systemd/system/*.service >/dev/null 2>&1; then
-            pass "Systemd configuration verification" 2 \
-                "Systemd service configuration verification completed without obvious errors."
+
+        local verify_output
+        verify_output=$(systemd-analyze verify 2>&1 || true)
+
+        if [[ -z "$verify_output" ]]; then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "systemd_verify" \
+                5 \
+                "Systemd configuration" \
+                "systemd-analyze verify reported no configuration errors." \
+                "No action required."
+
         else
-            warn "Systemd configuration verification" 1 \
-                "Systemd verification reported an issue or no matching local service files."
+
+            local verify_lines
+            verify_lines=$(printf '%s\n' "$verify_output" | wc -l)
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "systemd_verify" \
+                5 \
+                3 \
+                "Systemd configuration warnings" \
+                "$verify_lines systemd verification message(s) were reported." \
+                "Review 'systemd-analyze verify' output."
+
         fi
+
     else
-        skip_check "Systemd configuration verification" "systemd-analyze unavailable."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "systemd verification" \
+            "systemd-analyze is unavailable." \
+            "Cannot verify systemd unit configuration."
     fi
 
-    if command_exists journalctl; then
-        local crash_messages
-        crash_messages=$(journalctl --since "24 hours ago" --no-pager 2>/dev/null |
-            grep -ciE 'segfault|core dumped|failed with result|main process exited|status=[0-9]+/|code=dumped' || true)
+    local crash_count
+    crash_count=$(journalctl --since "24 hours ago" --no-pager 2>/dev/null |
+        grep -Eic 'failed with result|Main process exited|code=exited.*status=[1-9]|Start request repeated too quickly|Scheduled restart job' || true)
 
-        if (( crash_messages == 0 )); then
-            pass "Recent service/process crash indicators" 4 \
-                "No obvious service crash indicators found in the last 24 hours."
-        elif (( crash_messages < 5 )); then
-            warn "Recent service/process crash indicators" 2 \
-                "${crash_messages} possible crash/failure message(s) found in the last 24 hours."
-        else
-            fail "Recent service/process crash indicators" 0 \
-                "${crash_messages} possible crash/failure messages found in the last 24 hours."
-        fi
+    if (( crash_count == 0 )); then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "service_crashes" \
+            7 \
+            "Service crash history" \
+            "No obvious service crash/restart events detected in the last 24 hours." \
+            "No action required."
+
+    elif (( crash_count < 5 )); then
+
+        check_warn \
+            "$CURRENT_CATEGORY" \
+            "service_crashes" \
+            7 \
+            4 \
+            "Service failures detected" \
+            "$crash_count service failure/restart event(s) detected in the last 24 hours." \
+            "Inspect recent journal entries for the affected services."
+
     else
-        skip_check "Recent service/process crash indicators" "journalctl unavailable."
+
+        check_fail \
+            "$CURRENT_CATEGORY" \
+            "service_crashes" \
+            8 \
+            8 \
+            "Repeated service failures" \
+            "$crash_count service failure/restart event(s) detected in the last 24 hours." \
+            "Identify repeatedly failing services and inspect their logs."
+
     fi
+
+    local custom_count=0
+
+    while IFS= read -r unit; do
+
+        [[ -z "$unit" ]] && continue
+
+        local fragment
+        fragment=$(systemctl show "$unit" \
+            --property=FragmentPath \
+            --value 2>/dev/null || true)
+
+        case "$fragment" in
+            /etc/systemd/system/*|/usr/local/lib/systemd/system/*|/opt/*)
+                custom_count=$((custom_count + 1))
+                ;;
+        esac
+
+    done < <(
+        systemctl list-unit-files \
+            --type=service \
+            --no-legend \
+            --no-pager 2>/dev/null |
+            awk '{print $1}'
+    )
+
+    check_pass \
+        "$CURRENT_CATEGORY" \
+        "custom_services" \
+        2 \
+        "Custom service discovery" \
+        "$custom_count custom/local service definition(s) detected." \
+        "No action required."
 }
 
 # ------------------------------------------------------------
-# BOOT
+# Boot / kernel
 # ------------------------------------------------------------
 
 run_boot_checks() {
-    set_category "Boot & Reliability"
+
+    CURRENT_CATEGORY="Boot & Reliability"
 
     if command_exists systemd-analyze; then
+
         local boot_time
-        boot_time=$(systemd-analyze 2>/dev/null | head -n1 || true)
+        boot_time=$(systemd-analyze 2>/dev/null | head -1)
 
         if [[ -n "$boot_time" ]]; then
-            pass "Boot analysis available" 2 \
-                "$boot_time"
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "boot_time" \
+                4 \
+                "Boot timing" \
+                "$boot_time" \
+                "No action required."
+
         else
-            skip_check "Boot analysis available" "systemd-analyze returned no result."
+            check_skip \
+                "$CURRENT_CATEGORY" \
+                "Boot timing" \
+                "Boot timing unavailable." \
+                "systemd-analyze did not return usable output."
         fi
 
-        local failed_boot
-        failed_boot=$(journalctl -b -p err --no-pager 2>/dev/null | wc -l)
+        local blame_count
+        blame_count=$(systemd-analyze blame 2>/dev/null |
+            head -10 |
+            grep -c . || true)
 
-        if (( failed_boot == 0 )); then
-            pass "Current boot errors" 4 \
-                "No error-priority journal entries found for the current boot."
-        elif (( failed_boot < 10 )); then
-            warn "Current boot errors" 2 \
-                "${failed_boot} error-priority journal entries found for the current boot."
+        if (( blame_count > 0 )); then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "boot_services" \
+                3 \
+                "Boot service analysis" \
+                "systemd-analyze can identify boot-time service cost." \
+                "Use the BOOT analysis screen for detailed timing."
+
         else
-            fail "Current boot errors" 0 \
-                "${failed_boot} error-priority journal entries found for the current boot."
+
+            check_skip \
+                "$CURRENT_CATEGORY" \
+                "Boot service analysis" \
+                "No boot timing information available." \
+                "systemd-analyze did not provide service timing."
         fi
+
     else
-        skip_check "Boot analysis available" "systemd-analyze unavailable."
-        skip_check "Current boot errors" "systemd-analyze unavailable."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Boot analysis" \
+            "systemd-analyze is unavailable." \
+            "Boot timing cannot be evaluated."
     fi
 
-    if [[ -r /proc/sys/kernel/random/boot_id ]]; then
-        pass "Boot identity" 1 \
-            "Current boot ID is available."
+    local kernel_errors
+    kernel_errors=$(journalctl -k --since "24 hours ago" --no-pager 2>/dev/null |
+        grep -Eic 'error|fail|critical|panic|oops|watchdog|segfault|BUG:' || true)
+
+    if (( kernel_errors == 0 )); then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "kernel_errors" \
+            7 \
+            "Kernel errors" \
+            "No obvious kernel error/critical events detected in the last 24 hours." \
+            "No action required."
+
+    elif (( kernel_errors < 10 )); then
+
+        check_warn \
+            "$CURRENT_CATEGORY" \
+            "kernel_errors" \
+            7 \
+            4 \
+            "Kernel warnings/errors" \
+            "$kernel_errors kernel error-like event(s) detected in the last 24 hours." \
+            "Review recent kernel journal entries."
+
     else
-        skip_check "Boot identity" "Kernel boot ID unavailable."
+
+        check_fail \
+            "$CURRENT_CATEGORY" \
+            "kernel_errors" \
+            8 \
+            8 \
+            "Repeated kernel errors" \
+            "$kernel_errors kernel error-like events detected in the last 24 hours." \
+            "Investigate kernel logs and affected hardware/drivers."
+
     fi
 
-    if command_exists last; then
-        local reboot_count
-        reboot_count=$(last reboot -n 20 2>/dev/null | grep -c reboot || true)
+    local segfaults
+    segfaults=$(journalctl --since "24 hours ago" --no-pager 2>/dev/null |
+        grep -Eic 'segfault|general protection fault|core dumped' || true)
 
-        if (( reboot_count < 10 )); then
-            pass "Recent reboot frequency" 2 \
-                "${reboot_count} reboot record(s) found in the recent login history."
-        else
-            warn "Recent reboot frequency" 1 \
-                "${reboot_count} recent reboot record(s) found; investigate unexpected restarts if applicable."
-        fi
+    if (( segfaults == 0 )); then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "segfaults" \
+            5 \
+            "Application crashes" \
+            "No obvious segmentation-fault/core-dump events detected in the last 24 hours." \
+            "No action required."
+
+    elif (( segfaults < 3 )); then
+
+        check_warn \
+            "$CURRENT_CATEGORY" \
+            "segfaults" \
+            5 \
+            3 \
+            "Application crash events" \
+            "$segfaults segmentation-fault/core-dump event(s) detected." \
+            "Identify the affected application from the journal."
+
     else
-        skip_check "Recent reboot frequency" "last command unavailable."
+
+        check_fail \
+            "$CURRENT_CATEGORY" \
+            "segfaults" \
+            6 \
+            6 \
+            "Repeated application crashes" \
+            "$segfaults segmentation-fault/core-dump events detected." \
+            "Investigate the crashing software and possible hardware/memory problems."
+
+    fi
+
+    local watchdog_events
+    watchdog_events=$(journalctl -k --since "7 days ago" --no-pager 2>/dev/null |
+        grep -Eic 'watchdog|soft lockup|hard lockup' || true)
+
+    if (( watchdog_events == 0 )); then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "watchdog" \
+            4 \
+            "Watchdog/lockup events" \
+            "No watchdog or CPU lockup events detected in the last 7 days." \
+            "No action required."
+
+    else
+
+        check_fail \
+            "$CURRENT_CATEGORY" \
+            "watchdog" \
+            6 \
+            6 \
+            "Watchdog/lockup events" \
+            "$watchdog_events watchdog/lockup event(s) detected in the last 7 days." \
+            "Investigate kernel, thermal, power and hardware stability."
+
+    fi
+
+    local emergency
+    emergency=$(journalctl -b --no-pager 2>/dev/null |
+        grep -Eic 'emergency mode|Entering emergency mode' || true)
+
+    if (( emergency == 0 )); then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "emergency_mode" \
+            4 \
+            "Emergency mode" \
+            "No emergency-mode event detected during the current boot." \
+            "No action required."
+
+    else
+
+        check_fail \
+            "$CURRENT_CATEGORY" \
+            "emergency_mode" \
+            7 \
+            7 \
+            "Emergency mode detected" \
+            "The current boot contains an emergency-mode event." \
+            "Investigate failed mounts, filesystem errors and systemd dependencies."
+
+    fi
+
+    local reboot_events
+    reboot_events=$(journalctl --list-boots --no-pager 2>/dev/null |
+        tail -n +2 |
+        wc -l)
+
+    if (( reboot_events > 0 )); then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "boot_history" \
+            2 \
+            "Boot history" \
+            "$reboot_events previous boot record(s) are available to analyse." \
+            "No action required."
+
+    else
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Boot history" \
+            "Boot history unavailable." \
+            "The journal does not contain multiple boot records."
+    fi
+
+    local unexpected
+    unexpected=$(journalctl --list-boots --no-pager 2>/dev/null |
+        grep -Eic 'shutdown|crash' || true)
+
+    if (( unexpected == 0 )); then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "unexpected_shutdown" \
+            4 \
+            "Unexpected shutdown indicators" \
+            "No obvious shutdown/crash indicators were found in available boot history." \
+            "No action required."
+
+    else
+
+        check_warn \
+            "$CURRENT_CATEGORY" \
+            "unexpected_shutdown" \
+            5 \
+            3 \
+            "Possible unexpected shutdowns" \
+            "$unexpected possible shutdown/crash indicator(s) found." \
+            "Review previous boot logs for the cause."
+
     fi
 }
 
 # ------------------------------------------------------------
-# NETWORK
+# Network
 # ------------------------------------------------------------
 
 run_network_checks() {
-    set_category "Network"
+
+    CURRENT_CATEGORY="Network"
 
     if ! command_exists ip; then
-        skip_check "Network interface state" "ip command unavailable."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "network_interfaces" \
+            "ip command is unavailable." \
+            "Network diagnostics require iproute2."
+
         return
     fi
 
     local interfaces
-    interfaces=$(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | sed 's/@.*//' | grep -v '^lo$' || true)
+    interfaces=$(ip -o link show 2>/dev/null |
+        awk -F': ' '{print $2}' |
+        sed 's/@.*//' |
+        grep -v '^lo$' || true)
 
     if [[ -n "$interfaces" ]]; then
-        pass "Network interfaces detected" 2 \
-            "Detected network interface(s): $(echo "$interfaces" | tr '\n' ' ')."
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "interfaces" \
+            3 \
+            "Network interfaces" \
+            "Detected network interface(s): $(echo "$interfaces" | tr '\n' ' ')." \
+            "No action required."
+
     else
-        fail "Network interfaces detected" 0 \
-            "No non-loopback network interfaces were detected."
+
+        check_fail \
+            "$CURRENT_CATEGORY" \
+            "interfaces" \
+            5 \
+            5 \
+            "No network interface" \
+            "No non-loopback network interface was detected." \
+            "Check network hardware and configuration."
     fi
 
-    local up_count
-    up_count=$(ip -o link show up 2>/dev/null | awk -F': ' '{print $2}' | sed 's/@.*//' | grep -v '^lo$' | wc -l)
+    local active_interface=""
+    active_interface=$(ip route show default 2>/dev/null |
+        awk '/default/ {print $5; exit}')
 
-    if (( up_count > 0 )); then
-        pass "Active network interface" 3 \
-            "${up_count} non-loopback interface(s) are currently up."
+    if [[ -n "$active_interface" ]]; then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "active_interface" \
+            4 \
+            "Default network interface" \
+            "Default route uses $active_interface." \
+            "No action required."
+
     else
-        fail "Active network interface" 0 \
-            "No non-loopback network interface is currently up."
+
+        check_fail \
+            "$CURRENT_CATEGORY" \
+            "active_interface" \
+            5 \
+            5 \
+            "No default network route" \
+            "No default route was detected." \
+            "Check network configuration and gateway availability."
     fi
 
-    if ip route show default 2>/dev/null | grep -q '^default'; then
-        pass "Default gateway" 2 \
-            "A default network route is configured."
-    else
-        warn "Default gateway" 1 \
-            "No default gateway is currently configured."
-    fi
+    local gateway
+    gateway=$(ip route show default 2>/dev/null |
+        awk '/default/ {print $3; exit}')
 
-    if command_exists getent; then
-        if getent hosts example.com >/dev/null 2>&1; then
-            pass "DNS resolution" 4 \
-                "DNS resolution is working."
+    if [[ -n "$gateway" ]]; then
+
+        if command_exists ping; then
+
+            if ping -c 2 -W 2 "$gateway" >/dev/null 2>&1; then
+
+                check_pass \
+                    "$CURRENT_CATEGORY" \
+                    "gateway" \
+                    5 \
+                    "Gateway reachability" \
+                    "Default gateway $gateway responded to ICMP." \
+                    "No action required."
+
+            else
+
+                check_fail \
+                    "$CURRENT_CATEGORY" \
+                    "gateway" \
+                    6 \
+                    6 \
+                    "Gateway unreachable" \
+                    "Default gateway $gateway did not respond to ICMP." \
+                    "Check the LAN connection and router."
+            fi
+
         else
-            fail "DNS resolution" 0 \
-                "DNS resolution failed."
+
+            check_skip \
+                "$CURRENT_CATEGORY" \
+                "Gateway reachability" \
+                "ping is unavailable." \
+                "Cannot test gateway reachability."
         fi
+
     else
-        skip_check "DNS resolution" "getent unavailable."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Gateway reachability" \
+            "No gateway was detected." \
+            "There is no default route to test."
     fi
 
     if command_exists ping; then
-        local gateway
-        gateway=$(ip route 2>/dev/null | awk '/default/ {print $3; exit}')
 
-        if [[ -n "$gateway" ]]; then
-            if ping -c1 -W2 "$gateway" >/dev/null 2>&1; then
-                pass "Gateway reachability" 3 \
-                    "Default gateway ${gateway} responded."
-            else
-                fail "Gateway reachability" 0 \
-                    "Default gateway ${gateway} did not respond."
-            fi
+        if ping -c 2 -W 3 1.1.1.1 >/dev/null 2>&1; then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "internet" \
+                5 \
+                "Internet connectivity" \
+                "External connectivity test succeeded." \
+                "No action required."
+
         else
-            skip_check "Gateway reachability" "No default gateway detected."
+
+            check_fail \
+                "$CURRENT_CATEGORY" \
+                "internet" \
+                6 \
+                6 \
+                "Internet connectivity failure" \
+                "External ICMP connectivity test failed." \
+                "Check the gateway, WAN connection and firewall."
         fi
 
-        if ping -c1 -W3 1.1.1.1 >/dev/null 2>&1; then
-            pass "Internet connectivity" 3 \
-                "External connectivity test succeeded."
-        else
-            warn "Internet connectivity" 1 \
-                "External connectivity test failed."
-        fi
     else
-        skip_check "Gateway reachability" "ping unavailable."
-        skip_check "Internet connectivity" "ping unavailable."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Internet connectivity" \
+            "ping is unavailable." \
+            "Cannot perform an external connectivity test."
     fi
 
-    if command_exists ss; then
-        local listen_count
-        listen_count=$(ss -lntu 2>/dev/null | tail -n +2 | wc -l)
+    local error_total=0
 
-        if (( listen_count < 25 )); then
-            pass "Listening socket count" 2 \
-                "${listen_count} listening TCP/UDP socket(s) detected."
-        elif (( listen_count < 50 )); then
-            warn "Listening socket count" 1 \
-                "${listen_count} listening TCP/UDP socket(s) detected."
-        else
-            warn "Listening socket count" 0 \
-                "${listen_count} listening TCP/UDP socket(s) detected; review if unexpected."
-        fi
+    for iface in $interfaces; do
+
+        local rx_err rx_drop tx_err tx_drop
+
+        rx_err=$(cat "/sys/class/net/$iface/statistics/rx_errors" 2>/dev/null || echo 0)
+        rx_drop=$(cat "/sys/class/net/$iface/statistics/rx_dropped" 2>/dev/null || echo 0)
+        tx_err=$(cat "/sys/class/net/$iface/statistics/tx_errors" 2>/dev/null || echo 0)
+        tx_drop=$(cat "/sys/class/net/$iface/statistics/tx_dropped" 2>/dev/null || echo 0)
+
+        error_total=$((error_total + rx_err + rx_drop + tx_err + tx_drop))
+
+    done
+
+    if (( error_total == 0 )); then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "packet_errors" \
+            5 \
+            "Network interface errors" \
+            "No RX/TX errors or drops are currently reported by network interfaces." \
+            "No action required."
+
+    elif (( error_total < 20 )); then
+
+        check_warn \
+            "$CURRENT_CATEGORY" \
+            "packet_errors" \
+            5 \
+            2 \
+            "Network packet errors" \
+            "$error_total RX/TX error/drop counter(s) detected." \
+            "Monitor the interface for increasing errors."
+
     else
-        skip_check "Listening socket count" "ss unavailable."
+
+        check_fail \
+            "$CURRENT_CATEGORY" \
+            "packet_errors" \
+            6 \
+            5 \
+            "High network error counters" \
+            "$error_total RX/TX error/drop counter(s) detected." \
+            "Investigate cables, Wi-Fi signal, USB adapters or network hardware."
     fi
 }
 
 # ------------------------------------------------------------
-# DNS SERVICES
+# DNS / Pi-hole / Unbound
 # ------------------------------------------------------------
 
 run_dns_checks() {
-    set_category "DNS / Pi-hole / Unbound"
 
-    if command_exists pihole; then
-        if pihole status >/dev/null 2>&1; then
-            pass "Pi-hole service" 4 \
-                "Pi-hole command reports an operational installation."
-        else
-            warn "Pi-hole service" 2 \
-                "Pi-hole is installed but its status command reported a problem."
-        fi
+    CURRENT_CATEGORY="DNS"
 
-        if command_exists dig; then
-            if dig @127.0.0.1 example.com +short +time=2 >/dev/null 2>&1; then
-                pass "Local DNS query" 3 \
-                    "A local DNS query completed successfully."
-            else
-                fail "Local DNS query" 0 \
-                    "A local DNS query failed."
-            fi
-        else
-            skip_check "Local DNS query" "dig unavailable."
-        fi
+    local resolver=""
+    resolver=$(awk '/^nameserver/ {print $2; exit}' /etc/resolv.conf 2>/dev/null || true)
+
+    if [[ -n "$resolver" ]]; then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "resolver" \
+            3 \
+            "DNS resolver configuration" \
+            "Configured resolver: $resolver." \
+            "No action required."
+
     else
-        skip_check "Pi-hole service" "Pi-hole is not installed/detected."
-        skip_check "Local DNS query" "Pi-hole not detected."
+
+        check_fail \
+            "$CURRENT_CATEGORY" \
+            "resolver" \
+            5 \
+            5 \
+            "No DNS resolver configured" \
+            "No nameserver was found in /etc/resolv.conf." \
+            "Configure a working DNS resolver."
     fi
 
-    if command_exists unbound-checkconf; then
-        if unbound-checkconf >/dev/null 2>&1; then
-            pass "Unbound configuration" 4 \
-                "Unbound configuration passed validation."
+    if command_exists dig; then
+
+        local dns_result
+        dns_result=$(dig +time=3 +tries=1 example.com 2>/dev/null |
+            awk '/^example.com\./ && $4=="A" {print $5; exit}')
+
+        if [[ "$dns_result" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "dns_resolution" \
+                5 \
+                "DNS resolution" \
+                "example.com successfully resolved to $dns_result." \
+                "No action required."
+
         else
-            fail "Unbound configuration" 0 \
-                "Unbound configuration validation failed."
+
+            check_fail \
+                "$CURRENT_CATEGORY" \
+                "dns_resolution" \
+                6 \
+                6 \
+                "DNS resolution failure" \
+                "example.com could not be resolved successfully." \
+                "Check Pi-hole, Unbound, upstream DNS and /etc/resolv.conf."
         fi
-    elif command_exists systemctl && systemctl list-unit-files 2>/dev/null | grep -q '^unbound\.service'; then
-        if systemctl is-active --quiet unbound; then
-            pass "Unbound service" 3 \
-                "Unbound service is active."
-        else
-            fail "Unbound service" 0 \
-                "Unbound service is installed but not active."
-        fi
+
     else
-        skip_check "Unbound" "Unbound is not detected."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "DNS resolution" \
+            "dig is not installed." \
+            "Install dnsutils/bind-utils for detailed DNS testing."
+    fi
+
+    if command_exists pihole; then
+
+        if pihole status >/dev/null 2>&1; then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "pihole" \
+                6 \
+                "Pi-hole service" \
+                "Pi-hole reports a healthy/active status." \
+                "No action required."
+
+        else
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "pihole" \
+                6 \
+                4 \
+                "Pi-hole status issue" \
+                "Pi-hole is installed but its status command reported a problem." \
+                "Run 'pihole status' for details."
+        fi
+
+    else
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Pi-hole" \
+            "Pi-hole was not detected." \
+            "This check is skipped on systems without Pi-hole."
+    fi
+
+    if command_exists systemctl && systemctl list-unit-files unbound.service >/dev/null 2>&1; then
+
+        if systemctl is-active --quiet unbound; then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "unbound" \
+                6 \
+                "Unbound service" \
+                "Unbound is active." \
+                "No action required."
+
+        else
+
+            check_fail \
+                "$CURRENT_CATEGORY" \
+                "unbound" \
+                6 \
+                6 \
+                "Unbound inactive" \
+                "Unbound is installed but not active." \
+                "Check 'systemctl status unbound' and its logs."
+        fi
+
+    else
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Unbound" \
+            "Unbound service was not detected." \
+            "This check is skipped when Unbound is not installed."
     fi
 }
 
 # ------------------------------------------------------------
-# WIREGUARD
+# WireGuard / VPN
 # ------------------------------------------------------------
 
-run_wireguard_checks() {
-    set_category "VPN / WireGuard"
+run_vpn_checks() {
+
+    CURRENT_CATEGORY="VPN"
 
     if ! command_exists wg; then
-        skip_check "WireGuard installation" "WireGuard is not detected."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "wireguard" \
+            "WireGuard tools are not installed." \
+            "This check is skipped when WireGuard is unavailable."
+
         return
     fi
-
-    pass "WireGuard installation" 2 \
-        "WireGuard tooling is installed."
 
     local interfaces
     interfaces=$(wg show interfaces 2>/dev/null || true)
 
     if [[ -n "$interfaces" ]]; then
-        pass "WireGuard interface" 3 \
-            "WireGuard interface(s) detected: $interfaces"
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "wireguard_interface" \
+            5 \
+            "WireGuard interface" \
+            "WireGuard interface(s): $interfaces." \
+            "No action required."
 
         local peer_count
-        peer_count=$(wg show all peers 2>/dev/null | wc -l)
+        peer_count=$(wg show all latest-handshakes 2>/dev/null |
+            awk 'NF >= 3 {print}' |
+            wc -l)
 
-        if (( peer_count > 0 )); then
-            pass "WireGuard peers" 2 \
-                "${peer_count} WireGuard peer(s) detected."
+        if (( peer_count == 0 )); then
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "wireguard_peers" \
+                4 \
+                2 \
+                "No WireGuard handshakes" \
+                "WireGuard is configured but no peer handshake records were found." \
+                "Check peer configuration and connectivity."
+
         else
-            warn "WireGuard peers" 1 \
-                "WireGuard is configured but no peers were detected."
-        fi
 
-        local handshakes
-        handshakes=$(wg show all latest-handshakes 2>/dev/null | awk '$2 > 0 {print $2}')
-
-        if [[ -n "$handshakes" ]]; then
-            local now newest age
+            local now
             now=$(date +%s)
-            newest=$(echo "$handshakes" | sort -nr | head -n1)
-            age=$((now - newest))
 
-            if (( age < 86400 )); then
-                pass "Recent WireGuard handshake" 3 \
-                    "At least one peer has communicated within the last 24 hours."
-            elif (( age < 604800 )); then
-                warn "Recent WireGuard handshake" 1 \
-                    "Newest recorded handshake is more than 24 hours old."
+            local stale=0
+
+            while read -r iface pubkey handshake; do
+
+                [[ -z "$handshake" || "$handshake" == "0" ]] && continue
+
+                local age=$((now - handshake))
+
+                if (( age > 86400 )); then
+                    stale=$((stale + 1))
+                fi
+
+            done < <(wg show all latest-handshakes 2>/dev/null)
+
+            if (( stale == 0 )); then
+
+                check_pass \
+                    "$CURRENT_CATEGORY" \
+                    "wireguard_handshakes" \
+                    5 \
+                    "WireGuard peer activity" \
+                    "WireGuard peer handshakes appear recent." \
+                    "No action required."
+
             else
-                warn "Recent WireGuard handshake" 0 \
-                    "No WireGuard handshake has been seen within the last 7 days."
+
+                check_warn \
+                    "$CURRENT_CATEGORY" \
+                    "wireguard_handshakes" \
+                    5 \
+                    3 \
+                    "Stale WireGuard peers" \
+                    "$stale WireGuard peer(s) have not handshaken recently." \
+                    "Check the affected peers and network connectivity."
             fi
-        else
-            warn "Recent WireGuard handshake" 0 \
-                "No peer handshake timestamp was available."
         fi
+
     else
-        warn "WireGuard interface" 1 \
-            "WireGuard is installed but no active interface was detected."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "WireGuard interface" \
+            "No active WireGuard interface detected." \
+            "WireGuard may be installed but inactive."
     fi
 }
 
 # ------------------------------------------------------------
-# SECURITY
+# Security
 # ------------------------------------------------------------
 
 run_security_checks() {
-    set_category "Security"
 
-    if command_exists ss; then
-        local ssh_listen
-        ssh_listen=$(ss -lnt 2>/dev/null | grep -E ':(22|2222)[[:space:]]' || true)
+    CURRENT_CATEGORY="Security"
 
-        if [[ -n "$ssh_listen" ]]; then
-            pass "SSH listening state" 2 \
-                "SSH appears to be listening."
+    if command_exists sshd; then
+
+        local ssh_config
+        ssh_config=$(sshd -T 2>/dev/null || true)
+
+        if grep -q '^permitrootlogin no' <<< "$ssh_config"; then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "ssh_root" \
+                5 \
+                "SSH root login" \
+                "SSH root login is disabled." \
+                "No action required."
+
+        elif grep -q '^permitrootlogin prohibit-password' <<< "$ssh_config"; then
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "ssh_root" \
+                5 \
+                2 \
+                "SSH root key login permitted" \
+                "SSH root login is restricted but not fully disabled." \
+                "Disable root SSH login unless it is specifically required."
+
         else
-            pass "SSH exposure" 2 \
-                "No SSH listener detected on common ports 22/2222."
+
+            check_fail \
+                "$CURRENT_CATEGORY" \
+                "ssh_root" \
+                6 \
+                6 \
+                "SSH root login enabled" \
+                "SSH configuration allows root login." \
+                "Set PermitRootLogin no unless root SSH access is intentionally required."
         fi
 
-        local exposed
-        exposed=$(ss -lnt 2>/dev/null | awk '$4 ~ /^0\.0\.0\.0:/ || $4 ~ /^\[::\]:/ {print $4}' | wc -l)
+        if grep -q '^passwordauthentication no' <<< "$ssh_config"; then
 
-        if (( exposed < 10 )); then
-            pass "Public interface listeners" 3 \
-                "${exposed} TCP listener(s) appear bound to all interfaces."
-        elif (( exposed < 20 )); then
-            warn "Public interface listeners" 1 \
-                "${exposed} TCP listener(s) appear bound to all interfaces."
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "ssh_password" \
+                4 \
+                "SSH password authentication" \
+                "SSH password authentication is disabled." \
+                "No action required."
+
         else
-            warn "Public interface listeners" 0 \
-                "${exposed} TCP listeners appear bound to all interfaces; review exposure."
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "ssh_password" \
+                4 \
+                2 \
+                "SSH password authentication enabled" \
+                "SSH accepts password authentication." \
+                "Consider disabling password authentication and using SSH keys."
         fi
+
+        local ssh_port
+        ssh_port=$(awk '$1=="port" {print $2; exit}' <<< "$ssh_config")
+
+        if [[ "$ssh_port" == "22" ]]; then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "ssh_port" \
+                2 \
+                "SSH port" \
+                "SSH is configured on the standard port 22." \
+                "Changing the port is optional and is not a replacement for proper authentication."
+
+        elif [[ "$ssh_port" =~ ^[0-9]+$ ]]; then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "ssh_port" \
+                2 \
+                "SSH port" \
+                "SSH listens on port $ssh_port." \
+                "No action required."
+
+        else
+
+            check_skip \
+                "$CURRENT_CATEGORY" \
+                "SSH port" \
+                "Unable to determine SSH port." \
+                "sshd configuration could not be parsed."
+        fi
+
     else
-        skip_check "SSH listening state" "ss unavailable."
-        skip_check "Public interface listeners" "ss unavailable."
-    fi
 
-    if [[ -f /etc/ssh/sshd_config ]]; then
-        local root_login password_auth
-
-        root_login=$(grep -Ei '^[[:space:]]*PermitRootLogin' /etc/ssh/sshd_config 2>/dev/null | tail -n1 || true)
-        password_auth=$(grep -Ei '^[[:space:]]*PasswordAuthentication' /etc/ssh/sshd_config 2>/dev/null | tail -n1 || true)
-
-        if echo "$root_login" | grep -qiE 'yes|without-password|prohibit-password'; then
-            warn "SSH root login configuration" 1 \
-                "SSH root login is explicitly permitted or not fully disabled."
-        else
-            pass "SSH root login configuration" 2 \
-                "SSH root login does not appear explicitly enabled."
-        fi
-
-        if echo "$password_auth" | grep -qiE 'yes'; then
-            warn "SSH password authentication" 1 \
-                "SSH password authentication appears enabled."
-        else
-            pass "SSH password authentication" 2 \
-                "SSH password authentication does not appear explicitly enabled."
-        fi
-    else
-        skip_check "SSH root login configuration" "sshd_config unavailable."
-        skip_check "SSH password authentication" "sshd_config unavailable."
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "SSH configuration" \
+            "OpenSSH server was not detected." \
+            "SSH checks are skipped when sshd is unavailable."
     fi
 
     if command_exists ufw; then
+
         local ufw_status
-        ufw_status=$(ufw status 2>/dev/null || true)
+        ufw_status=$(ufw status 2>/dev/null | head -1)
 
-        if echo "$ufw_status" | grep -qi '^Status: active'; then
-            pass "UFW firewall" 4 \
-                "UFW is active."
+        if grep -qi "active" <<< "$ufw_status"; then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "firewall" \
+                6 \
+                "Firewall" \
+                "UFW firewall is active." \
+                "No action required."
+
         else
-            warn "UFW firewall" 2 \
-                "UFW is installed but inactive."
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "firewall" \
+                6 \
+                4 \
+                "UFW firewall inactive" \
+                "UFW is installed but does not report active." \
+                "Enable an appropriate firewall if another firewall is not already protecting the host."
         fi
+
     elif command_exists nft; then
-        if nft list ruleset >/dev/null 2>&1 && [[ -n "$(nft list ruleset 2>/dev/null)" ]]; then
-            pass "nftables firewall" 4 \
-                "An nftables ruleset is present."
-        else
-            warn "nftables firewall" 2 \
-                "nftables is available but no ruleset was detected."
-        fi
-    elif command_exists iptables; then
-        local policy
-        policy=$(iptables -S 2>/dev/null || true)
 
-        if [[ -n "$policy" ]]; then
-            pass "iptables firewall" 3 \
-                "iptables rules are present."
+        local nft_rules
+        nft_rules=$(nft list ruleset 2>/dev/null | wc -l)
+
+        if (( nft_rules > 0 )); then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "firewall" \
+                6 \
+                "Firewall rules" \
+                "nftables has an active ruleset." \
+                "No action required."
+
         else
-            warn "iptables firewall" 1 \
-                "iptables is available but no rules were detected."
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "firewall" \
+                6 \
+                4 \
+                "No nftables rules detected" \
+                "nft is installed but its ruleset appears empty." \
+                "Verify whether another firewall is protecting the system."
         fi
+
+    elif command_exists iptables; then
+
+        local iptables_rules
+        iptables_rules=$(iptables -S 2>/dev/null | wc -l)
+
+        if (( iptables_rules > 1 )); then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "firewall" \
+                6 \
+                "Firewall rules" \
+                "iptables rules are present." \
+                "No action required."
+
+        else
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "firewall" \
+                6 \
+                4 \
+                "Minimal firewall configuration" \
+                "iptables has little or no filtering configuration." \
+                "Verify whether another firewall is active."
+        fi
+
     else
-        warn "Firewall detection" 0 \
-            "No supported firewall management tool was detected."
+
+        check_warn \
+            "$CURRENT_CATEGORY" \
+            "firewall" \
+            6 \
+            4 \
+            "No firewall tool detected" \
+            "No supported firewall management tool was detected." \
+            "Consider configuring a suitable firewall for exposed services."
     fi
 
     if command_exists fail2ban-client; then
+
         if fail2ban-client ping >/dev/null 2>&1; then
-            pass "Fail2ban" 2 \
-                "Fail2ban is installed and responding."
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "fail2ban" \
+                4 \
+                "Fail2ban" \
+                "Fail2ban is responding." \
+                "No action required."
+
         else
-            warn "Fail2ban" 1 \
-                "Fail2ban is installed but not responding."
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "fail2ban" \
+                4 \
+                2 \
+                "Fail2ban unavailable" \
+                "Fail2ban is installed but not responding." \
+                "Check the fail2ban service."
         fi
+
     else
-        skip_check "Fail2ban" "Fail2ban is not installed."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Fail2ban" \
+            "Fail2ban is not installed." \
+            "This is optional."
     fi
 
-    if command_exists journalctl; then
-        local auth_failures
-        auth_failures=$(journalctl --since "24 hours ago" --no-pager 2>/dev/null |
-            grep -ciE 'Failed password|authentication failure|Invalid user' || true)
+    local auth_failures
+    auth_failures=$(journalctl --since "24 hours ago" --no-pager 2>/dev/null |
+        grep -Eic 'authentication failure|Failed password|Invalid user|Failed publickey' || true)
 
-        if (( auth_failures == 0 )); then
-            pass "Recent authentication failures" 3 \
-                "No obvious failed authentication attempts found in the last 24 hours."
-        elif (( auth_failures < 10 )); then
-            warn "Recent authentication failures" 2 \
-                "${auth_failures} failed authentication event(s) found in the last 24 hours."
-        else
-            fail "Recent authentication failures" 0 \
-                "${auth_failures} failed authentication events found in the last 24 hours."
-        fi
+    if (( auth_failures == 0 )); then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "auth_failures" \
+            5 \
+            "Authentication failures" \
+            "No obvious failed-authentication events were detected in the last 24 hours." \
+            "No action required."
+
+    elif (( auth_failures < 20 )); then
+
+        check_warn \
+            "$CURRENT_CATEGORY" \
+            "auth_failures" \
+            5 \
+            2 \
+            "Authentication failures detected" \
+            "$auth_failures authentication failure event(s) detected in the last 24 hours." \
+            "Check login sources and SSH exposure."
+
     else
-        skip_check "Recent authentication failures" "journalctl unavailable."
+
+        check_fail \
+            "$CURRENT_CATEGORY" \
+            "auth_failures" \
+            6 \
+            6 \
+            "High authentication failure activity" \
+            "$auth_failures authentication failure event(s) detected in the last 24 hours." \
+            "Investigate source addresses and secure externally exposed authentication."
     fi
 }
 
 # ------------------------------------------------------------
-# SOFTWARE / PACKAGE HEALTH
+# Software / updates
 # ------------------------------------------------------------
 
 run_software_checks() {
-    set_category "Software & Updates"
+
+    CURRENT_CATEGORY="Software & Updates"
 
     if command_exists dpkg; then
-        local broken
-        broken=$(dpkg --audit 2>/dev/null | wc -l)
 
-        if (( broken == 0 )); then
-            pass "Package database integrity" 4 \
-                "dpkg reports no obvious package audit problems."
+        local dpkg_errors
+        dpkg_errors=$(dpkg --audit 2>/dev/null | wc -l)
+
+        if (( dpkg_errors == 0 )); then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "dpkg" \
+                5 \
+                "Package database" \
+                "dpkg reports no incomplete package configuration." \
+                "No action required."
+
         else
-            warn "Package database integrity" 1 \
-                "dpkg audit returned ${broken} line(s) requiring review."
+
+            check_fail \
+                "$CURRENT_CATEGORY" \
+                "dpkg" \
+                6 \
+                6 \
+                "Package database issue" \
+                "dpkg --audit returned $dpkg_errors line(s) of output." \
+                "Run 'sudo dpkg --configure -a' and resolve package issues."
         fi
+
     else
-        skip_check "Package database integrity" "dpkg unavailable."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Package database" \
+            "dpkg is unavailable." \
+            "This system may not be Debian-based."
     fi
 
-    if command_exists apt-get && command_exists apt; then
+    if command_exists apt; then
+
         local updates
-        updates=$(apt list --upgradable 2>/dev/null | tail -n +2 | grep -v '^$' | wc -l)
+        updates=$(apt list --upgradable 2>/dev/null |
+            grep -v '^Listing' |
+            grep -c '/' || true)
 
         if (( updates == 0 )); then
-            pass "Available package updates" 4 \
-                "No available package updates were detected."
-        elif (( updates < 10 )); then
-            warn "Available package updates" 3 \
-                "${updates} package update(s) are available."
-        elif (( updates < 50 )); then
-            warn "Available package updates" 2 \
-                "${updates} package updates are available."
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "updates" \
+                4 \
+                "Available updates" \
+                "No package updates are currently reported." \
+                "No action required."
+
+        elif (( updates < 20 )); then
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "updates" \
+                4 \
+                2 \
+                "Updates available" \
+                "$updates package update(s) are available." \
+                "Review and install updates when appropriate."
+
         else
-            fail "Available package updates" 0 \
-                "${updates} package updates are available."
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "updates" \
+                5 \
+                3 \
+                "Many updates available" \
+                "$updates package update(s) are available." \
+                "Schedule system updates and reboot if required."
         fi
+
     else
-        skip_check "Available package updates" "APT package manager unavailable."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Package updates" \
+            "apt is unavailable." \
+            "Cannot determine Debian package updates."
     fi
 
     if [[ -f /var/run/reboot-required ]]; then
-        warn "Reboot required" 1 \
-            "The system indicates that a reboot is required."
+
+        check_warn \
+            "$CURRENT_CATEGORY" \
+            "reboot_required" \
+            5 \
+            3 \
+            "Reboot required" \
+            "The system has marked itself as requiring a reboot." \
+            "Schedule a reboot when convenient."
+
     else
-        pass "Reboot required" 2 \
-            "No reboot-required marker was detected."
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "reboot_required" \
+            3 \
+            "Reboot requirement" \
+            "No reboot-required flag is present." \
+            "No action required."
+    fi
+
+    local kernel
+    kernel=$(uname -r 2>/dev/null || true)
+
+    if [[ -n "$kernel" ]]; then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "kernel_version" \
+            2 \
+            "Kernel version" \
+            "Running kernel: $kernel." \
+            "No action required."
+
+    else
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Kernel version" \
+            "Kernel version unavailable." \
+            "uname did not return a kernel version."
     fi
 
     if command_exists timedatectl; then
-        local sync
-        sync=$(timedatectl show -p NTPSynchronized --value 2>/dev/null || true)
 
-        if [[ "$sync" == "yes" ]]; then
-            pass "Time synchronisation" 2 \
-                "System clock is synchronised."
+        local ntp
+        ntp=$(timedatectl show -p NTPSynchronized --value 2>/dev/null || true)
+
+        if [[ "$ntp" == "yes" ]]; then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "time_sync" \
+                4 \
+                "Time synchronization" \
+                "System clock is synchronized." \
+                "No action required."
+
         else
-            warn "Time synchronisation" 1 \
-                "System clock does not report as synchronised."
-        fi
-    else
-        skip_check "Time synchronisation" "timedatectl unavailable."
-    fi
 
-    if command_exists uname; then
-        pass "Kernel identification" 2 \
-            "Running kernel: ${KERNEL_VERSION}."
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "time_sync" \
+                4 \
+                2 \
+                "Clock not synchronized" \
+                "timedatectl reports that the system clock is not synchronized." \
+                "Check NTP/systemd-timesyncd/chrony configuration."
+        fi
+
+        local timezone
+        timezone=$(timedatectl show -p Timezone --value 2>/dev/null || true)
+
+        if [[ -n "$timezone" ]]; then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "timezone" \
+                2 \
+                "Timezone configuration" \
+                "Timezone: $timezone." \
+                "No action required."
+
+        else
+
+            check_skip \
+                "$CURRENT_CATEGORY" \
+                "Timezone" \
+                "Timezone unavailable." \
+                "timedatectl did not provide timezone information."
+        fi
+
     else
-        skip_check "Kernel identification" "uname unavailable."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Time synchronization" \
+            "timedatectl is unavailable." \
+            "Cannot inspect system time synchronization."
     fi
 }
 
 # ------------------------------------------------------------
-# PROCESS / CRASH CHECKS
+# Processes
 # ------------------------------------------------------------
 
 run_process_checks() {
-    set_category "Processes & Reliability"
+
+    CURRENT_CATEGORY="Processes & Reliability"
 
     if command_exists ps; then
+
         local process_count
         process_count=$(ps -e --no-headers 2>/dev/null | wc -l)
 
-        if (( process_count < 300 )); then
-            pass "Process count" 2 \
-                "${process_count} running process(es) detected."
-        elif (( process_count < 500 )); then
-            warn "Process count" 1 \
-                "${process_count} running processes detected."
+        if (( process_count > 0 )); then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "process_count" \
+                2 \
+                "Process count" \
+                "$process_count processes are currently running." \
+                "No action required."
+
         else
-            warn "Process count" 0 \
-                "${process_count} running processes detected; review if unexpected."
+
+            check_skip \
+                "$CURRENT_CATEGORY" \
+                "Process count" \
+                "Unable to determine process count." \
+                "ps returned no usable data."
         fi
 
-        local zombie_count
-        zombie_count=$(ps -eo stat= 2>/dev/null | grep -c '^Z' || true)
+        local zombies
+        zombies=$(ps -eo stat= 2>/dev/null |
+            grep -c '^Z' || true)
 
-        if (( zombie_count == 0 )); then
-            pass "Zombie processes" 3 \
-                "No zombie processes detected."
-        elif (( zombie_count < 5 )); then
-            warn "Zombie processes" 1 \
-                "${zombie_count} zombie process(es) detected."
+        if (( zombies == 0 )); then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "zombies" \
+                4 \
+                "Zombie processes" \
+                "No zombie processes detected." \
+                "No action required."
+
+        elif (( zombies < 5 )); then
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "zombies" \
+                4 \
+                2 \
+                "Zombie processes detected" \
+                "$zombies zombie process(es) detected." \
+                "Identify the parent processes and investigate why they are not reaping children."
+
         else
-            fail "Zombie processes" 0 \
-                "${zombie_count} zombie processes detected."
+
+            check_fail \
+                "$CURRENT_CATEGORY" \
+                "zombies" \
+                5 \
+                5 \
+                "Many zombie processes" \
+                "$zombies zombie process(es) detected." \
+                "Investigate parent processes and application behaviour."
+
         fi
+
     else
-        skip_check "Process count" "ps unavailable."
-        skip_check "Zombie processes" "ps unavailable."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Process analysis" \
+            "ps is unavailable." \
+            "Cannot inspect running processes."
     fi
 
-    if command_exists journalctl; then
-        local segfaults
-        segfaults=$(journalctl --since "7 days ago" --no-pager 2>/dev/null |
-            grep -ciE 'segfault|core dumped' || true)
+    if [[ -r /proc/pressure/cpu ]]; then
 
-        if (( segfaults == 0 )); then
-            pass "Recent segmentation faults" 3 \
-                "No segmentation fault/core dump indicators found in the last 7 days."
-        elif (( segfaults < 5 )); then
-            warn "Recent segmentation faults" 1 \
-                "${segfaults} segmentation fault/core dump indicator(s) found."
-        else
-            fail "Recent segmentation faults" 0 \
-                "${segfaults} segmentation fault/core dump indicators found."
-        fi
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "cpu_psi" \
+            2 \
+            "CPU pressure statistics" \
+            "Kernel CPU pressure statistics are available." \
+            "No action required."
+
     else
-        skip_check "Recent segmentation faults" "journalctl unavailable."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "CPU pressure" \
+            "CPU pressure statistics unavailable." \
+            "Kernel PSI is not exposed."
+    fi
+
+    if command_exists systemctl; then
+
+        local core_dump
+        core_dump=$(journalctl --since "7 days ago" --no-pager 2>/dev/null |
+            grep -Eic 'core dumped' || true)
+
+        if (( core_dump == 0 )); then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "core_dumps" \
+                5 \
+                "Core dumps" \
+                "No core-dump events detected in the last 7 days." \
+                "No action required."
+
+        else
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "core_dumps" \
+                5 \
+                3 \
+                "Core dumps detected" \
+                "$core_dump core-dump event(s) detected in the last 7 days." \
+                "Identify the crashing process and investigate."
+        fi
+
     fi
 }
 
 # ------------------------------------------------------------
-# CONFIGURATION
+# Configuration
 # ------------------------------------------------------------
 
 run_configuration_checks() {
-    set_category "Configuration"
 
-    if [[ -n "$HOSTNAME_VALUE" ]]; then
-        pass "Hostname configuration" 2 \
-            "Hostname is ${HOSTNAME_VALUE}."
-    else
-        fail "Hostname configuration" 0 \
-            "Hostname could not be determined."
-    fi
+    CURRENT_CATEGORY="Configuration"
 
-    if [[ -f /etc/fstab ]]; then
-        if findmnt --verify >/dev/null 2>&1; then
-            pass "fstab validation" 4 \
-                "Mounted filesystem configuration passed findmnt verification."
-        else
-            warn "fstab validation" 1 \
-                "findmnt reported a possible filesystem configuration problem."
-        fi
-    else
-        skip_check "fstab validation" "/etc/fstab unavailable."
-    fi
+    if [[ -n "$(hostname 2>/dev/null)" ]]; then
 
-    if [[ -d /etc/systemd/system ]]; then
-        pass "Local systemd configuration directory" 1 \
-            "/etc/systemd/system exists."
-    else
-        skip_check "Local systemd configuration directory" "Directory unavailable."
-    fi
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "hostname" \
+            2 \
+            "Hostname configuration" \
+            "Hostname: $(hostname)." \
+            "No action required."
 
-    if [[ -f /etc/hostname ]]; then
-        pass "Hostname file" 1 \
-            "/etc/hostname exists."
     else
-        warn "Hostname file" 0 \
-            "/etc/hostname is missing."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Hostname" \
+            "Hostname unavailable." \
+            "hostname command did not return a value."
     fi
 
     if [[ -f /etc/resolv.conf ]]; then
-        pass "DNS resolver configuration" 2 \
-            "/etc/resolv.conf exists."
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "resolv_conf" \
+            2 \
+            "Resolver configuration file" \
+            "/etc/resolv.conf exists." \
+            "No action required."
+
     else
-        fail "DNS resolver configuration" 0 \
-            "/etc/resolv.conf is missing."
+
+        check_fail \
+            "$CURRENT_CATEGORY" \
+            "resolv_conf" \
+            4 \
+            4 \
+            "Missing resolver configuration" \
+            "/etc/resolv.conf does not exist." \
+            "Restore a valid resolver configuration."
+    fi
+
+    if [[ -f /etc/fstab ]]; then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "fstab_exists" \
+            2 \
+            "fstab configuration" \
+            "/etc/fstab exists." \
+            "No action required."
+
+    else
+
+        check_warn \
+            "$CURRENT_CATEGORY" \
+            "fstab_exists" \
+            2 \
+            1 \
+            "Missing fstab" \
+            "/etc/fstab does not exist." \
+            "Verify whether this system intentionally uses another mount configuration mechanism."
+    fi
+
+    if [[ -d /etc/systemd/system ]]; then
+
+        local custom_units
+        custom_units=$(find /etc/systemd/system \
+            -maxdepth 1 \
+            -type f \
+            -name '*.service' \
+            2>/dev/null |
+            wc -l)
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "custom_unit_files" \
+            2 \
+            "Custom systemd configuration" \
+            "$custom_units custom service file(s) found in /etc/systemd/system." \
+            "No action required."
+
+    else
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Custom systemd files" \
+            "/etc/systemd/system is unavailable." \
+            "Systemd configuration directory is missing."
     fi
 }
 
 # ------------------------------------------------------------
-# APPLICATION-SPECIFIC CHECKS
+# Application-aware checks
 # ------------------------------------------------------------
 
 run_application_checks() {
-    set_category "Detected Applications"
+
+    CURRENT_CATEGORY="Applications"
 
     if command_exists docker; then
-        if docker info >/dev/null 2>&1; then
-            pass "Docker daemon" 3 \
-                "Docker is installed and responding."
-        else
-            warn "Docker daemon" 1 \
-                "Docker is installed but the daemon is not responding."
-        fi
 
-        local containers
-        containers=$(docker ps -a --format '{{.ID}}' 2>/dev/null | wc -l)
+        if systemctl is-active --quiet docker 2>/dev/null; then
 
-        if (( containers > 0 )); then
+            local containers
+            containers=$(docker ps -a --format '{{.ID}}' 2>/dev/null | wc -l)
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "docker" \
+                4 \
+                "Docker" \
+                "Docker is active with $containers container(s)." \
+                "No action required."
+
             local stopped
             stopped=$(docker ps -a --filter status=exited --format '{{.ID}}' 2>/dev/null | wc -l)
 
             if (( stopped == 0 )); then
-                pass "Docker container state" 2 \
-                    "${containers} container(s) detected and none are exited."
+
+                check_pass \
+                    "$CURRENT_CATEGORY" \
+                    "docker_containers" \
+                    4 \
+                    "Docker containers" \
+                    "No exited Docker containers were detected." \
+                    "No action required."
+
             else
-                warn "Docker container state" 1 \
-                    "${containers} container(s) detected; ${stopped} are exited."
+
+                check_warn \
+                    "$CURRENT_CATEGORY" \
+                    "docker_containers" \
+                    4 \
+                    2 \
+                    "Exited Docker containers" \
+                    "$stopped exited container(s) detected." \
+                    "Review whether exited containers are expected."
+
             fi
+
         else
-            skip_check "Docker container state" "Docker is installed but no containers exist."
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "docker" \
+                4 \
+                3 \
+                "Docker inactive" \
+                "Docker is installed but its service is not active." \
+                "Start Docker if it is expected to be running."
+
         fi
+
     else
-        skip_check "Docker daemon" "Docker is not installed."
-        skip_check "Docker container state" "Docker is not installed."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Docker" \
+            "Docker was not detected." \
+            "This check is skipped when Docker is not installed."
     fi
 
     if command_exists caddy; then
-        if caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1; then
-            pass "Caddy configuration" 3 \
-                "Caddy configuration passed validation."
+
+        if command_exists systemctl && systemctl is-active --quiet caddy 2>/dev/null; then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "caddy" \
+                4 \
+                "Caddy" \
+                "Caddy is installed and active." \
+                "No action required."
+
         else
-            warn "Caddy configuration" 1 \
-                "Caddy is installed but its configuration could not be validated."
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "caddy" \
+                4 \
+                2 \
+                "Caddy inactive" \
+                "Caddy is installed but is not currently active." \
+                "Check whether Caddy is intentionally stopped."
+
         fi
+
     else
-        skip_check "Caddy configuration" "Caddy is not installed."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Caddy" \
+            "Caddy was not detected." \
+            "This check is skipped when Caddy is not installed."
     fi
 
     if command_exists tailscale; then
+
         if tailscale status >/dev/null 2>&1; then
-            pass "Tailscale" 3 \
-                "Tailscale is installed and responding."
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "tailscale" \
+                4 \
+                "Tailscale" \
+                "Tailscale is responding normally." \
+                "No action required."
+
         else
-            warn "Tailscale" 1 \
-                "Tailscale is installed but status could not be retrieved."
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "tailscale" \
+                4 \
+                2 \
+                "Tailscale status issue" \
+                "Tailscale is installed but did not return a healthy status." \
+                "Check 'tailscale status' and the Tailscale service."
+
         fi
+
     else
-        skip_check "Tailscale" "Tailscale is not installed."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Tailscale" \
+            "Tailscale was not detected." \
+            "This check is skipped when Tailscale is not installed."
     fi
 
-    if command_exists mosquitto; then
-        pass "MQTT software detection" 1 \
-            "Mosquitto MQTT software is installed."
+    if command_exists mosquitto_pub || command_exists mosquitto_sub; then
+
+        if command_exists systemctl && systemctl is-active --quiet mosquitto 2>/dev/null; then
+
+            check_pass \
+                "$CURRENT_CATEGORY" \
+                "mosquitto" \
+                3 \
+                "Mosquitto" \
+                "Mosquitto appears to be active." \
+                "No action required."
+
+        else
+
+            check_warn \
+                "$CURRENT_CATEGORY" \
+                "mosquitto" \
+                3 \
+                2 \
+                "Mosquitto inactive" \
+                "MQTT tooling is installed but the Mosquitto service is not active." \
+                "Check whether Mosquitto is intentionally stopped."
+        fi
+
     else
-        skip_check "MQTT software detection" "Mosquitto is not installed."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Mosquitto" \
+            "Mosquitto tooling was not detected." \
+            "This check is skipped when MQTT software is not installed."
     fi
 }
 
 # ------------------------------------------------------------
-# NETWORK CONFIGURATION / INTERFACE ERRORS
+# Network interface reliability
 # ------------------------------------------------------------
 
-run_network_error_checks() {
-    set_category "Network Reliability"
+run_network_reliability_checks() {
 
-    if command_exists ip; then
-        local error_stats
-        error_stats=$(ip -s link 2>/dev/null | awk '
-            /^[0-9]+:/ {
-                iface=$2
-                sub(/:$/,"",iface)
-            }
-            /RX:/ {rx=1; next}
-            /TX:/ {tx=1; next}
-            rx && NF >= 8 {
-                if ($1+0 > 0 || $3+0 > 0 || $4+0 > 0) errors++
-                rx=0
-            }
-            tx && NF >= 8 {
-                if ($1+0 > 0 || $3+0 > 0 || $4+0 > 0) errors++
-                tx=0
-            }
-            END {print errors+0}
-        ')
+    CURRENT_CATEGORY="Network Reliability"
 
-        if [[ "$error_stats" =~ ^[0-9]+$ ]]; then
-            if (( error_stats == 0 )); then
-                pass "Network interface errors" 3 \
-                    "No obvious RX/TX error counters were detected."
-            else
-                warn "Network interface errors" 1 \
-                    "Some interface error/drop counters may be non-zero."
-            fi
-        else
-            skip_check "Network interface errors" "Interface statistics unavailable."
-        fi
-    else
-        skip_check "Network interface errors" "ip unavailable."
+    if ! command_exists ip; then
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Interface reliability" \
+            "ip command unavailable." \
+            "Cannot inspect network statistics."
+
+        return
     fi
 
-    if [[ -r /proc/net/dev ]]; then
-        pass "Network statistics" 2 \
-            "Kernel network statistics are available."
+    local interfaces
+    interfaces=$(ip -o link show 2>/dev/null |
+        awk -F': ' '{print $2}' |
+        sed 's/@.*//' |
+        grep -v '^lo$' || true)
+
+    local total_rx=0
+    local total_tx=0
+
+    for iface in $interfaces; do
+
+        local rx_bytes tx_bytes
+
+        rx_bytes=$(cat "/sys/class/net/$iface/statistics/rx_bytes" 2>/dev/null || echo 0)
+        tx_bytes=$(cat "/sys/class/net/$iface/statistics/tx_bytes" 2>/dev/null || echo 0)
+
+        total_rx=$((total_rx + rx_bytes))
+        total_tx=$((total_tx + tx_bytes))
+
+    done
+
+    if (( total_rx > 0 || total_tx > 0 )); then
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "network_traffic" \
+            2 \
+            "Network traffic statistics" \
+            "Network interfaces report RX=${total_rx} bytes and TX=${total_tx} bytes." \
+            "No action required."
+
     else
-        skip_check "Network statistics" "/proc/net/dev unavailable."
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Network traffic" \
+            "No network traffic counters were available." \
+            "Interfaces may be inactive."
+    fi
+
+    if command_exists ss; then
+
+        local listening
+        listening=$(ss -lntu 2>/dev/null | tail -n +2 | wc -l)
+
+        check_pass \
+            "$CURRENT_CATEGORY" \
+            "listening_sockets" \
+            4 \
+            "Listening sockets" \
+            "$listening listening TCP/UDP socket(s) detected." \
+            "Review the security screen for exposed services."
+
+    else
+
+        check_skip \
+            "$CURRENT_CATEGORY" \
+            "Listening sockets" \
+            "ss is unavailable." \
+            "Cannot inspect listening sockets."
     fi
 }
 
 # ------------------------------------------------------------
-# FULL SCAN
+# Scan engine
 # ------------------------------------------------------------
 
 run_full_scan() {
+
     : > "$RESULT_FILE"
-    : > "$DETAIL_FILE"
+    : > "$ISSUE_FILE"
     : > "$SKIP_FILE"
 
-    TOTAL_POINTS=0
-    MAX_POINTS=0
-    PASS_COUNT=0
-    WARN_COUNT=0
-    FAIL_COUNT=0
-    SKIP_COUNT=0
+    TOTAL_POSSIBLE=0
+    TOTAL_APPLICABLE=0
+    TOTAL_PASS=0
+    TOTAL_WARN=0
+    TOTAL_FAIL=0
+    TOTAL_SKIP=0
+    OVERALL_DEDUCTIONS=0
+    OVERALL_WEIGHT=0
 
-    unset CAT_SCORE CAT_MAX CAT_PASS CAT_WARN CAT_FAIL
-    declare -gA CAT_SCORE
-    declare -gA CAT_MAX
-    declare -gA CAT_PASS
-    declare -gA CAT_WARN
-    declare -gA CAT_FAIL
+    (
+        clear
+
+        echo "PiTweaks Health Score V${VERSION}"
+        echo
+        echo "Running adaptive diagnostic scan..."
+        echo
+        echo "This may take a little while."
+        echo
+    )
 
     run_cpu_checks
     run_power_checks
@@ -1443,382 +3330,599 @@ run_full_scan() {
     run_boot_checks
     run_network_checks
     run_dns_checks
-    run_wireguard_checks
+    run_vpn_checks
     run_security_checks
     run_software_checks
     run_process_checks
     run_configuration_checks
     run_application_checks
-    run_network_error_checks
+    run_network_reliability_checks
+
+    calculate_score
+
+    generate_summary
 }
 
 # ------------------------------------------------------------
-# SCORE
+# Summary generation
 # ------------------------------------------------------------
 
-get_score() {
-    if (( MAX_POINTS <= 0 )); then
-        echo 0
-    else
-        echo $(( TOTAL_POINTS * 100 / MAX_POINTS ))
-    fi
-}
+generate_summary() {
 
-score_label() {
-    local score="$1"
-
-    if (( score >= 95 )); then
-        echo "EXCELLENT"
-    elif (( score >= 85 )); then
-        echo "VERY GOOD"
-    elif (( score >= 75 )); then
-        echo "GOOD"
-    elif (( score >= 60 )); then
-        echo "WARNING"
-    elif (( score >= 40 )); then
-        echo "POOR"
-    else
-        echo "CRITICAL"
-    fi
-}
-
-# ------------------------------------------------------------
-# RESULTS TEXT
-# ------------------------------------------------------------
-
-build_summary() {
-    local score label
-    score=$(get_score)
-    label=$(score_label "$score")
+    local now
+    now=$(date '+%Y-%m-%d %H:%M:%S')
 
     {
-        echo "PI HEALTH SCORE"
+        echo "============================================================"
+        echo " PiTweaks Health Score V${VERSION}"
+        echo "============================================================"
         echo
-        printf "Overall Score: %s / 100\n" "$score"
-        printf "Condition:     %s\n" "$label"
+        echo "DATE        : $now"
+        echo "HOSTNAME    : $(hostname 2>/dev/null || echo Unknown)"
+        echo "KERNEL      : $(uname -r 2>/dev/null || echo Unknown)"
         echo
-        printf "Checks passed:   %s\n" "$PASS_COUNT"
-        printf "Warnings:        %s\n" "$WARN_COUNT"
-        printf "Failures:        %s\n" "$FAIL_COUNT"
-        printf "Skipped:         %s\n" "$SKIP_COUNT"
+        echo "OVERALL SCORE : ${SCORE}/100"
+        echo "GRADE         : ${GRADE}"
+        echo "CONFIDENCE    : ${CONFIDENCE}%"
         echo
-        printf "Checks applicable: %s\n" "$((PASS_COUNT + WARN_COUNT + FAIL_COUNT))"
-        printf "Checks evaluated:  %s\n" "$((PASS_COUNT + WARN_COUNT + FAIL_COUNT))"
+        echo "PASS          : ${TOTAL_PASS}"
+        echo "WARN          : ${TOTAL_WARN}"
+        echo "FAIL          : ${TOTAL_FAIL}"
+        echo "SKIP          : ${TOTAL_SKIP}"
         echo
-        echo "SYSTEM"
-        echo "------------------------------"
-        printf "Hostname: %s\n" "$HOSTNAME_VALUE"
-        printf "OS:       %s\n" "$OS_NAME"
-        printf "Kernel:   %s\n" "$KERNEL_VERSION"
-        printf "Arch:     %s\n" "$ARCH"
+        echo "APPLICABLE    : ${TOTAL_APPLICABLE}"
+        echo "POTENTIAL     : ${TOTAL_POSSIBLE}"
         echo
+        echo "------------------------------------------------------------"
         echo "CATEGORY SCORES"
-        echo "------------------------------"
+        echo "------------------------------------------------------------"
+        echo
 
-        local cat
-        for cat in "${!CAT_SCORE[@]}"; do
-            local cscore="${CAT_SCORE[$cat]}"
-            local cmax="${CAT_MAX[$cat]}"
+        local categories=(
+            "CPU"
+            "Power & Thermal"
+            "Memory"
+            "Storage"
+            "Services"
+            "Boot & Reliability"
+            "Network"
+            "DNS"
+            "VPN"
+            "Security"
+            "Software & Updates"
+            "Processes & Reliability"
+            "Configuration"
+            "Applications"
+            "Network Reliability"
+        )
 
-            if (( cmax > 0 )); then
-                printf "%-24s %3s / %-3s (%3s%%)\n" \
-                    "$cat" \
-                    "$cscore" \
-                    "$cmax" \
-                    "$((cscore * 100 / cmax))"
-            fi
+        for category in "${categories[@]}"; do
+            printf '%-25s %s/100\n' \
+                "$category" \
+                "$(category_score "$category")"
         done
 
         echo
-        echo "STATUS"
-        echo "------------------------------"
-        echo "PASS = healthy"
-        echo "WARN = attention recommended"
-        echo "FAIL = issue detected"
-        echo "Skipped checks are not included against the score."
-    } > "${TMP_DIR}/summary"
+        echo "============================================================"
+
+    } > "$SUMMARY_FILE"
 }
 
 # ------------------------------------------------------------
-# ISSUE VIEW
+# Score display
 # ------------------------------------------------------------
 
-show_issues() {
-    local output="${TMP_DIR}/issues"
+show_score() {
 
-    {
-        echo "HEALTH ISSUES"
-        echo "========================================"
-        echo
+    calculate_score
 
-        if [[ "$WARN_COUNT" -eq 0 && "$FAIL_COUNT" -eq 0 ]]; then
-            echo "No warnings or failures were detected."
+    local bar=""
+    local i
+
+    for ((i=0; i<20; i++)); do
+
+        if (( i * 5 < SCORE )); then
+            bar+="#"
         else
-            while IFS='|' read -r status name explanation; do
-                case "$status" in
-                    WARN)
-                        echo "[WARNING] $name"
-                        echo "  $explanation"
-                        echo
-                        ;;
-                    FAIL)
-                        echo "[CRITICAL] $name"
-                        echo "  $explanation"
-                        echo
-                        ;;
-                esac
-            done < "$DETAIL_FILE"
+            bar+="."
         fi
-    } > "$output"
 
-    whiptail \
-        --title "Health Issues" \
-        --textbox "$output" \
-        "$((TERM_HEIGHT - 4))" \
-        "$((TERM_WIDTH - 8))"
+    done
+
+    local message=""
+
+    message+="OVERALL HEALTH SCORE
+"
+    message+="====================
+
+"
+    message+="SCORE       ${SCORE}/100
+"
+    message+="GRADE       ${GRADE}
+"
+    message+="CONFIDENCE  ${CONFIDENCE}%
+
+"
+    message+="[${bar}]
+
+"
+    message+="PASS        ${TOTAL_PASS}
+"
+    message+="WARN        ${TOTAL_WARN}
+"
+    message+="FAIL        ${TOTAL_FAIL}
+"
+    message+="SKIPPED     ${TOTAL_SKIP}
+
+"
+
+    if (( TOTAL_FAIL > 0 )); then
+        message+="Critical failures detected.
+Use WHY to see exactly what reduced the score."
+    elif (( TOTAL_WARN > 0 )); then
+        message+="Warnings detected.
+Use WHY to review recommended improvements."
+    else
+        message+="No significant issues detected."
+    fi
+
+    show_message "$message" 22 70
 }
 
 # ------------------------------------------------------------
-# CATEGORY DETAILS
+# Why score
 # ------------------------------------------------------------
 
-show_category() {
-    local category="$1"
-    local output="${TMP_DIR}/category"
+show_why() {
+
+    if [[ ! -s "$ISSUE_FILE" ]]; then
+
+        show_message \
+            "No deductions were recorded.
+
+Your current score has no WARN or FAIL deductions." \
+            12 65
+
+        return
+    fi
+
+    local why_file="${TMP_DIR}/why.txt"
 
     {
-        echo "$category"
+        echo "WHY IS MY SCORE ${SCORE}/100?"
         echo "========================================"
         echo
+        echo "The following checks reduced the score:"
+        echo
 
-        while IFS='|' read -r status cat points max name; do
-            [[ "$cat" != "$category" ]] && continue
+        while IFS='|' read -r category status deduction title explanation recommendation; do
 
-            case "$status" in
-                PASS)
-                    printf "[PASS] %-42s %s/%s\n" "$name" "$points" "$max"
-                    ;;
-                WARN)
-                    printf "[WARN] %-42s %s/%s\n" "$name" "$points" "$max"
-                    ;;
-                FAIL)
-                    printf "[FAIL] %-42s %s/%s\n" "$name" "$points" "$max"
-                    ;;
-            esac
-        done < "$RESULT_FILE"
+            [[ -z "$title" ]] && continue
+
+            echo "[$status] $title"
+            echo "Category    : $category"
+            echo "Deduction   : -${deduction} points"
+            echo "Finding     : $explanation"
+            echo "Recommendation:"
+            echo "  $recommendation"
+            echo
+            echo "----------------------------------------"
+            echo
+
+        done < "$ISSUE_FILE"
 
         echo
-        echo "Explanations"
-        echo "----------------------------------------"
+        echo "The score is severity-weighted."
+        echo "Critical problems receive larger deductions than informational warnings."
 
-        while IFS='|' read -r status name explanation; do
-            while IFS='|' read -r _ cat _ _ result_name; do
-                [[ "$cat" != "$category" ]] && continue
-                [[ "$result_name" != "$name" ]] && continue
+    } > "$why_file"
 
-                printf "\n[%s] %s\n%s\n" "$status" "$name" "$explanation"
-                break
-            done < "$RESULT_FILE"
-        done < "$DETAIL_FILE"
-
-    } > "$output"
-
-    whiptail \
-        --title "$category" \
-        --textbox "$output" \
-        "$((TERM_HEIGHT - 4))" \
-        "$((TERM_WIDTH - 8))"
+    show_text "$why_file" "Why?"
 }
 
 # ------------------------------------------------------------
-# SKIPPED CHECKS
-# ------------------------------------------------------------
-
-show_skipped() {
-    local output="${TMP_DIR}/skipped"
-
-    {
-        echo "SKIPPED / NOT APPLICABLE CHECKS"
-        echo "========================================"
-        echo
-        echo "These checks were not scored because the"
-        echo "required hardware or software was not detected."
-        echo
-
-        while IFS='|' read -r name reason; do
-            printf "%-42s\n  %s\n\n" "$name" "$reason"
-        done < "$SKIP_FILE"
-
-    } > "$output"
-
-    whiptail \
-        --title "Skipped Checks" \
-        --textbox "$output" \
-        "$((TERM_HEIGHT - 4))" \
-        "$((TERM_WIDTH - 8))"
-}
-
-# ------------------------------------------------------------
-# CATEGORY MENU
+# Category view
 # ------------------------------------------------------------
 
 show_categories() {
-    local options=()
-    local category
 
-    for category in "${!CAT_SCORE[@]}"; do
-        local score="${CAT_SCORE[$category]}"
-        local max="${CAT_MAX[$category]}"
+    local category_file="${TMP_DIR}/category_view.txt"
 
-        [[ "$max" -eq 0 ]] && continue
+    {
+        echo "CATEGORY HEALTH"
+        echo "================"
+        echo
 
-        local percentage=$((score * 100 / max))
-
-        options+=(
-            "$category"
-            "${percentage}%  (${score}/${max})"
+        local categories=(
+            "CPU"
+            "Power & Thermal"
+            "Memory"
+            "Storage"
+            "Services"
+            "Boot & Reliability"
+            "Network"
+            "DNS"
+            "VPN"
+            "Security"
+            "Software & Updates"
+            "Processes & Reliability"
+            "Configuration"
+            "Applications"
+            "Network Reliability"
         )
-    done
 
-    options+=(
-        "BACK"
-        "Return"
-    )
+        for category in "${categories[@]}"; do
 
-    local selected
+            local score
+            score=$(category_score "$category")
 
-    selected=$(whiptail \
-        --title "Health Categories" \
-        --menu "Select a category:" \
-        "$((TERM_HEIGHT - 4))" \
-        "$((TERM_WIDTH - 8))" \
-        12 \
-        "${options[@]}" \
-        3>&1 1>&2 2>&3) || return
+            echo "$category"
+            echo "Score: ${score}/100"
+            echo
 
-    [[ "$selected" == "BACK" ]] && return
+            while IFS='|' read -r cat id status weight deduction title explanation recommendation; do
 
-    show_category "$selected"
+                [[ "$cat" != "$category" ]] && continue
+
+                case "$status" in
+                    PASS)
+                        echo "  [PASS] $title"
+                        ;;
+                    WARN)
+                        echo "  [WARN] $title (-${deduction})"
+                        ;;
+                    FAIL)
+                        echo "  [FAIL] $title (-${deduction})"
+                        ;;
+                esac
+
+            done < "$RESULT_FILE"
+
+            echo
+            echo "----------------------------------------"
+            echo
+
+        done
+
+    } > "$category_file"
+
+    show_text "$category_file" "Categories"
 }
 
 # ------------------------------------------------------------
-# MAIN MENU
+# Detailed results
+# ------------------------------------------------------------
+
+show_all_results() {
+
+    local result_view="${TMP_DIR}/all_results.txt"
+
+    {
+        echo "FULL HEALTH CHECK RESULTS"
+        echo "=========================="
+        echo
+
+        while IFS='|' read -r category id status weight deduction title explanation recommendation; do
+
+            case "$status" in
+
+                PASS)
+                    echo "[PASS] $category | $title"
+                    echo "       $explanation"
+                    ;;
+
+                WARN)
+                    echo "[WARN] $category | $title"
+                    echo "       Deduction: -${deduction}"
+                    echo "       $explanation"
+                    echo "       Fix: $recommendation"
+                    ;;
+
+                FAIL)
+                    echo "[FAIL] $category | $title"
+                    echo "       Deduction: -${deduction}"
+                    echo "       $explanation"
+                    echo "       Fix: $recommendation"
+                    ;;
+
+            esac
+
+            echo
+
+        done < "$RESULT_FILE"
+
+    } > "$result_view"
+
+    show_text "$result_view" "All Results"
+}
+
+# ------------------------------------------------------------
+# Skipped checks
+# ------------------------------------------------------------
+
+show_skipped() {
+
+    if [[ ! -s "$SKIP_FILE" ]]; then
+
+        show_message \
+            "No checks were skipped." \
+            10 60
+
+        return
+    fi
+
+    local skipped_file="${TMP_DIR}/skipped_view.txt"
+
+    {
+        echo "SKIPPED / NOT APPLICABLE CHECKS"
+        echo "================================"
+        echo
+        echo "These checks were intentionally excluded because"
+        echo "the required hardware, software or interface was absent."
+        echo
+
+        while IFS='|' read -r category title explanation; do
+
+            echo "[$category]"
+            echo "$title"
+            echo "$explanation"
+            echo
+            echo "----------------------------------------"
+            echo
+
+        done < "$SKIP_FILE"
+
+    } > "$skipped_file"
+
+    show_text "$skipped_file" "Skipped Checks"
+}
+
+# ------------------------------------------------------------
+# Boot analysis
+# ------------------------------------------------------------
+
+show_boot_analysis() {
+
+    local boot_file="${TMP_DIR}/boot_analysis.txt"
+
+    {
+        echo "BOOT ANALYSIS"
+        echo "============="
+        echo
+
+        if command_exists systemd-analyze; then
+
+            echo "SYSTEMD ANALYZE"
+            echo "---------------"
+            systemd-analyze 2>&1
+            echo
+
+            echo "CRITICAL CHAIN"
+            echo "--------------"
+            systemd-analyze critical-chain 2>&1
+            echo
+
+            echo "SLOWEST SERVICES"
+            echo "----------------"
+            systemd-analyze blame 2>&1 | head -30
+            echo
+
+        else
+
+            echo "systemd-analyze is unavailable."
+
+        fi
+
+    } > "$boot_file"
+
+    show_text "$boot_file" "Boot Analysis"
+}
+
+# ------------------------------------------------------------
+# Listening ports
+# ------------------------------------------------------------
+
+show_ports() {
+
+    local port_file="${TMP_DIR}/ports.txt"
+
+    {
+        echo "LISTENING PORTS"
+        echo "==============="
+        echo
+
+        if command_exists ss; then
+
+            ss -lntup 2>&1
+
+            echo
+            echo "Interpretation:"
+            echo "  127.0.0.1 / ::1 = local-only"
+            echo "  0.0.0.0 / ::     = potentially externally reachable"
+            echo
+            echo "Review each exposed service and ensure it is intentional."
+
+        else
+
+            echo "ss is unavailable."
+
+        fi
+
+    } > "$port_file"
+
+    show_text "$port_file" "Listening Ports"
+}
+
+# ------------------------------------------------------------
+# Main menu
 # ------------------------------------------------------------
 
 main_menu() {
+
     while true; do
-        build_summary
 
-        local score label
-        score=$(get_score)
-        label=$(score_label "$score")
+        calculate_score
 
-        local choice
+        local failed_count="$TOTAL_FAIL"
+        local warning_count="$TOTAL_WARN"
 
-        choice=$(whiptail \
-            --title "Pi Health Score v${VERSION}" \
+        local header=""
+
+        header+="SCORE       ${SCORE}/100"
+        header+=$'\n'
+        header+="GRADE       ${GRADE}"
+        header+=$'\n'
+        header+="CONFIDENCE  ${CONFIDENCE}%"
+        header+=$'\n'
+        header+=$'\n'
+        header+="PASS        ${TOTAL_PASS}"
+        header+=$'\n'
+        header+="WARN        ${warning_count}"
+        header+=$'\n'
+        header+="FAIL        ${failed_count}"
+        header+=$'\n'
+        header+="SKIP        ${TOTAL_SKIP}"
+        header+=$'\n'
+        header+=$'\n'
+
+        if (( TOTAL_APPLICABLE == 0 )); then
+            header+="No scan has been completed."
+        else
+            header+="Select an option."
+        fi
+
+        local selection
+
+        selection=$(whiptail \
+            --backtitle "PiTweaks | Raspberry Pi Toolkit" \
+            --title "$TITLE V${VERSION}" \
             --menu \
-            "Score: ${score}/100 — ${label}\n\nChecks: $((PASS_COUNT + WARN_COUNT + FAIL_COUNT))  |  Warnings: ${WARN_COUNT}  |  Failures: ${FAIL_COUNT}\n\nSelect an option:" \
-            "$((TERM_HEIGHT - 4))" \
-            "$((TERM_WIDTH - 8))" \
+            "$header" \
+            "$TERM_HEIGHT" \
+            "$TERM_WIDTH" \
             12 \
-            "SUMMARY"    "Overall health summary" \
-            "ISSUES"     "Warnings and failures" \
-            "CATEGORIES" "Detailed category scores" \
-            "CHECKS"     "All individual checks" \
-            "SKIPPED"    "Show skipped/not applicable checks" \
-            "RESCAN"     "Run complete health scan again" \
-            "EXIT"       "Exit Health Score" \
-            3>&1 1>&2 2>&3) || exit 0
+            "SCAN" \
+            "Run full adaptive health scan" \
+            "SCORE" \
+            "View overall score" \
+            "WHY" \
+            "See exactly what reduced the score" \
+            "CATEGORIES" \
+            "View category health scores" \
+            "RESULTS" \
+            "View every completed check" \
+            "SKIPPED" \
+            "View skipped/not-applicable checks" \
+            "BOOT" \
+            "Boot and systemd analysis" \
+            "PORTS" \
+            "View listening network ports" \
+            "REFRESH" \
+            "Run the scan again" \
+            "EXIT" \
+            "Exit Health Score" \
+            3>&1 1>&2 2>&3) || break
 
-        case "$choice" in
-            SUMMARY)
-                whiptail \
-                    --title "Pi Health Score" \
-                    --textbox "${TMP_DIR}/summary" \
-                    "$((TERM_HEIGHT - 4))" \
-                    "$((TERM_WIDTH - 8))"
+        case "$selection" in
+
+            SCAN)
+                run_full_scan
+                show_score
                 ;;
 
-            ISSUES)
-                show_issues
+            SCORE)
+                if (( TOTAL_APPLICABLE == 0 )); then
+                    show_message \
+                        "No scan has been completed yet.
+
+Select SCAN first." \
+                        10 60
+                else
+                    show_score
+                fi
+                ;;
+
+            WHY)
+                if (( TOTAL_APPLICABLE == 0 )); then
+                    show_message \
+                        "No scan has been completed yet.
+
+Select SCAN first." \
+                        10 60
+                else
+                    show_why
+                fi
                 ;;
 
             CATEGORIES)
-                show_categories
+                if (( TOTAL_APPLICABLE == 0 )); then
+                    show_message \
+                        "No scan has been completed yet.
+
+Select SCAN first." \
+                        10 60
+                else
+                    show_categories
+                fi
                 ;;
 
-            CHECKS)
-                whiptail \
-                    --title "All Health Checks" \
-                    --textbox "$RESULT_FILE" \
-                    "$((TERM_HEIGHT - 4))" \
-                    "$((TERM_WIDTH - 8))"
+            RESULTS)
+                if (( TOTAL_APPLICABLE == 0 )); then
+                    show_message \
+                        "No scan has been completed yet.
+
+Select SCAN first." \
+                        10 60
+                else
+                    show_all_results
+                fi
                 ;;
 
             SKIPPED)
-                show_skipped
+                if (( TOTAL_POSSIBLE == 0 )); then
+                    show_message \
+                        "No scan has been completed yet.
+
+Select SCAN first." \
+                        10 60
+                else
+                    show_skipped
+                fi
                 ;;
 
-            RESCAN)
-                run_scan_with_progress
+            BOOT)
+                if command_exists systemd-analyze; then
+                    show_boot_analysis
+                else
+                    show_message \
+                        "systemd-analyze is unavailable on this system." \
+                        10 65
+                fi
+                ;;
+
+            PORTS)
+                show_ports
+                ;;
+
+            REFRESH)
+                run_full_scan
+                show_score
                 ;;
 
             EXIT)
-                exit 0
+                break
                 ;;
+
         esac
+
     done
 }
 
 # ------------------------------------------------------------
-# SCAN PROGRESS
+# Start
 # ------------------------------------------------------------
 
-run_scan_with_progress() {
-    whiptail \
-        --title "Pi Health Score" \
-        --infobox \
-        "Starting comprehensive health scan...
-
-This may take a short while.
-
-Checking system, power, storage,
-services, networking, DNS, security,
-software and reliability." \
-        10 60
-
-    run_full_scan
-
-    sleep 0.3
-
-    local score label
-    score=$(get_score)
-    label=$(score_label "$score")
-
-    whiptail \
-        --title "Scan Complete" \
-        --msgbox \
-        "Health scan complete.
-
-Overall Score: ${score}/100
-Condition: ${label}
-
-Checks:   $((PASS_COUNT + WARN_COUNT + FAIL_COUNT))
-Passed:   ${PASS_COUNT}
-Warnings: ${WARN_COUNT}
-Failures: ${FAIL_COUNT}
-Skipped:  ${SKIP_COUNT}
-
-Select SUMMARY or ISSUES for more information." \
-        15 65
-}
-
-# ------------------------------------------------------------
-# START
-# ------------------------------------------------------------
+main_menu
 
 clear
-
-run_scan_with_progress
-main_menu
+exit 0
