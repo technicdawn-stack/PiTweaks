@@ -1,5 +1,5 @@
 # PiTweaks
-Pi Tweaks, commands ect
+Pi Tweaks, commands ect. Built for a private project so may be unreliable, non ambiguous or disfunctional.
 
 
 Run this command in your terminal for a one line install:
