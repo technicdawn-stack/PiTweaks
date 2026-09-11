@@ -1,8 +1,7 @@
 ```bash
 #!/bin/bash
 # ==============================================================================
-# PiTweaks - Compact Overclock & Stress Manager V2.1
-# Description: Raspberry Pi overclocking, stress testing and live diagnostics.
+# Description: Raspberry Pi overclocking, stress testing and live diagnostics, V2.1.
 # PERSISTENT: FALSE
 # Category: Tools
 #
