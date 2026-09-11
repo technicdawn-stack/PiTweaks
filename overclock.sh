@@ -1,7 +1,7 @@
 bash
 #!/bin/bash
 # ==============================================================================
-# Description: Raspberry Pi overclocking, stress testing and live diagnostics, V2.1.
+# Description: Raspberry Pi overclocking, stress testing and live diagnostics, V2.2.
 # PERSISTENT: TRUE
 # Category: Tools
 #
