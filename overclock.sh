@@ -1,1943 +1,1033 @@
 ```bash
 #!/bin/bash
 # ==============================================================================
-# 🍓 PiTweaks - Smart Overclock & Power Manager V2.0
-# ==============================================================================
-# Description: Raspberry Pi overclocking, stress testing, telemetry and diagnostic manager V2.0.
+# PiTweaks - Compact Overclock & Stress Manager V2.1
+# Description: Raspberry Pi overclocking, stress testing and live diagnostics.
 # PERSISTENT: FALSE
 # Category: Tools
-
-
-# V2.0 FEATURES
-#   • Preserves original Eco / Quiet / Default / Performance / High Performance
-#   • Preserves Last Preset and Original Factory restoration
-#   • Live thermal / clock / voltage monitoring
-#   • Detailed throttle-state decoding
-#   • CPU / RAM / Combined stress testing
-#   • Reliable Auto Overclock mode
-#   • Maximum Performance Auto Overclock mode
-#   • Per-frequency PASS / FAIL history
-#   • Failure diagnosis and event timeline
-#   • Peak-temperature tracking
-#   • Actual vs target frequency display
-#   • Per-core CPU utilisation
-#   • RAM utilisation
-#   • Load-average monitoring
-#   • SD-card-conscious operation
-#   • No continuous telemetry logging
-#   • No backup created merely by launching the script
-#   • Config backup only when an actual configuration change is made
 #
-# IMPORTANT
-#   Raspberry Pi config.txt frequency changes require a reboot.
-#   Automatic overclocking therefore uses reboot-assisted test stages.
-#
+# Runtime data: RAM only.
+# No logs, state files or backups are created.
+# config.txt is only modified when the user explicitly applies a setting.
 # ==============================================================================
 
 set -u
 
-VERSION="V2.0"
-
 # ------------------------------------------------------------------------------
-# ROOT CHECK
+# ROOT / CONFIG
 # ------------------------------------------------------------------------------
 
 if [ "$EUID" -ne 0 ]; then
-    echo "❌ Please run this script with sudo."
+    echo "Please run with sudo."
+    exit 1
+fi
+
+CONFIG="/boot/firmware/config.txt"
+[ -f "$CONFIG" ] || CONFIG="/boot/config.txt"
+
+if [ ! -f "$CONFIG" ]; then
+    echo "ERROR: config.txt not found."
     exit 1
 fi
 
 # ------------------------------------------------------------------------------
-# PATHS
-# ------------------------------------------------------------------------------
-
-CONFIG_FILE="/boot/firmware/config.txt"
-[ ! -f "$CONFIG_FILE" ] && CONFIG_FILE="/boot/config.txt"
-
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "❌ Could not locate Raspberry Pi config.txt."
-    exit 1
-fi
-
-ORIG_BACKUP="${CONFIG_FILE}.original"
-LAST_BACKUP="${CONFIG_FILE}.last"
-
-# Runtime-only state.
-# /run is normally tmpfs and therefore avoids SD writes.
-RUNTIME_DIR="/run/pitweaks_overclock"
-mkdir -p "$RUNTIME_DIR"
-
-AUTO_STATE="$RUNTIME_DIR/auto_state"
-EVENT_LOG="$RUNTIME_DIR/events"
-RESULTS_FILE="$RUNTIME_DIR/results"
-
-touch "$EVENT_LOG" "$RESULTS_FILE"
-
-# ------------------------------------------------------------------------------
-# TERMINAL COLOURS
+# COLOURS
 # ------------------------------------------------------------------------------
 
 if [ -t 1 ]; then
-    RED='\033[1;31m'
-    GREEN='\033[1;32m'
-    YELLOW='\033[1;33m'
-    CYAN='\033[1;36m'
-    BLUE='\033[1;34m'
-    MAGENTA='\033[1;35m'
-    WHITE='\033[1;37m'
-    GREY='\033[0;37m'
-    RESET='\033[0m'
-    BOLD='\033[1m'
+    R='\033[1;31m'
+    G='\033[1;32m'
+    Y='\033[1;33m'
+    C='\033[1;36m'
+    W='\033[1;37m'
+    X='\033[0m'
 else
-    RED=''
-    GREEN=''
-    YELLOW=''
-    CYAN=''
-    BLUE=''
-    MAGENTA=''
-    WHITE=''
-    GREY=''
-    RESET=''
-    BOLD=''
+    R=''; G=''; Y=''; C=''; W=''; X=''
 fi
 
 # ------------------------------------------------------------------------------
-# BASIC HELPERS
+# HARDWARE
 # ------------------------------------------------------------------------------
 
-timestamp() {
-    date '+%H:%M:%S'
+MODEL=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || echo "Raspberry Pi")
+CORES=$(nproc 2>/dev/null || echo 1)
+
+case "$MODEL" in
+    *"Raspberry Pi 3 Model B Plus"*) FAMILY="Pi 3B+" ;;
+    *"Raspberry Pi 3 Model B"*)      FAMILY="Pi 3B" ;;
+    *"Raspberry Pi 4"*)              FAMILY="Pi 4" ;;
+    *"Raspberry Pi 5"*)              FAMILY="Pi 5" ;;
+    *)                               FAMILY="Other" ;;
+esac
+
+# ------------------------------------------------------------------------------
+# HELPERS
+# ------------------------------------------------------------------------------
+
+have() {
+    command -v "$1" >/dev/null 2>&1
 }
 
-log_event() {
-    # Runtime-only diagnostic history.
-    # Intentionally stored in /run, not the SD card.
-    printf '%s | %s\n' "$(timestamp)" "$*" >> "$EVENT_LOG"
-}
-
-pause_screen() {
+pause() {
     echo
     read -r -p "Press Enter to continue..." </dev/tty
 }
 
-bar() {
-    local value="${1:-0}"
-    local width="${2:-25}"
-    local filled empty i
-
-    value=${value%.*}
-
-    (( value < 0 )) && value=0
-    (( value > 100 )) && value=100
-
-    filled=$(( value * width / 100 ))
-    empty=$(( width - filled ))
-
-    printf '['
-
-    for ((i=0; i<filled; i++)); do
-        printf '█'
-    done
-
-    for ((i=0; i<empty; i++)); do
-        printf '░'
-    done
-
-    printf ']'
-}
-
-status_colour() {
-    local status="$1"
-
-    case "$status" in
-        GREEN|SAFE|PASS|OK)
-            printf '%sGREEN%s' "$GREEN" "$RESET"
-            ;;
-        YELLOW|WARN|WARNING)
-            printf '%sYELLOW%s' "$YELLOW" "$RESET"
-            ;;
-        RED|FAIL|CRITICAL)
-            printf '%sRED%s' "$RED" "$RESET"
-            ;;
-        *)
-            printf '%s%s%s' "$CYAN" "$status" "$RESET"
-            ;;
-    esac
-}
-
-clear_screen() {
-    clear
-}
-
-# ------------------------------------------------------------------------------
-# HARDWARE DETECTION
-# ------------------------------------------------------------------------------
-
-MODEL=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || echo "Raspberry Pi")
-CPU_MODEL=$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | sed 's/^ *//' || true)
-CPU_CORES=$(nproc 2>/dev/null || echo "N/A")
-
-if echo "$MODEL" | grep -qi "Raspberry Pi 3 Model B Plus"; then
-    PI_FAMILY="Pi 3B+"
-elif echo "$MODEL" | grep -qi "Raspberry Pi 3 Model B"; then
-    PI_FAMILY="Pi 3B"
-elif echo "$MODEL" | grep -qi "Raspberry Pi 4"; then
-    PI_FAMILY="Pi 4"
-elif echo "$MODEL" | grep -qi "Raspberry Pi 5"; then
-    PI_FAMILY="Pi 5"
-else
-    PI_FAMILY="Other"
-fi
-
-# ------------------------------------------------------------------------------
-# SAFE COMMAND WRAPPER
-# ------------------------------------------------------------------------------
-
-have_cmd() {
-    command -v "$1" >/dev/null 2>&1
-}
-
-# ------------------------------------------------------------------------------
-# TELEMETRY
-# ------------------------------------------------------------------------------
-
-get_temp() {
-    local value
-
-    if have_cmd vcgencmd; then
-        value=$(vcgencmd measure_temp 2>/dev/null | grep -oE '[0-9]+([.][0-9]+)?' | head -1)
-        [ -n "${value:-}" ] && printf '%s' "$value" && return
+temp() {
+    local t
+    if have vcgencmd; then
+        t=$(vcgencmd measure_temp 2>/dev/null |
+            grep -oE '[0-9]+([.][0-9]+)?' | head -1)
+        [ -n "${t:-}" ] && echo "$t" && return
     fi
 
-    if [ -f /sys/class/thermal/thermal_zone0/temp ]; then
-        awk '{printf "%.1f", $1/1000}' /sys/class/thermal/thermal_zone0/temp
-        return
+    if [ -r /sys/class/thermal/thermal_zone0/temp ]; then
+        awk '{printf "%.1f", $1/1000}' \
+            /sys/class/thermal/thermal_zone0/temp
+    else
+        echo "N/A"
     fi
-
-    printf 'N/A'
 }
 
-get_arm_clock() {
-    if have_cmd vcgencmd; then
-        vcgencmd measure_clock arm 2>/dev/null |
-            awk -F= 'NF==2 {printf "%.0f", $2/1000000; found=1} END {if(!found) print "N/A"}'
-        return
+clock() {
+    if have vcgencmd; then
+        vcgencmd measure_clock "$1" 2>/dev/null |
+            awk -F= 'NF==2 {printf "%.0f", $2/1000000; ok=1}
+                     END {if(!ok) print "N/A"}'
+    else
+        echo "N/A"
     fi
-
-    printf 'N/A'
 }
 
-get_core_clock() {
-    if have_cmd vcgencmd; then
-        vcgencmd measure_clock core 2>/dev/null |
-            awk -F= 'NF==2 {printf "%.0f", $2/1000000; found=1} END {if(!found) print "N/A"}'
-        return
-    fi
-
-    printf 'N/A'
-}
-
-get_sdram_clock() {
-    if have_cmd vcgencmd; then
-        vcgencmd measure_clock sdram 2>/dev/null |
-            awk -F= 'NF==2 {printf "%.0f", $2/1000000; found=1} END {if(!found) print "N/A"}'
-        return
-    fi
-
-    printf 'N/A'
-}
-
-get_core_voltage() {
-    if have_cmd vcgencmd; then
+voltage() {
+    if have vcgencmd; then
         vcgencmd measure_volts core 2>/dev/null |
             cut -d= -f2
-        return
+    else
+        echo "N/A"
     fi
-
-    printf 'N/A'
 }
 
-get_ram_usage() {
+load() {
+    awk '{print $1,$2,$3}' /proc/loadavg
+}
+
+ram() {
     awk '
-    /MemTotal:/     {total=$2}
-    /MemAvailable:/ {avail=$2}
+    /MemTotal:/ {t=$2}
+    /MemAvailable:/ {a=$2}
     END {
-        if (total > 0) {
-            used=total-avail
-            printf "%d %d %.0f", used/1024, total/1024, used/total*100
-        } else {
-            print "0 0 0"
-        }
+        if(t>0) {
+            u=t-a
+            printf "%d %d %.0f",u/1024,t/1024,u/t*100
+        } else print "N/A N/A N/A"
     }' /proc/meminfo
 }
 
-get_load_average() {
-    if [ -r /proc/loadavg ]; then
-        awk '{print $1, $2, $3}' /proc/loadavg
-    else
-        printf 'N/A N/A N/A'
-    fi
+bar() {
+    local v="${1:-0}" w="${2:-20}" f e i
+    [[ "$v" =~ ^[0-9]+$ ]] || v=0
+    ((v<0)) && v=0
+    ((v>100)) && v=100
+    f=$((v*w/100))
+    e=$((w-f))
+    printf '['
+    for ((i=0;i<f;i++)); do printf '█'; done
+    for ((i=0;i<e;i++)); do printf '░'; done
+    printf ']'
 }
 
-get_cpu_usage() {
-    # Returns one percentage per CPU core.
-    # Reads /proc/stat twice with a short interval.
-    local before after
-    local b_idle b_total a_idle a_total
-    local line cpu user nice system idle iowait irq softirq steal
-    local -a before_idle before_total
-    local -a after_idle after_total
+# ------------------------------------------------------------------------------
+# CPU USAGE
+# ------------------------------------------------------------------------------
 
-    while read -r cpu user nice system idle iowait irq softirq steal _; do
+cpu_usage() {
+    local -a bi bt ai at
+    local cpu user nice sys idle io irq soft steal i total
+
+    while read -r cpu user nice sys idle io irq soft steal _; do
         [[ "$cpu" =~ ^cpu[0-9]+$ ]] || continue
-
-        before_idle[${cpu#cpu}]=$((idle+iowait))
-        before_total[${cpu#cpu}]=$((user+nice+system+idle+iowait+irq+softirq+steal))
+        i=${cpu#cpu}
+        bi[$i]=$((idle+io))
+        bt[$i]=$((user+nice+sys+idle+io+irq+soft+steal))
     done < /proc/stat
 
-    sleep 0.20
+    sleep 0.2
 
-    while read -r cpu user nice system idle iowait irq softirq steal _; do
+    while read -r cpu user nice sys idle io irq soft steal _; do
         [[ "$cpu" =~ ^cpu[0-9]+$ ]] || continue
-
-        after_idle[${cpu#cpu}]=$((idle+iowait))
-        after_total[${cpu#cpu}]=$((user+nice+system+idle+iowait+irq+softirq+steal))
+        i=${cpu#cpu}
+        ai[$i]=$((idle+io))
+        at[$i]=$((user+nice+sys+idle+io+irq+soft+steal))
     done < /proc/stat
 
-    for ((i=0; i<CPU_CORES; i++)); do
-        if [ -n "${before_total[$i]:-}" ] && [ -n "${after_total[$i]:-}" ]; then
-            local total_diff=$((after_total[i]-before_total[i]))
-            local idle_diff=$((after_idle[i]-before_idle[i]))
-
-            if (( total_diff > 0 )); then
-                printf '%d ' "$(( (total_diff-idle_diff)*100/total_diff ))"
-            else
-                printf '0 '
-            fi
+    for ((i=0;i<CORES;i++)); do
+        total=$((at[i]-bt[i]))
+        if ((total>0)); then
+            printf "%d " $(( (total-(ai[i]-bi[i]))*100/total ))
         else
-            printf 'N/A '
+            printf "0 "
         fi
     done
 }
 
 # ------------------------------------------------------------------------------
-# THROTTLE DECODING
+# THROTTLE
 # ------------------------------------------------------------------------------
 
-THROTTLE_HEX="0x0"
+THROTTLE="0x0"
 THROTTLE_DEC=0
 
 read_throttle() {
-    if have_cmd vcgencmd; then
-        THROTTLE_HEX=$(vcgencmd get_throttled 2>/dev/null | cut -d= -f2)
+    if have vcgencmd; then
+        THROTTLE=$(vcgencmd get_throttled 2>/dev/null |
+            cut -d= -f2)
     else
-        THROTTLE_HEX="N/A"
+        THROTTLE="N/A"
     fi
 
-    if [[ "$THROTTLE_HEX" =~ ^0x[0-9a-fA-F]+$ ]]; then
-        THROTTLE_DEC=$((THROTTLE_HEX))
+    if [[ "$THROTTLE" =~ ^0x[0-9a-fA-F]+$ ]]; then
+        THROTTLE_DEC=$((THROTTLE))
     else
         THROTTLE_DEC=0
     fi
 }
 
-bit_set() {
-    local bit="$1"
-    (( (THROTTLE_DEC & (1 << bit)) != 0 ))
+bit() {
+    (( THROTTLE_DEC & (1 << $1) ))
 }
 
-throttle_indicator() {
-    local active_bit="$1"
-    local historical_bit="$2"
+status() {
+    local current="$1" history="$2"
 
-    if bit_set "$active_bit"; then
-        printf '%s● RED%s CURRENT' "$RED" "$RESET"
-    elif bit_set "$historical_bit"; then
-        printf '%s● YELLOW%s HISTORY' "$YELLOW" "$RESET"
+    if bit "$current"; then
+        printf "${R}● RED${X}"
+    elif bit "$history"; then
+        printf "${Y}● YELLOW${X}"
     else
-        printf '%s● GREEN%s NONE' "$GREEN" "$RESET"
+        printf "${G}● GREEN${X}"
     fi
 }
 
-get_overall_health() {
-    read_throttle
+# ------------------------------------------------------------------------------
+# CONFIG
+# ------------------------------------------------------------------------------
 
-    local temp
-    temp=$(get_temp)
+profile() {
+    if grep -q '^# PROFILE: Eco$' "$CONFIG"; then
+        echo "Eco"
+    elif grep -q '^# PROFILE: Quiet$' "$CONFIG"; then
+        echo "Quiet"
+    elif grep -q '^# PROFILE: Default$' "$CONFIG"; then
+        echo "Default"
+    elif grep -q '^# PROFILE: Performance$' "$CONFIG"; then
+        echo "Performance"
+    elif grep -q '^# PROFILE: High Performance$' "$CONFIG"; then
+        echo "High Performance"
+    elif grep -q '^# PROFILE: AUTO' "$CONFIG"; then
+        echo "Auto Overclock"
+    elif grep -q '^arm_freq=' "$CONFIG"; then
+        echo "Custom"
+    else
+        echo "Factory Stock"
+    fi
+}
 
-    if bit_set 0 || bit_set 1 || bit_set 2 || bit_set 3; then
-        printf 'CRITICAL'
+config_value() {
+    grep -E "^$1=" "$CONFIG" 2>/dev/null |
+        tail -1 | cut -d= -f2
+}
+
+target_freq() {
+    local f
+    f=$(config_value arm_freq)
+
+    if [[ "$f" =~ ^[0-9]+$ ]]; then
+        echo "$f"
         return
     fi
 
-    if bit_set 16 || bit_set 17 || bit_set 18 || bit_set 19; then
-        printf 'WARNING'
-        return
-    fi
-
-    if [[ "$temp" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-        if awk "BEGIN {exit !($temp >= 80)}"; then
-            printf 'WARNING'
-            return
-        fi
-    fi
-
-    printf 'SAFE'
-}
-
-# ------------------------------------------------------------------------------
-# THROTTLE DETAIL
-# ------------------------------------------------------------------------------
-
-display_throttle_state() {
-    read_throttle
-
-    echo " POWER       $(throttle_indicator 0 16)"
-    echo " FREQ CAP    $(throttle_indicator 1 17)"
-    echo " THROTTLE    $(throttle_indicator 2 18)"
-    echo " THERMAL     $(throttle_indicator 3 19)"
-    echo " CODE        $THROTTLE_HEX"
-}
-
-# ------------------------------------------------------------------------------
-# CONFIGURATION DETECTION
-# ------------------------------------------------------------------------------
-
-detect_profile() {
-    if grep -q '^# PROFILE: Eco$' "$CONFIG_FILE"; then
-        printf 'Eco'
-    elif grep -q '^# PROFILE: Quiet$' "$CONFIG_FILE"; then
-        printf 'Quiet'
-    elif grep -q '^# PROFILE: Default$' "$CONFIG_FILE"; then
-        printf 'Default'
-    elif grep -q '^# PROFILE: Performance$' "$CONFIG_FILE"; then
-        printf 'Performance'
-    elif grep -q '^# PROFILE: High Performance$' "$CONFIG_FILE"; then
-        printf 'High Performance'
-    elif grep -q '^# PROFILE: AUTO-OVERCLOCK' "$CONFIG_FILE"; then
-        printf 'Auto Overclock'
-    elif grep -q '^arm_freq=' "$CONFIG_FILE" ||
-         grep -q '^over_voltage=' "$CONFIG_FILE"; then
-        printf 'Custom'
-    else
-        printf 'Default (Factory Stock)'
-    fi
-}
-
-get_config_value() {
-    local key="$1"
-
-    grep -E "^${key}=" "$CONFIG_FILE" 2>/dev/null |
-        tail -1 |
-        cut -d= -f2
-}
-
-get_default_arm_freq() {
-    case "$PI_FAMILY" in
-        Pi\ 3B|Pi\ 3B+)
-            echo 1200
-            ;;
-        Pi\ 4)
-            echo 1500
-            ;;
-        Pi\ 5)
-            echo 2400
-            ;;
-        *)
-            echo 0
-            ;;
+    case "$FAMILY" in
+        "Pi 3B")  echo 1200 ;;
+        "Pi 3B+") echo 1400 ;;
+        "Pi 4")   echo 1500 ;;
+        "Pi 5")   echo 2400 ;;
+        *)        echo 0 ;;
     esac
 }
 
-get_current_target_freq() {
-    local value
-    value=$(get_config_value "arm_freq")
-
-    if [[ "$value" =~ ^[0-9]+$ ]]; then
-        printf '%s' "$value"
-    else
-        get_default_arm_freq
-    fi
-}
-
 # ------------------------------------------------------------------------------
-# HARDWARE-SPECIFIC OVERCLOCK LIMITS
+# PI 3 / 4 / 5 LIMITS
+# These are search boundaries, NOT guarantees of safety.
 # ------------------------------------------------------------------------------
 
-# These are intentionally conservative boundaries.
-# They are NOT guarantees that every individual board will reach them.
-
-case "$PI_FAMILY" in
-
+case "$FAMILY" in
     "Pi 3B")
-        BASE_FREQ=1200
-
-        RELIABLE_START=1250
-        RELIABLE_STEP=25
-        RELIABLE_MAX=1400
-
+        BASE=1200
+        REL_START=1250
+        REL_STEP=25
+        REL_MAX=1400
         MAX_START=1250
         MAX_STEP=50
-        MAX_LIMIT=1500
-
-        SAFE_TEST_TEMP=75
-        HARD_TEST_TEMP=82
-
-        DEFAULT_CORE=400
+        MAX_MAX=1500
+        HARD_TEMP=82
         ;;
-    
     "Pi 3B+")
-        BASE_FREQ=1400
-
-        RELIABLE_START=1450
-        RELIABLE_STEP=25
-        RELIABLE_MAX=1550
-
+        BASE=1400
+        REL_START=1450
+        REL_STEP=25
+        REL_MAX=1550
         MAX_START=1450
         MAX_STEP=50
-        MAX_LIMIT=1600
-
-        SAFE_TEST_TEMP=75
-        HARD_TEST_TEMP=82
-
-        DEFAULT_CORE=400
+        MAX_MAX=1600
+        HARD_TEMP=82
         ;;
-
     "Pi 4")
-        BASE_FREQ=1500
-
-        RELIABLE_START=1550
-        RELIABLE_STEP=25
-        RELIABLE_MAX=1900
-
+        BASE=1500
+        REL_START=1550
+        REL_STEP=25
+        REL_MAX=1900
         MAX_START=1550
         MAX_STEP=50
-        MAX_LIMIT=2000
-
-        SAFE_TEST_TEMP=75
-        HARD_TEST_TEMP=82
-
-        DEFAULT_CORE=500
+        MAX_MAX=2000
+        HARD_TEMP=82
         ;;
-
     "Pi 5")
-        BASE_FREQ=2400
-
-        RELIABLE_START=2450
-        RELIABLE_STEP=25
-        RELIABLE_MAX=2800
-
+        BASE=2400
+        REL_START=2450
+        REL_STEP=25
+        REL_MAX=2800
         MAX_START=2450
         MAX_STEP=50
-        MAX_LIMIT=3000
-
-        SAFE_TEST_TEMP=80
-        HARD_TEST_TEMP=85
-
-        DEFAULT_CORE=910
+        MAX_MAX=3000
+        HARD_TEMP=85
         ;;
-
     *)
-        BASE_FREQ=0
-        RELIABLE_START=0
-        RELIABLE_STEP=25
-        RELIABLE_MAX=0
+        BASE=0
+        REL_START=0
+        REL_STEP=25
+        REL_MAX=0
         MAX_START=0
         MAX_STEP=50
-        MAX_LIMIT=0
-        SAFE_TEST_TEMP=70
-        HARD_TEST_TEMP=80
-        DEFAULT_CORE=0
+        MAX_MAX=0
+        HARD_TEMP=80
         ;;
 esac
 
 # ------------------------------------------------------------------------------
-# CONFIG BACKUP
+# WRITE ONLY WHEN USER EXPLICITLY CHANGES CONFIG
+# No backup/state/log files are created.
 # ------------------------------------------------------------------------------
 
-backup_before_change() {
+write_profile() {
+    local name="$1"
+    local body="$2"
+    local tmp
 
-    # Do NOT create backups simply because the program was launched.
-    # This function is only called immediately before an actual modification.
+    tmp=$(mktemp)
 
-    if [ ! -f "$ORIG_BACKUP" ]; then
-        cp -p "$CONFIG_FILE" "$ORIG_BACKUP"
-        echo "📦 Created original configuration backup."
-    fi
-
-    cp -p "$CONFIG_FILE" "$LAST_BACKUP"
-    echo "📦 Updated last-known configuration backup."
-}
-
-# ------------------------------------------------------------------------------
-# REMOVE OUR OWN OVERRIDE BLOCK
-# ------------------------------------------------------------------------------
-
-remove_pitweaks_block() {
-    sed -i \
+    sed \
         '/^# --- PiTweaks Overclock Start ---$/,/^# --- PiTweaks Overclock End ---$/d' \
-        "$CONFIG_FILE"
-}
-
-# ------------------------------------------------------------------------------
-# APPLY SETTINGS
-# ------------------------------------------------------------------------------
-
-apply_settings() {
-
-    local PROFILE_NAME="$1"
-    local CONFIG_BODY="$2"
-
-    echo
-    echo "Preparing configuration change..."
-    echo "Profile: $PROFILE_NAME"
-
-    backup_before_change
-
-    remove_pitweaks_block
-
-    {
-        printf '\n'
-        printf '# --- PiTweaks Overclock Start ---\n'
-        printf '# PROFILE: %s\n' "$PROFILE_NAME"
-        printf '# Applied by PiTweaks %s\n' "$VERSION"
-        printf '%b\n' "$CONFIG_BODY"
-        printf '# --- PiTweaks Overclock End ---\n'
-    } >> "$CONFIG_FILE"
-
-    echo
-    echo "${GREEN}✅ Configuration successfully written.${RESET}"
-    echo "${YELLOW}⚠️ Changes require a reboot.${RESET}"
-
-    read -r -p "Reboot now? [y/N]: " REBOOT_CHOICE </dev/tty
-
-    if [[ "$REBOOT_CHOICE" =~ ^[yY]$ ]]; then
-        log_event "Reboot requested after profile $PROFILE_NAME"
-        reboot
-    fi
-}
-
-# ------------------------------------------------------------------------------
-# SAFE CONFIG VALIDATION
-# ------------------------------------------------------------------------------
-
-validate_config() {
-
-    local candidate="$1"
-    local temp_file="$RUNTIME_DIR/config_test"
-
-    cp "$CONFIG_FILE" "$temp_file"
-
-    remove_pitweaks_block
+        "$CONFIG" > "$tmp"
 
     {
         printf '\n# --- PiTweaks Overclock Start ---\n'
-        printf '# PROFILE: Validation\n'
-        printf '%b\n' "$candidate"
+        printf '# PROFILE: %s\n' "$name"
+        printf '%b\n' "$body"
         printf '# --- PiTweaks Overclock End ---\n'
-    } >> "$CONFIG_FILE"
+    } >> "$tmp"
 
-    # config.txt has no universal shell syntax validator.
-    # We therefore validate our generated values structurally.
+    cp "$tmp" "$CONFIG"
+    rm -f "$tmp"
 
-    local bad=0
+    echo
+    echo "${G}Configuration applied: $name${X}"
+    echo "${Y}A reboot is required.${X}"
+}
 
-    while IFS= read -r line; do
-        [[ -z "$line" ]] && continue
-        [[ "$line" =~ ^# ]] && continue
+remove_profile() {
+    local tmp
+    tmp=$(mktemp)
 
-        if [[ "$line" =~ ^(arm_freq|core_freq|gpu_freq|sdram_freq|over_voltage|arm_freq_min|core_freq_min|gpu_freq_min|temp_limit|initial_turbo|force_turbo)=-?[0-9]+$ ]]; then
-            continue
-        fi
+    sed \
+        '/^# --- PiTweaks Overclock Start ---$/,/^# --- PiTweaks Overclock End ---$/d' \
+        "$CONFIG" > "$tmp"
 
-        echo "⚠️ Generated setting failed validation: $line"
-        bad=1
-    done <<< "$candidate"
+    cp "$tmp" "$CONFIG"
+    rm -f "$tmp"
 
-    mv "$temp_file" "$CONFIG_FILE"
+    echo
+    echo "${G}PiTweaks overclock settings removed.${X}"
+    echo "${Y}Reboot required to return to normal firmware settings.${X}"
+}
 
-    return "$bad"
+reboot_prompt() {
+    local a
+    read -r -p "Reboot now? [y/N]: " a </dev/tty
+    [[ "$a" =~ ^[Yy]$ ]] && reboot
 }
 
 # ------------------------------------------------------------------------------
-# PROFILE MENU
+# STATUS STRIP
 # ------------------------------------------------------------------------------
 
-preset_menu() {
+status_strip() {
+    read_throttle
 
-    clear_screen
+    local t
+    t=$(temp)
 
-    local temp
-    temp=$(get_temp)
-
-    echo "${CYAN}╔══════════════════════════════════════════════════════════════╗${RESET}"
-    echo "${CYAN}║                 PiTweaks • POWER PROFILES                  ║${RESET}"
-    echo "${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}"
-    echo
-    echo "Current profile : $(detect_profile)"
-    echo "Current ARM     : $(get_arm_clock) MHz"
-    echo "Temperature     : ${temp}°C"
-    echo
-    echo "  1) Eco"
-    echo "  2) Quiet"
-    echo "  3) Default"
-    echo "  4) Performance"
-    echo "  5) High Performance"
-    echo
-    echo "  6) Restore Last Preset State"
-    echo "  7) Restore Original Factory Config"
-    echo "  8) Live Thermal & Clock Monitor"
-    echo "  9) Auto Overclock"
-    echo " 10) Stress Test Suite"
-    echo " 11) View Current Diagnostics"
-    echo " 12) Exit"
+    printf "POWER     "
+    status 0 16
     echo
 
-    read -r -p "Enter selection [1-12]: " CHOICE </dev/tty
+    printf "THERMAL   "
+    status 3 19
+    echo
 
-    case "$CHOICE" in
+    printf "THROTTLE  "
+    status 2 18
+    echo
 
-        1)
-            apply_settings "Eco" \
-                "arm_freq=800
-initial_turbo=0"
-            ;;
+    printf "VOLTAGE   "
+    status 0 16
+    echo
 
-        2)
-            apply_settings "Quiet" \
-                "arm_freq_min=600"
-            ;;
-
-        3)
-            backup_before_change
-            remove_pitweaks_block
-
-            echo
-            echo "✅ PiTweaks overclock overrides removed."
-            echo "The Raspberry Pi firmware will use its normal defaults."
-
-            read -r -p "Reboot now? [y/N]: " REBOOT_CHOICE </dev/tty
-            [[ "$REBOOT_CHOICE" =~ ^[yY]$ ]] && reboot
-            ;;
-
-        4)
-            case "$PI_FAMILY" in
-                "Pi 3B")
-                    SETTINGS="arm_freq=1300
-core_freq=400
-over_voltage=2"
-                    ;;
-                "Pi 3B+")
-                    SETTINGS="arm_freq=1450
-core_freq=400
-over_voltage=2"
-                    ;;
-                "Pi 4")
-                    SETTINGS="arm_freq=1800
-core_freq=500"
-                    ;;
-                "Pi 5")
-                    SETTINGS="arm_freq=2600"
-                    ;;
-                *)
-                    echo "❌ Unsupported hardware for automatic preset."
-                    pause_screen
-                    return
-                    ;;
-            esac
-
-            apply_settings "Performance" "$SETTINGS"
-            ;;
-
-        5)
-            case "$PI_FAMILY" in
-                "Pi 3B")
-                    SETTINGS="arm_freq=1350
-core_freq=400
-over_voltage=4"
-                    ;;
-                "Pi 3B+")
-                    SETTINGS="arm_freq=1500
-core_freq=500
-over_voltage=4"
-                    ;;
-                "Pi 4")
-                    SETTINGS="arm_freq=2000
-core_freq=500
-over_voltage=6"
-                    ;;
-                "Pi 5")
-                    SETTINGS="arm_freq=2800"
-                    ;;
-                *)
-                    echo "❌ Unsupported hardware for automatic preset."
-                    pause_screen
-                    return
-                    ;;
-            esac
-
-            apply_settings "High Performance" "$SETTINGS"
-            ;;
-
-        6)
-            if [ ! -f "$LAST_BACKUP" ]; then
-                echo "❌ No last-state backup exists."
-                pause_screen
-                return
-            fi
-
-            backup_before_change
-            cp -p "$LAST_BACKUP" "$CONFIG_FILE"
-
-            echo "🔄 Restored last configuration."
-
-            read -r -p "Reboot now? [y/N]: " REBOOT_CHOICE </dev/tty
-            [[ "$REBOOT_CHOICE" =~ ^[yY]$ ]] && reboot
-            ;;
-
-        7)
-            if [ ! -f "$ORIG_BACKUP" ]; then
-                echo "❌ No original backup exists yet."
-                pause_screen
-                return
-            fi
-
-            cp -p "$CONFIG_FILE" "$LAST_BACKUP"
-            cp -p "$ORIG_BACKUP" "$CONFIG_FILE"
-
-            echo "🔄 Restored original factory configuration."
-
-            read -r -p "Reboot now? [y/N]: " REBOOT_CHOICE </dev/tty
-            [[ "$REBOOT_CHOICE" =~ ^[yY]$ ]] && reboot
-            ;;
-
-        8)
-            live_monitor
-            ;;
-
-        9)
-            auto_overclock_menu
-            ;;
-
-        10)
-            stress_test_menu
-            ;;
-
-        11)
-            diagnostic_dashboard
-            ;;
-
-        12)
-            clear_screen
-            echo "Exiting without changes."
-            exit 0
-            ;;
-
-        *)
-            echo "❌ Invalid selection."
-            sleep 1
-            ;;
-    esac
+    if bit 0 || bit 1 || bit 2 || bit 3; then
+        printf "STABILITY ${R}● RED${X}\n"
+    elif bit 16 || bit 17 || bit 18 || bit 19; then
+        printf "STABILITY ${Y}● YELLOW${X}\n"
+    elif [[ "$t" =~ ^[0-9]+([.][0-9]+)?$ ]] &&
+         awk "BEGIN{exit !($t >= $HARD_TEMP)}"; then
+        printf "STABILITY ${R}● RED${X}\n"
+    else
+        printf "STABILITY ${G}● GREEN${X}\n"
+    fi
 }
 
 # ------------------------------------------------------------------------------
 # LIVE MONITOR
 # ------------------------------------------------------------------------------
 
-live_monitor() {
-
-    trap 'printf "\n"; return' INT
+monitor() {
+    trap 'trap - INT; return' INT
 
     while true; do
+        clear
 
-        clear_screen
+        local t a c s v u total pct l1 l5 l15
 
-        local temp arm core sdram voltage ram_used ram_total ram_pct
-        local load1 load5 load15 health
+        t=$(temp)
+        a=$(clock arm)
+        c=$(clock core)
+        s=$(clock sdram)
+        v=$(voltage)
 
-        temp=$(get_temp)
-        arm=$(get_arm_clock)
-        core=$(get_core_clock)
-        sdram=$(get_sdram_clock)
-        voltage=$(get_core_voltage)
+        read -r u total pct <<< "$(ram)"
+        read -r l1 l5 l15 <<< "$(load)"
 
-        read -r ram_used ram_total ram_pct <<< "$(get_ram_usage)"
-        read -r load1 load5 load15 <<< "$(get_load_average)"
-
-        health=$(get_overall_health)
-
-        echo "${CYAN}╔══════════════════════════════════════════════════════════════╗${RESET}"
-        echo "${CYAN}║                 🍓 PiTweaks • LIVE MONITOR                ║${RESET}"
-        echo "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
-        printf "║ Hardware : %-47s ║\n" "$MODEL"
-        printf "║ Profile  : %-47s ║\n" "$(detect_profile)"
-        echo "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
-        printf "║ ARM      : %6s MHz                                      ║\n" "$arm"
-        printf "║ CORE/GPU : %6s MHz                                      ║\n" "$core"
-        printf "║ SDRAM    : %6s MHz                                      ║\n" "$sdram"
-        printf "║ Voltage  : %-48s ║\n" "$voltage"
-        echo
-        printf "║ Temp     : %5s°C  " "$temp"
-        bar "$(( ${temp%.*:-0} * 100 / 85 ))" 20
+        echo "${C}╔══════════════════════════════════════════════════════╗${X}"
+        echo "${C}║              PiTweaks LIVE MONITOR                 ║${X}"
+        echo "${C}╠══════════════════════════════════════════════════════╣${X}"
+        printf "║ Hardware : %-43s ║\n" "$FAMILY"
+        printf "║ Profile  : %-43s ║\n" "$(profile)"
+        echo "${C}╠══════════════════════════════════════════════════════╣${X}"
+        printf "║ ARM      : %6s MHz                              ║\n" "$a"
+        printf "║ CORE     : %6s MHz                              ║\n" "$c"
+        printf "║ SDRAM    : %6s MHz                              ║\n" "$s"
+        printf "║ Voltage  : %-43s ║\n" "$v"
+        printf "║ Temp     : %6s°C  " "$t"
+        if [[ "$t" =~ ^[0-9] ]]; then
+            bar "$(( ${t%.*} * 100 / 85 ))" 16
+        else
+            bar 0 16
+        fi
         echo " ║"
-        printf "║ RAM      : %4s / %4s MB  " "$ram_used" "$ram_total"
-        bar "$ram_pct" 20
+        printf "║ RAM      : %4s / %4s MB  " "$u" "$total"
+        bar "$pct" 16
         echo " ║"
-        printf "║ Load     : %s / %s / %s                           ║\n" \
-            "$load1" "$load5" "$load15"
-        echo "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
-        echo "║ HEALTH                                                     ║"
-        printf "║ Overall  : "
-        status_colour "$health"
-        echo "                                             ║"
-        echo
-        display_throttle_state
-        echo "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
-        echo "║ Press Ctrl+C to return                                    ║"
-        echo "${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}"
+        printf "║ Load     : %-43s ║\n" "$l1 / $l5 / $l15"
+        echo "${C}╠══════════════════════════════════════════════════════╣${X}"
+        status_strip
+        echo "${C}╠══════════════════════════════════════════════════════╣${X}"
+        echo "║ Ctrl+C = return                                      ║"
+        echo "${C}╚══════════════════════════════════════════════════════╝${X}"
 
         sleep 1
     done
+
+    trap - INT
 }
 
 # ------------------------------------------------------------------------------
-# STRESS-NG INSTALL
+# STRESS-NG
 # ------------------------------------------------------------------------------
 
-ensure_stress_ng() {
-
-    if have_cmd stress-ng; then
+ensure_stress() {
+    if have stress-ng; then
         return 0
     fi
 
-    echo
     echo "stress-ng is not installed."
-    read -r -p "Install stress-ng now? [Y/n]: " answer </dev/tty
+    read -r -p "Install it now? [Y/n]: " a </dev/tty
 
-    if [[ ! "$answer" =~ ^[Nn]$ ]]; then
-        apt-get update
-        apt-get install -y stress-ng
+    [[ "$a" =~ ^[Nn]$ ]] && return 1
 
-        if ! have_cmd stress-ng; then
-            echo "❌ stress-ng installation failed."
-            return 1
-        fi
-    else
-        return 1
-    fi
+    apt-get update || return 1
+    apt-get install -y stress-ng || return 1
+
+    have stress-ng
 }
 
 # ------------------------------------------------------------------------------
-# STRESS PROCESS CLEANUP
+# STRESS TEST
 # ------------------------------------------------------------------------------
 
-STRESS_PID=""
+stress_test() {
+    ensure_stress || {
+        echo "stress-ng unavailable."
+        pause
+        return
+    }
 
-cleanup_stress() {
+    clear
 
-    if [ -n "${STRESS_PID:-}" ] && kill -0 "$STRESS_PID" 2>/dev/null; then
-        kill "$STRESS_PID" 2>/dev/null || true
-        sleep 1
+    echo "${C}PiTweaks Stress Test${X}"
+    echo
+    echo "1) CPU"
+    echo "2) RAM"
+    echo "3) CPU + RAM"
+    echo "4) Return"
+    echo
 
-        kill -9 "$STRESS_PID" 2>/dev/null || true
-    fi
+    local c mode duration choice
 
-    STRESS_PID=""
+    read -r -p "Workload [1-4]: " c </dev/tty
+
+    case "$c" in
+        1) mode="CPU" ;;
+        2) mode="RAM" ;;
+        3) mode="COMBINED" ;;
+        4) return ;;
+        *) return ;;
+    esac
+
+    echo
+    echo "1) 2 minutes"
+    echo "2) 5 minutes"
+    echo "3) 10 minutes"
+    echo "4) 30 minutes"
+    echo "5) Custom"
+    echo
+
+    read -r -p "Duration [1-5]: " c </dev/tty
+
+    case "$c" in
+        1) duration=120 ;;
+        2) duration=300 ;;
+        3) duration=600 ;;
+        4) duration=1800 ;;
+        5)
+            read -r -p "Seconds: " duration </dev/tty
+            [[ "$duration" =~ ^[0-9]+$ ]] || return
+            ((duration<10)) && return
+            ;;
+        *) return ;;
+    esac
+
+    run_stress "$mode" "$duration"
 }
 
-trap cleanup_stress EXIT
-
-# ------------------------------------------------------------------------------
-# STRESS START
-# ------------------------------------------------------------------------------
-
-start_stress() {
-
-    local mode="$1"
-    local duration="$2"
+run_stress() {
+    local mode="$1" duration="$2"
+    local pid start now elapsed remain
+    local t peak=0 a c s v u total pct l1 l5 l15
+    local cpus avg failure=""
 
     case "$mode" in
         CPU)
-            stress-ng --cpu 0 --timeout "${duration}s" --metrics-brief >/dev/null 2>&1 &
+            stress-ng --cpu 0 --timeout "${duration}s" >/dev/null 2>&1 &
             ;;
-
         RAM)
-            stress-ng --vm 2 --vm-bytes 70% --vm-method all \
-                --timeout "${duration}s" --metrics-brief >/dev/null 2>&1 &
+            stress-ng --vm 2 --vm-bytes 70% --timeout "${duration}s" >/dev/null 2>&1 &
             ;;
-
         COMBINED)
             stress-ng --cpu 0 --vm 2 --vm-bytes 70% \
-                --timeout "${duration}s" --metrics-brief >/dev/null 2>&1 &
-            ;;
-
-        *)
-            return 1
+                --timeout "${duration}s" >/dev/null 2>&1 &
             ;;
     esac
 
-    STRESS_PID=$!
-    log_event "Stress test started: $mode for ${duration}s"
-}
+    pid=$!
+    start=$(date +%s)
 
-# ------------------------------------------------------------------------------
-# STRESS DASHBOARD
-# ------------------------------------------------------------------------------
-
-stress_dashboard() {
-
-    local mode="$1"
-    local duration="$2"
-
-    local start_time now elapsed remaining
-    local temp peak_temp="0"
-    local arm core sdram voltage
-    local ram_used ram_total ram_pct
-    local load1 load5 load15
-    local cpus avg_cpu
-    local health
-    local failure_reason=""
-
-    start_time=$(date +%s)
-
-    start_stress "$mode" "$duration" || {
-        echo "❌ Failed to start stress test."
-        return 1
+    cleanup() {
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
     }
 
-    while true; do
+    trap cleanup INT TERM
 
+    while kill -0 "$pid" 2>/dev/null; do
         now=$(date +%s)
-        elapsed=$((now-start_time))
-        remaining=$((duration-elapsed))
+        elapsed=$((now-start))
+        remain=$((duration-elapsed))
+        ((remain<0)) && remain=0
 
-        [ "$remaining" -lt 0 ] && remaining=0
+        t=$(temp)
+        a=$(clock arm)
+        c=$(clock core)
+        s=$(clock sdram)
+        v=$(voltage)
 
-        temp=$(get_temp)
-        arm=$(get_arm_clock)
-        core=$(get_core_clock)
-        sdram=$(get_sdram_clock)
-        voltage=$(get_core_voltage)
+        read -r u total pct <<< "$(ram)"
+        read -r l1 l5 l15 <<< "$(load)"
+        cpus=$(cpu_usage)
 
-        read -r ram_used ram_total ram_pct <<< "$(get_ram_usage)"
-        read -r load1 load5 load15 <<< "$(get_load_average)"
+        if [[ "$t" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+            awk "BEGIN{exit !($t>$peak)}" && peak="$t"
 
-        cpus=$(get_cpu_usage)
-
-        avg_cpu=$(awk '
-        {
-            total=0;
-            count=0;
-            for(i=1;i<=NF;i++) {
-                if ($i ~ /^[0-9]+$/) {
-                    total += $i;
-                    count++;
-                }
-            }
-        }
-        END {
-            if(count>0) printf "%.1f", total/count;
-            else print "N/A";
-        }' <<< "$cpus")
-
-        if [[ "$temp" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-            if awk "BEGIN {exit !($temp > $peak_temp)}"; then
-                peak_temp="$temp"
+            if awk "BEGIN{exit !($t>=$HARD_TEMP)}"; then
+                failure="Hard temperature limit reached"
             fi
         fi
 
         read_throttle
-        health=$(get_overall_health)
 
-        if bit_set 0; then
-            failure_reason="Under-voltage detected"
-        elif bit_set 2; then
-            failure_reason="CPU throttling detected"
-        elif bit_set 3; then
-            failure_reason="Thermal limit detected"
-        elif [[ "$temp" =~ ^[0-9]+([.][0-9]+)?$ ]] &&
-             awk "BEGIN {exit !($temp >= $HARD_TEST_TEMP)}"; then
-            failure_reason="Hard thermal safety limit reached"
+        if bit 0; then
+            failure="Under-voltage detected"
+        elif bit 2; then
+            failure="CPU throttling detected"
+        elif bit 3; then
+            failure="Thermal throttling detected"
         fi
 
-        clear_screen
+        avg=$(awk '{
+            s=0;n=0
+            for(i=1;i<=NF;i++)
+                if($i~/^[0-9]+$/){s+=$i;n++}
+        } END{
+            if(n) printf "%.0f",s/n; else print 0
+        }' <<< "$cpus")
 
-        echo "${CYAN}╔══════════════════════════════════════════════════════════════╗${RESET}"
-        printf "${CYAN}║              🍓 PiTweaks • STRESS TEST V2.0              ║${RESET}\n"
-        echo "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
-        printf "║ TEST       : %-44s ║\n" "$mode"
-        printf "║ ELAPSED    : %4ss / %4ss                              ║\n" "$elapsed" "$duration"
-        printf "║ REMAINING  : %4ss                                     ║\n" "$remaining"
-        echo "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
-        echo "║ CPU                                                        ║"
+        clear
 
-        local index=0
-        for cpu in $cpus; do
-            printf "║ Core %-2s    %3s%% " "$index" "$cpu"
-            bar "${cpu:-0}" 20
+        echo "${C}╔══════════════════════════════════════════════════════╗${X}"
+        echo "${C}║              PiTweaks STRESS TEST                  ║${X}"
+        echo "${C}╠══════════════════════════════════════════════════════╣${X}"
+        printf "║ Mode       : %-39s ║\n" "$mode"
+        printf "║ Time       : %4ss / %4ss                         ║\n" "$elapsed" "$duration"
+        printf "║ Remaining  : %4ss                                ║\n" "$remain"
+        echo "${C}╠══════════════════════════════════════════════════════╣${X}"
+        echo "║ CPU USAGE                                             ║"
+
+        local i=0
+        for x in $cpus; do
+            printf "║ Core %-2s    %3s%% " "$i" "$x"
+            bar "$x" 16
             echo " ║"
-            index=$((index+1))
+            i=$((i+1))
         done
 
-        printf "║ Average    %5s%%                                      ║\n" "$avg_cpu"
-        printf "║ Load       %s / %s / %s                           ║\n" \
-            "$load1" "$load5" "$load15"
+        printf "║ Average    %3s%%                                  ║\n" "$avg"
+        printf "║ Load       %-39s ║\n" "$l1 / $l5 / $l15"
 
-        echo "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
-        echo "║ CLOCKS                                                     ║"
-        printf "║ ARM        : %6s MHz                                      ║\n" "$arm"
-        printf "║ CORE/GPU   : %6s MHz                                      ║\n" "$core"
-        printf "║ SDRAM      : %6s MHz                                      ║\n" "$sdram"
-
-        echo "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
-        echo "║ THERMALS / MEMORY                                         ║"
-        printf "║ Temp       : %5s°C  " "$temp"
-        bar "$(( ${temp%.*:-0} * 100 / 85 ))" 18
+        echo "${C}╠══════════════════════════════════════════════════════╣${X}"
+        printf "║ ARM        : %6s MHz                              ║\n" "$a"
+        printf "║ CORE       : %6s MHz                              ║\n" "$c"
+        printf "║ SDRAM      : %6s MHz                              ║\n" "$s"
+        printf "║ Voltage    : %-39s ║\n" "$v"
+        printf "║ Temp       : %6s°C  " "$t"
+        if [[ "$t" =~ ^[0-9] ]]; then
+            bar "$(( ${t%.*} * 100 / 85 ))" 16
+        else
+            bar 0 16
+        fi
         echo " ║"
-        printf "║ Peak       : %5s°C                                      ║\n" "$peak_temp"
-        printf "║ RAM        : %4s / %4s MB  " "$ram_used" "$ram_total"
-        bar "$ram_pct" 18
+        printf "║ Peak       : %6s°C                              ║\n" "$peak"
+        printf "║ RAM        : %4s / %4s MB  " "$u" "$total"
+        bar "$pct" 16
         echo " ║"
-        printf "║ Voltage    : %-48s ║\n" "$voltage"
 
-        echo "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
-        echo "║ HEALTH                                                     ║"
-        printf "║ Overall    : "
-        status_colour "$health"
-        echo "                                             ║"
-        display_throttle_state
+        echo "${C}╠══════════════════════════════════════════════════════╣${X}"
+        status_strip
 
-        if [ -n "$failure_reason" ]; then
-            echo "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
-            printf "║ ${RED}⚠ FAILURE: %-48s${RESET} ║\n" "$failure_reason"
+        if [ -n "$failure" ]; then
+            echo "${C}╠══════════════════════════════════════════════════════╣${X}"
+            printf "║ ${R}FAIL: %-46s${X} ║\n" "$failure"
         fi
 
-        echo "${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}"
+        echo "${C}╚══════════════════════════════════════════════════════╝${X}"
 
-        if [ -n "$failure_reason" ]; then
-            log_event "STRESS FAILURE: $failure_reason"
-            break
-        fi
-
-        if [ "$remaining" -le 0 ]; then
-            log_event "Stress test completed successfully"
-            break
-        fi
-
-        if ! kill -0 "$STRESS_PID" 2>/dev/null; then
-            log_event "Stress process exited before requested duration"
-            break
-        fi
+        [ -n "$failure" ] && break
+        ((remain<=0)) && break
 
         sleep 1
     done
 
-    cleanup_stress
+    cleanup
+    trap - INT TERM
 
     echo
-    echo "${BOLD}Stress test complete.${RESET}"
-    echo
+    echo "${G}Stress test complete.${X}"
     echo "Mode             : $mode"
-    echo "Duration         : ${elapsed}s"
-    echo "Peak temperature : ${peak_temp}°C"
-    echo "Final ARM clock  : ${arm} MHz"
-    echo "Final core clock : ${core} MHz"
-    echo "Final SDRAM      : ${sdram} MHz"
-    echo "Final voltage    : $voltage"
-    echo "Throttle code    : $THROTTLE_HEX"
+    echo "Duration         : ${elapsed:-0}s"
+    echo "Peak temperature : ${peak}°C"
 
-    if [ -n "$failure_reason" ]; then
-        echo "Result           : ${RED}FAIL${RESET}"
-        echo "Reason           : $failure_reason"
+    if [ -n "$failure" ]; then
+        echo "Result           : ${R}FAIL${X}"
+        echo "Reason           : $failure"
     else
-        echo "Result           : ${GREEN}PASS${RESET}"
+        echo "Result           : ${G}PASS${X}"
     fi
 
-    pause_screen
+    pause
 }
 
 # ------------------------------------------------------------------------------
-# STRESS TEST MENU
+# AUTO OVERCLOCK
+#
+# No persistent state is stored.
+# The current arm_freq in config.txt determines the current test point.
 # ------------------------------------------------------------------------------
 
-stress_test_menu() {
-
-    ensure_stress_ng || {
-        pause_screen
+auto_overclock() {
+    [ "$FAMILY" = "Other" ] && {
+        echo "Unsupported Raspberry Pi."
+        pause
         return
     }
 
-    clear_screen
+    clear
 
-    echo "${CYAN}╔══════════════════════════════════════════════════════════════╗${RESET}"
-    echo "${CYAN}║                  STRESS TEST SUITE                         ║${RESET}"
-    echo "${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}"
+    echo "${C}PiTweaks Automatic Overclock${X}"
     echo
-    echo "Select workload:"
+    echo "1) Reliable Overclock"
+    echo "   25 MHz steps, stability-first"
     echo
-    echo "  1) CPU Stress"
-    echo "  2) RAM Stress"
-    echo "  3) CPU + RAM Combined"
+    echo "2) Maximum Performance"
+    echo "   Larger steps, benchmark-oriented"
     echo
-    echo "  4) Return"
+    echo "3) Return"
     echo
 
-    read -r -p "Selection [1-4]: " TEST_CHOICE </dev/tty
+    local choice mode step limit start current next temp
 
-    case "$TEST_CHOICE" in
-        1) MODE="CPU" ;;
-        2) MODE="RAM" ;;
-        3) MODE="COMBINED" ;;
-        4) return ;;
-        *) echo "Invalid choice."; sleep 1; return ;;
+    read -r -p "Mode [1-3]: " choice </dev/tty
+
+    case "$choice" in
+        1)
+            mode="RELIABLE"
+            step="$REL_STEP"
+            limit="$REL_MAX"
+            start="$REL_START"
+            ;;
+        2)
+            mode="MAXIMUM"
+            step="$MAX_STEP"
+            limit="$MAX_MAX"
+            start="$MAX_START"
+            ;;
+        3) return ;;
+        *) return ;;
     esac
 
-    clear_screen
+    current=$(target_freq)
 
-    echo "Test: $MODE"
-    echo
-    echo "  1) 2 minutes"
-    echo "  2) 5 minutes"
-    echo "  3) 10 minutes"
-    echo "  4) 30 minutes"
-    echo "  5) Custom"
-    echo
+    temp=$(temp)
 
-    read -r -p "Duration [1-5]: " DURATION_CHOICE </dev/tty
-
-    case "$DURATION_CHOICE" in
-        1) DURATION=120 ;;
-        2) DURATION=300 ;;
-        3) DURATION=600 ;;
-        4) DURATION=1800 ;;
-        5)
-            read -r -p "Duration in seconds: " DURATION </dev/tty
-
-            if ! [[ "$DURATION" =~ ^[0-9]+$ ]] || [ "$DURATION" -lt 10 ]; then
-                echo "❌ Invalid duration."
-                pause_screen
-                return
-            fi
-            ;;
-        *)
-            echo "Invalid choice."
-            pause_screen
-            return
-            ;;
-    esac
-
-    stress_dashboard "$MODE" "$DURATION"
-}
-
-# ------------------------------------------------------------------------------
-# AUTO-OVERCLOCK SAFETY CHECK
-# ------------------------------------------------------------------------------
-
-auto_safety_check() {
-
-    local temp
-    temp=$(get_temp)
-
-    echo
-    echo "Running pre-flight safety check..."
-    echo
-
-    echo "Hardware       : $MODEL"
-    echo "Detected family: $PI_FAMILY"
-    echo "Current ARM    : $(get_arm_clock) MHz"
-    echo "Target base    : $(get_current_target_freq) MHz"
-    echo "Temperature    : ${temp}°C"
+    if [[ "$temp" =~ ^[0-9]+([.][0-9]+)?$ ]] &&
+       awk "BEGIN{exit !($temp>=65)}"; then
+        echo
+        echo "${Y}Temperature is already ${temp}°C.${X}"
+        echo "Cool the Pi before automatic overclocking."
+        pause
+        return
+    fi
 
     read_throttle
 
-    if [[ "$temp" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-        if awk "BEGIN {exit !($temp >= 65)}"; then
-            echo "${YELLOW}⚠ Current temperature is already high.${RESET}"
-        fi
-
-        if awk "BEGIN {exit !($temp >= $SAFE_TEST_TEMP)}"; then
-            echo "${RED}❌ Too hot to begin automatic overclocking.${RESET}"
-            return 1
-        fi
-    fi
-
-    if bit_set 0 || bit_set 1 || bit_set 2 || bit_set 3; then
-        echo "${RED}❌ Active throttle condition detected.${RESET}"
+    if bit 0 || bit 2 || bit 3; then
         echo
-        display_throttle_state
-        return 1
-    fi
-
-    echo "${GREEN}✅ Pre-flight safety check passed.${RESET}"
-    return 0
-}
-
-# ------------------------------------------------------------------------------
-# AUTO OVERCLOCK CONFIG
-# ------------------------------------------------------------------------------
-
-generate_candidate_config() {
-
-    local freq="$1"
-    local mode="$2"
-    local voltage="$3"
-
-    case "$PI_FAMILY" in
-
-        "Pi 3B")
-            printf 'arm_freq=%s\ncore_freq=400\n' "$freq"
-
-            if [ "$voltage" -gt 0 ]; then
-                printf 'over_voltage=%s\n' "$voltage"
-            fi
-            ;;
-
-        "Pi 3B+")
-            printf 'arm_freq=%s\ncore_freq=400\n' "$freq"
-
-            if [ "$voltage" -gt 0 ]; then
-                printf 'over_voltage=%s\n' "$voltage"
-            fi
-            ;;
-
-        "Pi 4")
-            printf 'arm_freq=%s\ncore_freq=500\n' "$freq"
-
-            if [ "$voltage" -gt 0 ]; then
-                printf 'over_voltage=%s\n' "$voltage"
-            fi
-            ;;
-
-        "Pi 5")
-            printf 'arm_freq=%s\n' "$freq"
-            ;;
-
-        *)
-            return 1
-            ;;
-    esac
-}
-
-# ------------------------------------------------------------------------------
-# AUTO OVERCLOCK STATE
-# ------------------------------------------------------------------------------
-
-save_auto_state() {
-
-    local mode="$1"
-    local current="$2"
-    local stable="$3"
-    local next="$4"
-    local step="$5"
-    local voltage="$6"
-
-    cat > "$AUTO_STATE" <<EOF
-MODE=$mode
-CURRENT=$current
-STABLE=$stable
-NEXT=$next
-STEP=$step
-VOLTAGE=$voltage
-MODEL=$PI_FAMILY
-EOF
-}
-
-load_auto_state() {
-    [ -f "$AUTO_STATE" ] || return 1
-    # shellcheck disable=SC1090
-    source "$AUTO_STATE"
-}
-
-clear_auto_state() {
-    rm -f "$AUTO_STATE"
-}
-
-# ------------------------------------------------------------------------------
-# AUTO OVERCLOCK TEST PLAN
-# ------------------------------------------------------------------------------
-
-run_auto_stage() {
-
-    local mode="$1"
-    local candidate="$2"
-    local previous="$3"
-    local duration="$4"
-    local voltage="$5"
-
-    clear_screen
-
-    echo "${CYAN}╔══════════════════════════════════════════════════════════════╗${RESET}"
-    echo "${CYAN}║                 🍓 AUTO OVERCLOCK V2.0                    ║${RESET}"
-    echo "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
-    printf "║ Mode             : %-41s ║\n" "$mode"
-    printf "║ Previous Stable  : %-35s MHz ║\n" "$previous"
-    printf "║ Candidate        : %-35s MHz ║\n" "$candidate"
-    printf "║ Voltage Offset   : %-35s   ║\n" "$voltage"
-    printf "║ Test Duration    : %-35ss ║\n" "$duration"
-    echo "${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}"
-    echo
-
-    echo "${YELLOW}The candidate must be written to config.txt and rebooted.${RESET}"
-    echo
-    echo "After reboot, rerun this V2.0 module to continue the test."
-    echo
-
-    read -r -p "Apply $candidate MHz and reboot? [y/N]: " answer </dev/tty
-
-    if [[ ! "$answer" =~ ^[Yy]$ ]]; then
-        echo "Auto-overclock cancelled."
-        clear_auto_state
-        pause_screen
+        echo "${R}Active power/thermal throttling detected.${X}"
+        pause
         return
     fi
+
+    next="$start"
+
+    # If already above starting point, test the next step.
+    if ((current>=next)); then
+        next=$((current+step))
+    fi
+
+    if ((next>limit)); then
+        echo "Current frequency is already at the selected limit."
+        pause
+        return
+    fi
+
+    clear
+
+    echo "${C}AUTO OVERCLOCK${X}"
+    echo
+    echo "Hardware       : $FAMILY"
+    echo "Mode           : $mode"
+    echo "Current target : ${current} MHz"
+    echo "Next target    : ${next} MHz"
+    echo "Maximum        : ${limit} MHz"
+    echo "Step           : ${step} MHz"
+    echo
+    echo "${Y}Each frequency change requires a reboot.${X}"
+    echo "No automatic state or log files will be created."
+    echo
+    echo "After reboot, launch PiTweaks again."
+    echo "The current config frequency will be detected automatically."
+    echo
+
+    read -r -p "Apply ${next} MHz? [y/N]: " choice </dev/tty
+    [[ "$choice" =~ ^[Yy]$ ]] || return
 
     local settings
-    settings=$(generate_candidate_config "$candidate" "$mode" "$voltage")
 
-    if ! validate_config "$settings"; then
-        echo "❌ Candidate failed validation."
-        pause_screen
-        return
-    fi
+    case "$FAMILY" in
+        "Pi 3B"|"Pi 3B+")
+            settings="arm_freq=$next
+core_freq=400"
+            ;;
+        "Pi 4")
+            settings="arm_freq=$next
+core_freq=500"
+            ;;
+        "Pi 5")
+            settings="arm_freq=$next"
+            ;;
+    esac
 
-    backup_before_change
-    remove_pitweaks_block
-
-    {
-        printf '\n'
-        printf '# --- PiTweaks Overclock Start ---\n'
-        printf '# PROFILE: AUTO-OVERCLOCK %s\n' "$mode"
-        printf '# Candidate: %s MHz\n' "$candidate"
-        printf '# Previous Stable: %s MHz\n' "$previous"
-        printf '# V2.0 reboot-assisted test stage\n'
-        printf '%s\n' "$settings"
-        printf '# --- PiTweaks Overclock End ---\n'
-    } >> "$CONFIG_FILE"
-
-    save_auto_state "$mode" "$candidate" "$previous" "$candidate" \
-        "$RELIABLE_STEP" "$voltage"
-
-    log_event "AUTO stage prepared: $candidate MHz"
+    write_profile "AUTO $mode $next MHz" "$settings"
 
     echo
-    echo "${GREEN}Candidate applied.${RESET}"
-    echo "${YELLOW}Rebooting to activate it...${RESET}"
-
-    sleep 2
-    reboot
+    echo "Reboot and run PiTweaks again."
+    echo
+    echo "If ${next} MHz is stable, choose Auto Overclock again."
+    echo "The next frequency will automatically be:"
+    echo "${next} + ${step} = $((next+step)) MHz"
+    echo
+    echo "If ${next} MHz is unstable, select High Performance/Default"
+    echo "or manually restore the previous known-good frequency."
+    reboot_prompt
 }
 
 # ------------------------------------------------------------------------------
-# AUTO OVERCLOCK RESUME
+# PRESET MENU
 # ------------------------------------------------------------------------------
 
-auto_resume_if_needed() {
+menu() {
+    clear
 
-    [ -f "$AUTO_STATE" ] || return 0
-
-    load_auto_state || return 0
-
-    clear_screen
-
-    echo "${CYAN}╔══════════════════════════════════════════════════════════════╗${RESET}"
-    echo "${CYAN}║             AUTO OVERCLOCK TEST RESUMED                   ║${RESET}"
-    echo "${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}"
+    echo "${C}╔══════════════════════════════════════════════════════╗${X}"
+    echo "${C}║             PiTweaks OVERCLOCK MANAGER             ║${X}"
+    echo "${C}╚══════════════════════════════════════════════════════╝${X}"
     echo
-    echo "Mode             : $MODE"
-    echo "Candidate        : $CURRENT MHz"
-    echo "Previous Stable  : $STABLE MHz"
-    echo "Current ARM      : $(get_arm_clock) MHz"
-    echo "Temperature      : $(get_temp)°C"
+    echo "Hardware     : $FAMILY"
+    echo "Temperature  : $(temp)°C"
+    echo "ARM clock    : $(clock arm) MHz"
+    echo "Target       : $(target_freq) MHz"
+    echo "Profile      : $(profile)"
     echo
-
-    local temp
-    temp=$(get_temp)
-
-    read_throttle
-
-    local fail_reason=""
-
-    if bit_set 0; then
-        fail_reason="Under-voltage detected"
-    elif bit_set 1; then
-        fail_reason="ARM frequency capping detected"
-    elif bit_set 2; then
-        fail_reason="CPU throttling detected"
-    elif bit_set 3; then
-        fail_reason="Thermal throttling detected"
-    elif [[ "$temp" =~ ^[0-9]+([.][0-9]+)?$ ]] &&
-         awk "BEGIN {exit !($temp >= $HARD_TEST_TEMP)}"; then
-        fail_reason="Temperature exceeded hard test limit"
-    fi
-
-    # --------------------------------------------------------------------------
-    # Current candidate failed
-    # --------------------------------------------------------------------------
-
-    if [ -n "$fail_reason" ]; then
-
-        log_event "AUTO candidate FAILED: $CURRENT MHz - $fail_reason"
-
-        printf '%s|%s|FAIL|%s|%s|%s\n' \
-            "$CURRENT" "$(get_temp)" "$fail_reason" "$MODE" "$(timestamp)" \
-            >> "$RESULTS_FILE"
-
-        echo "${RED}❌ Candidate FAILED${RESET}"
-        echo
-        echo "Frequency : $CURRENT MHz"
-        echo "Reason    : $fail_reason"
-        echo "Temp      : $(get_temp)°C"
-        echo "Throttle  : $THROTTLE_HEX"
-        echo
-        echo "Reverting to last known-good: ${STABLE} MHz"
-
-        local settings
-        settings=$(generate_candidate_config "$STABLE" "$MODE" "$VOLTAGE")
-
-        backup_before_change
-        remove_pitweaks_block
-
-        {
-            printf '\n# --- PiTweaks Overclock Start ---\n'
-            printf '# PROFILE: AUTO-OVERCLOCK %s\n' "$MODE"
-            printf '# RESTORED LAST KNOWN GOOD\n'
-            printf '%s\n' "$settings"
-            printf '# --- PiTweaks Overclock End ---\n'
-        } >> "$CONFIG_FILE"
-
-        clear_auto_state
-
-        echo
-        echo "${GREEN}✅ Last known-good configuration restored.${RESET}"
-        echo "${YELLOW}A reboot is required to activate the rollback.${RESET}"
-
-        read -r -p "Reboot now? [Y/n]: " answer </dev/tty
-
-        if [[ ! "$answer" =~ ^[Nn]$ ]]; then
-            reboot
-        fi
-
-        return
-    fi
-
-    # --------------------------------------------------------------------------
-    # Candidate passed basic post-boot check
-    # --------------------------------------------------------------------------
-
-    log_event "AUTO candidate passed post-boot check: $CURRENT MHz"
-
-    printf '%s|%s|PASS|No immediate failure|%s|%s\n' \
-        "$CURRENT" "$(get_temp)" "$MODE" "$(timestamp)" \
-        >> "$RESULTS_FILE"
-
-    echo "${GREEN}✅ Candidate survived reboot without immediate failure.${RESET}"
+    echo "1) Eco"
+    echo "2) Quiet"
+    echo "3) Default"
+    echo "4) Performance"
+    echo "5) High Performance"
     echo
-    echo "A real stress test is now required."
-
-    read -r -p "Run stress validation now? [Y/n]: " answer </dev/tty
-
-    if [[ ! "$answer" =~ ^[Nn]$ ]]; then
-        ensure_stress_ng || {
-            echo "❌ stress-ng unavailable."
-            pause_screen
-            return
-        }
-
-        local test_duration
-
-        if [ "$MODE" = "RELIABLE" ]; then
-            test_duration=300
-        else
-            test_duration=900
-        fi
-
-        stress_dashboard "COMBINED" "$test_duration"
-    fi
-
-    echo
-    echo "Did the candidate remain stable throughout the test?"
-    echo
-    echo "  1) YES - mark PASS and continue"
-    echo "  2) NO  - mark FAIL and revert"
-    echo "  3) CANCEL auto-overclock"
+    echo "6) Restore Last Preset"
+    echo "7) Restore Original Factory Config"
+    echo "8) Live Monitor"
+    echo "9) Auto Overclock"
+    echo "10) Stress Test"
+    echo "11) Diagnostics"
+    echo "12) Exit"
     echo
 
-    read -r -p "Selection [1-3]: " result </dev/tty
+    local c settings
 
-    case "$result" in
+    read -r -p "Selection [1-12]: " c </dev/tty
+
+    case "$c" in
 
         1)
-            STABLE="$CURRENT"
-
-            if [ "$MODE" = "RELIABLE" ]; then
-                STEP="$RELIABLE_STEP"
-                NEXT=$((CURRENT+RELIABLE_STEP))
-
-                if [ "$NEXT" -gt "$RELIABLE_MAX" ]; then
-                    echo
-                    echo "${GREEN}Maximum Reliable boundary reached.${RESET}"
-                    clear_auto_state
-                    pause_screen
-                    return
-                fi
-
-            else
-                STEP="$MAX_STEP"
-                NEXT=$((CURRENT+MAX_STEP))
-
-                if [ "$NEXT" -gt "$MAX_LIMIT" ]; then
-                    echo
-                    echo "${GREEN}Maximum Performance boundary reached.${RESET}"
-                    clear_auto_state
-                    pause_screen
-                    return
-                fi
-            fi
-
-            save_auto_state "$MODE" "$NEXT" "$STABLE" "$NEXT" "$STEP" "$VOLTAGE"
-
-            echo
-            echo "${GREEN}PASS: $CURRENT MHz${RESET}"
-            echo "Next candidate: $NEXT MHz"
-            echo
-            echo "Continue to next frequency? [Y/n]"
-
-            read -r -p "> " answer </dev/tty
-
-            if [[ "$answer" =~ ^[Nn]$ ]]; then
-                clear_auto_state
-                pause_screen
-                return
-            fi
-
-            local settings
-            settings=$(generate_candidate_config "$NEXT" "$MODE" "$VOLTAGE")
-
-            backup_before_change
-            remove_pitweaks_block
-
-            {
-                printf '\n# --- PiTweaks Overclock Start ---\n'
-                printf '# PROFILE: AUTO-OVERCLOCK %s\n' "$MODE"
-                printf '# Candidate: %s MHz\n' "$NEXT"
-                printf '# Last Stable: %s MHz\n' "$STABLE"
-                printf '%s\n' "$settings"
-                printf '# --- PiTweaks Overclock End ---\n'
-            } >> "$CONFIG_FILE"
-
-            log_event "AUTO next candidate prepared: $NEXT MHz"
-
-            save_auto_state "$MODE" "$NEXT" "$STABLE" "$NEXT" "$STEP" "$VOLTAGE"
-
-            echo
-            echo "${YELLOW}Rebooting for next test stage...${RESET}"
-            sleep 2
-            reboot
+            write_profile "Eco" \
+                "arm_freq=800
+initial_turbo=0"
+            reboot_prompt
             ;;
 
         2)
-            log_event "AUTO candidate manually marked FAIL: $CURRENT MHz"
-
-            echo
-            echo "${RED}Candidate marked unstable.${RESET}"
-            echo "Last known-good: $STABLE MHz"
-
-            local settings
-            settings=$(generate_candidate_config "$STABLE" "$MODE" "$VOLTAGE")
-
-            backup_before_change
-            remove_pitweaks_block
-
-            {
-                printf '\n# --- PiTweaks Overclock Start ---\n'
-                printf '# PROFILE: AUTO-OVERCLOCK %s\n' "$MODE"
-                printf '# RESTORED LAST KNOWN GOOD\n'
-                printf '%s\n' "$settings"
-                printf '# --- PiTweaks Overclock End ---\n'
-            } >> "$CONFIG_FILE"
-
-            clear_auto_state
-
-            echo
-            echo "${GREEN}Rollback prepared.${RESET}"
-
-            read -r -p "Reboot now? [Y/n]: " answer </dev/tty
-            [[ ! "$answer" =~ ^[Nn]$ ]] && reboot
+            write_profile "Quiet" \
+                "arm_freq_min=600"
+            reboot_prompt
             ;;
 
         3)
-            clear_auto_state
-            echo "Auto-overclock cancelled."
-            pause_screen
+            remove_profile
+            reboot_prompt
+            ;;
+
+        4)
+            case "$FAMILY" in
+                "Pi 3B")
+                    settings="arm_freq=1300
+core_freq=400
+over_voltage=2"
+                    ;;
+                "Pi 3B+")
+                    settings="arm_freq=1450
+core_freq=400
+over_voltage=2"
+                    ;;
+                "Pi 4")
+                    settings="arm_freq=1800
+core_freq=500"
+                    ;;
+                "Pi 5")
+                    settings="arm_freq=2600"
+                    ;;
+                *)
+                    echo "Unsupported hardware."
+                    pause
+                    return
+                    ;;
+            esac
+
+            write_profile "Performance" "$settings"
+            reboot_prompt
+            ;;
+
+        5)
+            case "$FAMILY" in
+                "Pi 3B")
+                    settings="arm_freq=1350
+core_freq=400
+over_voltage=4"
+                    ;;
+                "Pi 3B+")
+                    settings="arm_freq=1500
+core_freq=500
+over_voltage=4"
+                    ;;
+                "Pi 4")
+                    settings="arm_freq=2000
+core_freq=500
+over_voltage=6"
+                    ;;
+                "Pi 5")
+                    settings="arm_freq=2800"
+                    ;;
+                *)
+                    echo "Unsupported hardware."
+                    pause
+                    return
+                    ;;
+            esac
+
+            write_profile "High Performance" "$settings"
+            reboot_prompt
+            ;;
+
+        6)
+            echo
+            echo "No persistent backup is maintained by this version."
+            echo "This option intentionally performs no SD-card write."
+            echo
+            echo "Use Default to remove the PiTweaks overclock block."
+            pause
+            ;;
+
+        7)
+            echo
+            echo "No factory backup is maintained by this version."
+            echo "This option intentionally performs no SD-card write."
+            echo
+            echo "Use Default to remove the PiTweaks overclock block."
+            pause
+            ;;
+
+        8)
+            monitor
+            ;;
+
+        9)
+            auto_overclock
+            ;;
+
+        10)
+            stress_test
+            ;;
+
+        11)
+            diagnostics
+            ;;
+
+        12)
+            clear
+            exit 0
             ;;
 
         *)
             echo "Invalid selection."
-            pause_screen
+            sleep 1
             ;;
     esac
 }
 
 # ------------------------------------------------------------------------------
-# AUTO OVERCLOCK MENU
+# DIAGNOSTICS
 # ------------------------------------------------------------------------------
 
-auto_overclock_menu() {
+diagnostics() {
+    clear
 
-    if [ "$PI_FAMILY" = "Other" ]; then
-        echo "❌ Unsupported Raspberry Pi model."
-        pause_screen
-        return
-    fi
+    local t a c s v u total pct l1 l5 l15
 
-    if [ -f "$AUTO_STATE" ]; then
-        echo
-        echo "${YELLOW}An automatic overclock test is currently staged.${RESET}"
-        echo
-        echo "Resume it?"
-        echo
-        echo "  1) Resume"
-        echo "  2) Cancel"
-        echo
+    t=$(temp)
+    a=$(clock arm)
+    c=$(clock core)
+    s=$(clock sdram)
+    v=$(voltage)
 
-        read -r -p "Selection [1-2]: " choice </dev/tty
+    read -r u total pct <<< "$(ram)"
+    read -r l1 l5 l15 <<< "$(load)"
 
-        case "$choice" in
-            1)
-                auto_resume_if_needed
-                return
-                ;;
-            2)
-                clear_auto_state
-                echo "Auto-overclock state cleared."
-                pause_screen
-                return
-                ;;
-            *)
-                return
-                ;;
-        esac
-    fi
+    read_throttle
 
-    auto_safety_check || {
-        pause_screen
-        return
-    }
+    echo "${C}╔══════════════════════════════════════════════════════╗${X}"
+    echo "${C}║                 PiTweaks DIAGNOSTICS               ║${X}"
+    echo "${C}╠══════════════════════════════════════════════════════╣${X}"
+    printf "║ Model       : %-39s ║\n" "$MODEL"
+    printf "║ Family      : %-39s ║\n" "$FAMILY"
+    printf "║ Cores       : %-39s ║\n" "$CORES"
+    printf "║ Profile     : %-39s ║\n" "$(profile)"
+    printf "║ ARM         : %6s MHz                            ║\n" "$a"
+    printf "║ CORE        : %6s MHz                            ║\n" "$c"
+    printf "║ SDRAM       : %6s MHz                            ║\n" "$s"
+    printf "║ Voltage     : %-39s ║\n" "$v"
+    printf "║ Temperature : %6s°C                            ║\n" "$t"
+    printf "║ RAM         : %s / %s MB (%s%%)                  ║\n" \
+        "$u" "$total" "$pct"
+    printf "║ Load        : %-39s ║\n" "$l1 / $l5 / $l15"
+    printf "║ Throttle    : %-39s ║\n" "$THROTTLE"
+    echo "${C}╠══════════════════════════════════════════════════════╣${X}"
+    status_strip
+    echo "${C}╚══════════════════════════════════════════════════════╝${X}"
 
-    clear_screen
-
-    echo "${CYAN}╔══════════════════════════════════════════════════════════════╗${RESET}"
-    echo "${CYAN}║                  AUTO OVERCLOCK V2.0                      ║${RESET}"
-    echo "${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}"
-    echo
-    echo "Hardware : $MODEL"
-    echo "Current  : $(get_current_target_freq) MHz"
-    echo
-    echo "Select optimisation mode:"
-    echo
-    echo "  1) Reliable Overclock"
-    echo "     • Stability first"
-    echo "     • 24/7 oriented"
-    echo "     • Smaller frequency increments"
-    echo "     • 5 minute validation stages"
-    echo
-    echo "  2) Maximum Performance"
-    echo "     • Performance first"
-    echo "     • Larger frequency increments"
-    echo "     • 15 minute validation stages"
-    echo "     • Hard thermal safety limits remain"
-    echo
-    echo "  3) Cancel"
-    echo
-
-    read -r -p "Selection [1-3]: " MODE_CHOICE </dev/tty
-
-    case "$MODE_CHOICE" in
-        1)
-            MODE="RELIABLE"
-            START="$RELIABLE_START"
-            STEP="$RELIABLE_STEP"
-            MAX="$RELIABLE_MAX"
-            VOLTAGE=0
-            ;;
-
-        2)
-            MODE="MAXIMUM"
-            START="$MAX_START"
-            STEP="$MAX_STEP"
-            MAX="$MAX_LIMIT"
-            VOLTAGE=0
-            ;;
-
-        3)
-            return
-            ;;
-
-        *)
-            echo "Invalid choice."
-            pause_screen
-            return
-            ;;
-    esac
-
-    local current stable next settings
-
-    current=$(get_current_target_freq)
-
-    if [ "$current" -ge "$START" ]; then
-        START=$((current+STEP))
-    fi
-
-    stable="$current"
-    next="$START"
-
-    if [ "$next" -gt "$MAX" ]; then
-        echo
-        echo "Current configuration is already at or above the selected boundary."
-        pause_screen
-        return
-    fi
-
-    echo
-    echo "${CYAN}AUTO OVERCLOCK PLAN${RESET}"
-    echo
-    echo "Mode             : $MODE"
-    echo "Starting target  : $next MHz"
-    echo "Step size        : $STEP MHz"
-    echo "Maximum boundary : $MAX MHz"
-    echo "Current stable   : $stable MHz"
-    echo "Voltage offset   : $VOLTAGE"
-    echo
-    echo "${YELLOW}Every candidate requires a reboot because config.txt settings are boot-time settings.${RESET}"
-    echo
-
-    save_auto_state "$MODE" "$next" "$stable" "$next" "$STEP" "$VOLTAGE"
-
-    settings=$(generate_candidate_config "$next" "$MODE" "$VOLTAGE")
-
-    if ! validate_config "$settings"; then
-        echo "❌ Generated configuration failed validation."
-        clear_auto_state
-        pause_screen
-        return
-    fi
-
-    read -r -p "Begin automatic overclocking? [y/N]: " answer </dev/tty
-
-    if [[ "$answer" =~ ^[Yy]$ ]]; then
-        run_auto_stage "$MODE" "$next" "$stable" \
-            "$([ "$MODE" = "RELIABLE" ] && echo 300 || echo 900)" \
-            "$VOLTAGE"
-    else
-        clear_auto_state
-    fi
+    pause
 }
 
 # ------------------------------------------------------------------------------
-# DIAGNOSTIC DASHBOARD
-# ------------------------------------------------------------------------------
-
-diagnostic_dashboard() {
-
-    clear_screen
-
-    local temp arm core sdram voltage health
-    temp=$(get_temp)
-    arm=$(get_arm_clock)
-    core=$(get_core_clock)
-    sdram=$(get_sdram_clock)
-    voltage=$(get_core_voltage)
-    health=$(get_overall_health)
-
-    echo "${CYAN}╔══════════════════════════════════════════════════════════════╗${RESET}"
-    echo "${CYAN}║              🍓 PiTweaks • DIAGNOSTICS V2.0               ║${RESET}"
-    echo "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
-    printf "║ MODEL        : %-46s ║\n" "$MODEL"
-    printf "║ FAMILY       : %-46s ║\n" "$PI_FAMILY"
-    printf "║ CPU CORES    : %-46s ║\n" "$CPU_CORES"
-    printf "║ PROFILE      : %-46s ║\n" "$(detect_profile)"
-    echo "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
-    printf "║ ARM CLOCK    : %6s MHz                                      ║\n" "$arm"
-    printf "║ CORE/GPU     : %6s MHz                                      ║\n" "$core"
-    printf "║ SDRAM        : %6s MHz                                      ║\n" "$sdram"
-    printf "║ CORE VOLTAGE : %-48s ║\n" "$voltage"
-    printf "║ TEMPERATURE  : %s°C                                         ║\n" "$temp"
-    echo "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
-    echo "║ HEALTH                                                     ║"
-    printf "║ Overall      : "
-    status_colour "$health"
-    echo "                                             ║"
-    display_throttle_state
-    echo "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
-
-    if [ -s "$RESULTS_FILE" ]; then
-        echo "║ RECENT AUTO-OVERCLOCK RESULTS                             ║"
-        echo "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
-
-        while IFS='|' read -r freq temp_result result reason mode time; do
-            if [ "$result" = "PASS" ]; then
-                printf "║ %5s MHz  ${GREEN}PASS${RESET}  %5s°C  %-20s ║\n" \
-                    "$freq" "$temp_result" "$mode"
-            else
-                printf "║ %5s MHz  ${RED}FAIL${RESET}  %5s°C  %-20s ║\n" \
-                    "$freq" "$temp_result" "$mode"
-            fi
-        done < "$RESULTS_FILE"
-    else
-        echo "║ No auto-overclock results in current session.             ║"
-    fi
-
-    echo "${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}"
-    echo
-
-    if [ -s "$EVENT_LOG" ]; then
-        echo "${BOLD}EVENT TIMELINE${RESET}"
-        echo "--------------------------------------------------------------"
-        tail -20 "$EVENT_LOG"
-    fi
-
-    echo
-    pause_screen
-}
-
-# ------------------------------------------------------------------------------
-# STARTUP AUTO-RESUME
-# ------------------------------------------------------------------------------
-
-# If the script was manually run after an auto-overclock reboot,
-# detect the staged state and offer continuation.
-if [ -f "$AUTO_STATE" ]; then
-
-    clear_screen
-
-    echo "${CYAN}╔══════════════════════════════════════════════════════════════╗${RESET}"
-    echo "${CYAN}║             PiTweaks • AUTO TEST DETECTED                 ║${RESET}"
-    echo "${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}"
-    echo
-    echo "A previous automatic overclock test is staged."
-    echo
-    echo "  1) Resume"
-    echo "  2) Enter normal menu"
-    echo "  3) Cancel staged test"
-    echo
-
-    read -r -p "Selection [1-3]: " RESUME_CHOICE </dev/tty
-
-    case "$RESUME_CHOICE" in
-        1)
-            auto_resume_if_needed
-            ;;
-        3)
-            clear_auto_state
-            ;;
-    esac
-fi
-
-# ------------------------------------------------------------------------------
-# MAIN LOOP
+# MAIN
 # ------------------------------------------------------------------------------
 
 while true; do
-    preset_menu
+    menu
 done
 ```
