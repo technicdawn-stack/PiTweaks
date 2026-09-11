@@ -3,12 +3,11 @@
 # ==============================================================================
 # 🍓 PiTweaks - Smart Overclock & Power Manager V2.0
 # ==============================================================================
-# Description: Professional Raspberry Pi overclocking, stress testing,
-#              telemetry and diagnostic manager.
+# Description: Raspberry Pi overclocking, stress testing, telemetry and diagnostic manager V2.0.
 # PERSISTENT: FALSE
 # Category: Tools
-# Version: V2.0
-#
+
+
 # V2.0 FEATURES
 #   • Preserves original Eco / Quiet / Default / Performance / High Performance
 #   • Preserves Last Preset and Original Factory restoration
