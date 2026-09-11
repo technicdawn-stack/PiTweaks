@@ -1,8 +1,8 @@
-```bash
+bash
 #!/bin/bash
 # ==============================================================================
 # Description: Raspberry Pi overclocking, stress testing and live diagnostics, V2.1.
-# PERSISTENT: FALSE
+# PERSISTENT: TRUE
 # Category: Tools
 #
 # Runtime data: RAM only.
@@ -1029,4 +1029,3 @@ diagnostics() {
 while true; do
     menu
 done
-```
