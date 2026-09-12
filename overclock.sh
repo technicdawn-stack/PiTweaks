@@ -2,7 +2,7 @@
 # ==============================================================================
 # Description: PiTweaks Overclock, Stress Test & Telemetry Manager (Pi 3B Edition)
 # PERSISTENT: TRUE
-# Category: Scripts
+# Category: Tools
 # ==============================================================================
 
 set -u
