@@ -1,8 +1,8 @@
 #!/bin/bash
 # ==============================================================================
-# Description: PiTweaks Overclock, Stress Test & Telemetry Manager (Pi 3B Edition)
+# Description: PiTweaks Overclock, Stress Test & Telemetry Manager (Pi 3B V1.1)
 # PERSISTENT: TRUE (Config only modified on explicit user action)
-# Runtime data: RAM only. Zero disk logging or state files to prevent SD wear.
+# Category: Tools
 # ==============================================================================
 
 set -u
