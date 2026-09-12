@@ -1,30 +1,72 @@
 #!/bin/bash
-clear
 
-# Description: System information and telemtry, condensed.
+# Description: WORSETOP - Quite litterally a worse top...
 # PERSISTENT: FALSE
 # Category: Tools
 
-echo "=========================================="
-echo " 📊 Raspberry Pi System Information"
-echo "=========================================="
-echo "• OS Version:    $(cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2)"
-echo "• Kernel:        $(uname -r)"
-echo "• Uptime:        $(uptime -p)"
-echo "• Local IP:      $(hostname -I | awk '{print $1}')"
-echo "• Temperature:   $(vcgencmd measure_temp 2>/dev/null || echo "N/A")"
-echo "• Memory Usage:  $(free -h | awk '/Mem:/ {print $3 " / " $2}')"
-echo "• Disk Usage:    $(df -h / | awk 'NR==2 {print $3 " / " $2 " (" $5 " used)"}')"
-echo ""
-echo "=========================================="
-echo " ⚙️ Advanced System Information"
-echo "=========================================="
-echo "• CPU Model:     $(grep -m 1 'Model' /proc/cpuinfo | cut -d ':' -f 2 | xargs)"
-echo "• Architecture:  $(uname -m)"
-echo "• Core Voltage:  $(vcgencmd measure_volts core 2>/dev/null || echo "N/A")"
-echo "• Clock Speed:   $(vcgencmd measure_clock arm 2>/dev/null | awk -F'=' '{printf "%.2f GHz\n", $2/1000000000}' || echo "N/A")"
-echo "• Available RAM: $(free -h | awk '/Mem:/ {print $4}')"
-echo "• Free Disk:     $(df -h / | awk 'NR==2 {print $4}')"
-echo "• Active Users:  $(who | wc -l)"
-echo "• Load Average:  $(uptime | awk -F'load average:' '{print $2}')"
-echo "=========================================="
+# Hide cursor and ensure cleanup on exit
+printf "\033[?25l"
+trap "printf '\033[?25h'; clear; exit" INT TERM EXIT
+
+clear
+
+while true; do
+    # Reset cursor to top-left to avoid flicker
+    printf "\033[H"
+
+    # Fetch data values
+    TEMP=$(vcgencmd measure_temp 2>/dev/null | cut -d'=' -f2 | tr -d "'C" || echo "0.0")
+    VOLTS_RAW=$(vcgencmd measure_volts core 2>/dev/null | cut -d'=' -f2 | tr -d "V" || echo "1.2000")
+    FREQ_HZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null || echo "1200000")
+    FREQ_MHZ=$(awk "BEGIN {print $FREQ_HZ / 1000}")
+    STATUS=$(vcgencmd get_throttled 2>/dev/null | cut -d'=' -f2 || echo "0x0")
+
+    # Load and memory stats
+    LOAD_PCT=$(awk '{print $1 * 100 / 4}' /proc/loadavg)
+    UPTIME_STR=$(uptime -p)
+    
+    RAM_LINE=$(free -m | awk '/Mem:/ {print $3, $2, int($3/$2 * 100)}')
+    read RAM_USED RAM_TOTAL RAM_PCT <<< "$RAM_LINE"
+    
+    DISK_PCT=$(df / | awk 'NR==2 {print $5}' | tr -d '%')
+
+    # Power calculation
+    EST_POWER=$(awk -v v="$VOLTS_RAW" -v f="$FREQ_MHZ" -v l="$LOAD_PCT" 'BEGIN {
+        base_idle = 1.45;
+        c_constant = 1.55;
+        v_factor = (v / 1.20) ^ 2;
+        f_factor = f / 1200.0;
+        l_factor = l / 100.0;
+        total = base_idle + (c_constant * v_factor * f_factor * l_factor);
+        if (total > 5.5) total = 5.5;
+        printf "%.2f", total
+    }')
+
+    echo "┌────────────────────────────────────────────────────────┐"
+    echo "│                    ░▒▓█ WORSETOP █▓▒░                  │"
+    echo "└────────────────────────────────────────────────────────┘"
+    echo "=========================================================="
+    echo " 📈 COMPUTE CORE ARRAYS"
+    echo "=========================================================="
+    echo "• CPU Total Load:    $(printf "%.1f%%\n" "$LOAD_PCT")"
+    echo "• Clock Frequency:   $FREQ_MHZ MHz"
+    echo "• Core Voltage:      $VOLTS_RAW V"
+    echo ""
+    echo "=========================================================="
+    echo " 💾 STORAGE & HEALTH DIAGNOSTICS"
+    echo "=========================================================="
+    echo "• Core Temp:         $TEMP°C"
+    echo "• Hardware Status:   $STATUS"
+    echo "• System Uptime:     $UPTIME_STR"
+    echo "• Memory Allocation: ${RAM_USED}MB / ${RAM_TOTAL}MB (${RAM_PCT}%)"
+    echo "• Disk Utilization:  ${DISK_PCT}% used"
+    echo ""
+    echo "=========================================================="
+    echo " ⚡ SIMULATED PACKAGE ELECTRICAL FOOTPRINT"
+    echo "=========================================================="
+    echo "• EST. POWER DRAW:   $EST_POWER Watts"
+    echo "=========================================================="
+    echo "Press [Ctrl + C] to terminate memory loop framework.      "
+
+    sleep 2
+done
