@@ -1,8 +1,8 @@
 #!/bin/bash
 # ==============================================================================
 # Description: PiTweaks Overclock, Stress Test & Telemetry Manager (Pi 3B Edition)
-# PERSISTENT: TRUE
-# Category: Tools
+# PERSISTENT: TRUE (Config only modified on explicit user action)
+# Runtime data: RAM only. Zero disk logging or state files to prevent SD wear.
 # ==============================================================================
 
 set -u
@@ -12,7 +12,14 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-INSTALL_DIR="$HOME/PiTweaks"
+# Resolve the real user's home directory even under sudo
+if [ -n "${SUDO_USER:-}" ]; then
+    REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+else
+    REAL_HOME="$HOME"
+fi
+
+INSTALL_DIR="$REAL_HOME/PiTweaks"
 TARGET_SCRIPT="$INSTALL_DIR/overclock.sh"
 mkdir -p "$INSTALL_DIR"
 
@@ -256,7 +263,7 @@ EOF
     exit 0
 fi
 
-# Self-synchronize script to local path
+# Self-synchronize script to correct local user path
 if [ "$BASH_SOURCE" != "$TARGET_SCRIPT" ]; then
     cp "$BASH_SOURCE" "$TARGET_SCRIPT"
     chmod +x "$TARGET_SCRIPT"
