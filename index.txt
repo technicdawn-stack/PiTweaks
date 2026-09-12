@@ -17,7 +17,7 @@ Tools|overclock.sh|PiTweaks Overclock, Stress Test & Telemetry Manager (Pi 3B V1
 Scripts|security_module_upgrade.sh|PiTweaks Security Event Monitor & Network Watchdog V2.2
 Tools|stress_test.sh|PiTweaks All-in-One Continuous Stress Suite & Telemetry V2.0
 Tools|swap_manager.sh|Smart memory and swap manager with auto-detection and recommendations
-Tools|sys_info.sh|System information and telemtry, condensed.
+Tools|sys_info.sh|WORSETOP - Quite litterally a worse top...
 Tools|throttlecheck.sh|Pi throttle checker
 Scripts|unbound.sh|Automated installer and configurer for Unbound (Recursive DNS) with Port Conflict Check
 Scripts|wireguard.sh|Fully automated installer and configurer for WireGuard and WireGuard-UI (Bare Metal) V1.1
