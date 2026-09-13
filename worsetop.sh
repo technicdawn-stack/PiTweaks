@@ -1,14 +1,34 @@
 #!/bin/bash
 
-# Description: WORSETOP - Quite litterally a worse top...
-# PERSISTENT: FALSE
+# Description: WORSETOP - Quite litterally a worse top... (V1.2)
 # Category: Tools
+
+# ANSI Color Codes
+CYAN="\033[96m"
+GREEN="\033[92m"
+YELLOW="\033[93m"
+RED="\033[91m"
+BOLD="\033[1m"
+RESET="\033[0m"
 
 # Hide cursor and ensure cleanup on exit
 printf "\033[?25l"
 trap "printf '\033[?25h'; clear; exit" INT TERM EXIT
 
 clear
+
+# Function to generate a visual progress bar
+draw_bar() {
+    local val=$1
+    local max=100
+    local width=10
+    local filled=$(awk -v v="$val" -v m="$max" -v w="$width" 'BEGIN { printf "%d", (v < 0 ? 0 : (v > m ? m : v)) * w / m }')
+    local empty=$((width - filled))
+    local bar=""
+    for ((i=0; i<filled; i++)); do bar+="█"; done
+    for ((i=0; i<empty; i++)); do bar+="░"; done
+    echo "$bar"
+}
 
 while true; do
     # Reset cursor to top-left to avoid flicker
@@ -42,31 +62,54 @@ while true; do
         printf "%.2f", total
     }')
 
-    echo "┌────────────────────────────────────────────────────────┐"
-    echo "│                    ░▒▓█ WORSETOP █▓▒░                  │"
-    echo "└────────────────────────────────────────────────────────┘"
-    echo "=========================================================="
-    echo " 📈 COMPUTE CORE ARRAYS"
-    echo "=========================================================="
-    echo "• CPU Total Load:    $(printf "%.1f%%\n" "$LOAD_PCT")"
-    echo "• Clock Frequency:   $FREQ_MHZ MHz"
-    echo "• Core Voltage:      $VOLTS_RAW V"
-    echo ""
-    echo "=========================================================="
-    echo " 💾 STORAGE & HEALTH DIAGNOSTICS"
-    echo "=========================================================="
-    echo "• Core Temp:         $TEMP°C"
-    echo "• Hardware Status:   $STATUS"
-    echo "• System Uptime:     $UPTIME_STR"
-    echo "• Memory Allocation: ${RAM_USED}MB / ${RAM_TOTAL}MB (${RAM_PCT}%)"
-    echo "• Disk Utilization:  ${DISK_PCT}% used"
-    echo ""
-    echo "=========================================================="
-    echo " ⚡ SIMULATED PACKAGE ELECTRICAL FOOTPRINT"
-    echo "=========================================================="
-    echo "• EST. POWER DRAW:   $EST_POWER Watts"
-    echo "=========================================================="
-    echo "Press [Ctrl + C] to terminate memory loop framework.      "
+    # Conditional color coding for temperature and status
+    TEMP_VAL=${TEMP%.*}
+    if [ "$TEMP_VAL" -ge 75 ]; then
+        TEMP_COLOR="$RED"
+    elif [ "$TEMP_VAL" -ge 60 ]; then
+        TEMP_COLOR="$YELLOW"
+    else
+        TEMP_COLOR="$GREEN"
+    fi
 
-    sleep 2
+    if [ "$STATUS" = "0x0" ]; then
+        STATUS_COLOR="$GREEN"
+        STATUS_TEXT="NORMAL"
+    else
+        STATUS_COLOR="$RED"
+        STATUS_TEXT="$STATUS (THROTTLED)"
+    fi
+
+    LOAD_BAR=$(draw_bar "$LOAD_PCT")
+
+    printf "${CYAN}╔══════════════════════════════════════════════════════════╗\n"
+    printf "║                    ${BOLD}░▒▓█ WORSETOP █▓▒░                    ${RESET}${CYAN}║\n"
+    printf "╚══════════════════════════════════════════════════════════╝${RESET}\n"
+    printf "${CYAN} 📈 COMPUTE CORE ARRAYS${RESET}\n"
+    printf "────────────────────────────────────────────────────────────\n"
+    printf " • CPU Total Load:    [%s] ${BOLD}%5.1f%%${RESET}\n" "$LOAD_BAR" "$LOAD_PCT"
+    printf " • Clock Frequency:   ${BOLD}%s MHz${RESET}\n" "$FREQ_MHZ"
+    printf " • Core Voltage:      ${BOLD}%s V${RESET}\n" "$VOLTS_RAW"
+    printf "\n"
+    printf "${CYAN} 💾 STORAGE & HEALTH DIAGNOSTICS${RESET}\n"
+    printf "────────────────────────────────────────────────────────────\n"
+    printf " • Core Temp:         ${TEMP_COLOR}${BOLD}%s°C${RESET}\n" "$TEMP"
+    printf " • Hardware Status:   ${STATUS_COLOR}${BOLD}%s${RESET}\n" "$STATUS_TEXT"
+    printf " • System Uptime:     %s\n" "$UPTIME_STR"
+    printf " • Memory Allocation: %sMB / %sMB (${BOLD}%s%%${RESET})\n" "$RAM_USED" "$RAM_TOTAL" "$RAM_PCT"
+    printf " • Disk Utilization:  ${BOLD}%s%%${RESET} used\n" "$DISK_PCT"
+    printf "\n"
+    printf "${CYAN} ⚡ SIMULATED PACKAGE ELECTRICAL FOOTPRINT${RESET}\n"
+    printf "────────────────────────────────────────────────────────────\n"
+    printf " • EST. POWER DRAW:   ${YELLOW}${BOLD}%s Watts${RESET}\n" "$EST_POWER"
+    printf "════════════════════════════════════════════════════════════\n"
+    printf " Press ${BOLD}[q]${RESET} or ${BOLD}[Ctrl + C]${RESET} to terminate.\n"
+
+    # Non-blocking sleep with key check for 'q'
+    read -t 2 -n 1 key
+    if [[ $key = "q" || $key = "Q" ]]; then
+        printf "\033[?25h"
+        clear
+        exit 0
+    fi
 done
