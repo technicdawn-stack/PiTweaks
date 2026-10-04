@@ -3,7 +3,7 @@
 # Description: Homelab Topology Visualizer & Management Console
 # PERSISTENT: TRUE
 # Category: Webpages
-# Version: V1.1
+# Version: V1.2
 
 # Dynamically detect the real user even if run via sudo
 if [ -n "$SUDO_USER" ]; then
@@ -41,9 +41,6 @@ mkdir -p "$APP_DIR"
 mkdir -p "$TEMPLATE_DIR"
 
 # Check for existing YAML map or create default one
-CONFIG_APP_TITLE="Homelab Command Center"
-CONFIG_ADMIN_USER="admin"
-
 if [ -f "$YAML_PATH" ] && command -v whiptail &>/dev/null; then
     if (whiptail --title "Existing Homelab Map Found" --yesno "An existing homelabmap.yaml was detected. Would you like to keep your previous topology map settings?" 10 60); then
         KEEP_OLD_YAML=true
@@ -51,7 +48,7 @@ if [ -f "$YAML_PATH" ] && command -v whiptail &>/dev/null; then
 fi
 
 if [ "$KEEP_OLD_YAML" != "true" ]; then
-    echo "[*] Generating default homelabmap.yaml schema..."
+    echo "[*] Generating default homelabmap.yaml schema (V1.2 with Exit Nodes)..."
     cat << 'EOF' > "$YAML_PATH"
 homelab_environment:
   system_info:
@@ -60,8 +57,23 @@ homelab_environment:
     primary_dashboard: "Dashy"
 
   layers:
+    - name: "Exit & WAN Layer"
+      description: "External gateways, internet connections, and public routing"
+      services:
+        - id: internet
+          name: "Internet / WAN"
+          type: "External Gateway"
+          ports: []
+          config_path: "ISP Modem / Router"
+          connects_to: [caddy, wireguard]
+          scripts_associated: []
+          status: "Connected"
+          uptime: "21 days"
+          traffic_out: "45.2 GB"
+          traffic_in: "128.5 GB"
+
     - name: "Edge & Access Layer"
-      description: "External entry points, routing, and remote tunnels"
+      description: "External entry points, reverse proxy, and remote tunnels"
       services:
         - id: caddy
           name: "Caddy"
@@ -80,7 +92,7 @@ homelab_environment:
           type: "VPN Tunnel"
           ports: [51820]
           config_path: "/etc/wireguard/"
-          connects_to: [core_network]
+          connects_to: [pihole]
           scripts_associated: ["wireguard.sh"]
           status: "Running"
           uptime: "21 days, 12 hours"
@@ -92,7 +104,7 @@ homelab_environment:
           type: "Dynamic DNS"
           ports: []
           config_path: "~/duckdns/"
-          connects_to: [caddy]
+          connects_to: [internet]
           scripts_associated: []
           status: "Running"
           uptime: "21 days, 12 hours"
@@ -119,7 +131,7 @@ homelab_environment:
           type: "Recursive DNS Resolver"
           ports: [5335]
           config_path: "/etc/unbound/unbound.conf.d/"
-          connects_to: []
+          connects_to: [internet]
           scripts_associated: []
           status: "Running"
           uptime: "14 days, 3 hours"
@@ -158,7 +170,7 @@ homelab_environment:
           type: "Custom Alerting & Cooling"
           ports: []
           config_path: "~/"
-          connects_to: [discord_webhook]
+          connects_to: []
           scripts_associated: ["CubeCooler.py", "temp_monitor.sh", "discord_monitor.sh"]
           status: "Running"
           uptime: "14 days, 3 hours"
@@ -173,24 +185,12 @@ homelab_environment:
           type: "Centralized Web Dashboard"
           ports: [4000]
           config_path: "~/dashy/"
-          connects_to: [caddy, pihole, samba]
+          connects_to: [pihole, samba]
           scripts_associated: []
           status: "Running"
           uptime: "14 days, 3 hours"
           traffic_out: "15.2 MB"
           traffic_in: "2.8 MB"
-
-        - id: pitweaks
-          name: "PiTweaks"
-          type: "Custom Remote CLI Installer Shortcut"
-          ports: []
-          config_path: "Remote GitHub Repo"
-          connects_to: [system_tools]
-          scripts_associated: ["install.sh", "basic-install.sh"]
-          status: "Ready"
-          uptime: "N/A"
-          traffic_out: "0 KB"
-          traffic_in: "0 KB"
 EOF
 fi
 
@@ -231,44 +231,18 @@ def get_stats():
         'ram_total_mb': round(ram.total / (1024 * 1024), 1)
     })
 
-@app.route('/api/service/update', methods=['POST'])
-def update_service():
-    data = request.json
-    service_id = data.get('id')
-    new_status = data.get('status')
-    
-    homelab_data = load_homelab_data()
-    updated = False
-    
-    if 'homelab_environment' in homelab_data and 'layers' in homelab_data['homelab_environment']:
-        for layer in homelab_data['homelab_environment']['layers']:
-            for svc in layer.get('services', []):
-                if svc.get('id') == service_id:
-                    if new_status:
-                        svc['status'] = new_status
-                    updated = True
-                    break
-            if updated:
-                break
-                
-    if updated:
-        with open(YAML_PATH, 'w') as f:
-            yaml.dump(homelab_data, f, sort_keys=False)
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'error': 'Service not found'}), 404
-
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8085)
 EOF
 
-# Write Frontend HTML with Vis.js and Tailwind (Professional Rounded Boxes)
+# Write Frontend HTML with V1.2 Features (Physics Toggle, Anti-Overlap, Exit Nodes, Importance Sizing)
 cat << 'EOF' > "$TEMPLATE_PATH"
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Homelab Interactive Topology Map</title>
+    <title>Homelab Interactive Topology Map V1.2</title>
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <style>
@@ -287,15 +261,27 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         <div class="flex items-center gap-3">
             <span class="text-xl">🗺️</span>
             <div>
-                <h1 class="font-bold text-lg text-sky-400">Homelab Topology V1.1</h1>
+                <h1 class="font-bold text-lg text-sky-400">Homelab Topology V1.2</h1>
                 <p class="text-xs text-slate-400">Raspberry Pi 3B Service Mesh & Dependencies</p>
             </div>
         </div>
-        <div class="flex items-center gap-6 text-sm">
-            <div class="bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700 flex gap-4">
+        <div class="flex items-center gap-4 text-sm flex-wrap">
+            <div class="bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700 flex gap-4 text-xs">
                 <span>CPU: <strong id="cpu-stat" class="text-sky-400">0.0%</strong></span>
                 <span>RAM: <strong id="ram-stat" class="text-emerald-400">0.0%</strong></span>
             </div>
+            
+            <!-- V1.2 Controls -->
+            <div class="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 text-xs">
+                <label class="flex items-center gap-1.5 cursor-pointer select-none">
+                    <input type="checkbox" id="physicsToggle" checked class="accent-sky-500"> Physics Jiggle
+                </label>
+                <span class="text-slate-700">|</span>
+                <label class="flex items-center gap-1.5 cursor-pointer select-none">
+                    <input type="checkbox" id="importanceToggle" class="accent-sky-500"> Size by Importance
+                </label>
+            </div>
+
             <input type="text" id="searchInput" placeholder="Search service..." class="bg-slate-950 border border-slate-700 px-3 py-1.5 rounded-lg text-xs outline-none focus:border-sky-400 text-slate-200">
         </div>
     </header>
@@ -346,13 +332,15 @@ cat << 'EOF' > "$TEMPLATE_PATH"
     <script>
         let network = null;
         let allNodesData = {};
+        let rawLayersData = null;
 
         async function fetchTopology() {
             try {
                 const res = await fetch('/api/topology');
                 const data = await res.json();
                 if (data && data.homelab_environment && data.homelab_environment.layers) {
-                    buildGraph(data.homelab_environment.layers);
+                    rawLayersData = data.homelab_environment.layers;
+                    buildGraph(rawLayersData);
                 }
             } catch (err) {
                 console.error("Failed to fetch topology:", err);
@@ -371,24 +359,55 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         function buildGraph(layers) {
             const nodes = [];
             const edges = [];
+            allNodesData = {};
 
+            // Calculate connections count (degree) for importance sizing
+            const degreeMap = {};
+            layers.forEach(layer => {
+                if (layer.services) {
+                    layer.services.forEach(svc => {
+                        if (!degreeMap[svc.id]) degreeMap[svc.id] = 0;
+                        if (svc.connects_to) {
+                            svc.connects_to.forEach(target => {
+                                degreeMap[svc.id] = (degreeMap[svc.id] || 0) + 1;
+                                degreeMap[target] = (degreeMap[target] || 0) + 1;
+                            });
+                        }
+                    });
+                }
+            });
+
+            // Color themes per layer (Exit nodes get a distinct vivid pink/rose theme)
             const layerColors = [
+                { background: '#1c1917', border: '#f43f5e', text: '#fb7185' }, // Exit & WAN Layer (Rose)
                 { background: '#0f172a', border: '#0284c7', text: '#38bdf8' }, // Edge
                 { background: '#0f172a', border: '#16a34a', text: '#4ade80' }, // Core
                 { background: '#0f172a', border: '#d97706', text: '#fbbf24' }, // Security
                 { background: '#0f172a', border: '#7c3aed', text: '#a78bfa' }  // Presentation
             ];
 
+            const useImportance = document.getElementById('importanceToggle').checked;
+
             layers.forEach((layer, layerIdx) => {
                 const colorTheme = layerColors[layerIdx % layerColors.length];
                 if (layer.services) {
                     layer.services.forEach(svc => {
                         allNodesData[svc.id] = { ...svc, layerName: layer.name };
+                        
+                        // Dynamic sizing based on degree if enabled
+                        let marginVal = 12;
+                        let fontSize = 13;
+                        if (useImportance) {
+                            const deg = degreeMap[svc.id] || 1;
+                            marginVal = 12 + (deg * 3);
+                            fontSize = 13 + Math.min(deg * 2, 6);
+                        }
+
                         nodes.push({
                             id: svc.id,
                             label: `  ${svc.name}  \n  [ ${svc.type} ]  `,
                             shape: 'box',
-                            margin: 12,
+                            margin: marginVal,
                             borderRadius: 8,
                             title: `${svc.name}\nType: ${svc.type}`,
                             color: {
@@ -396,8 +415,8 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                                 border: colorTheme.border,
                                 highlight: { background: '#1e293b', border: '#38bdf8' }
                             },
-                            font: { color: '#f8fafc', size: 13, face: 'system-ui', multi: true, align: 'center' },
-                            shadow: { enabled: true, color: 'rgba(0,0,0,0.5)', size: 6, x: 2, y: 2 }
+                            font: { color: colorTheme.text, size: fontSize, face: 'system-ui', multi: true, align: 'center' },
+                            shadow: { enabled: true, color: 'rgba(0,0,0,0.6)', size: 8, x: 2, y: 2 }
                         });
 
                         if (svc.connects_to) {
@@ -411,8 +430,20 @@ cat << 'EOF' > "$TEMPLATE_PATH"
 
             const container = document.getElementById('network-container');
             const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
+            
+            const physicsEnabled = document.getElementById('physicsToggle').checked;
+            
             const options = {
-                physics: { barnesHut: { gravitationalConstant: -4000, centralGravity: 0.3, springLength: 150 } },
+                physics: {
+                    enabled: physicsEnabled,
+                    barnesHut: { 
+                        gravitationalConstant: -5000, 
+                        centralGravity: 0.3, 
+                        springLength: 180,
+                        nodeDistance: 140,
+                        avoidOverlap: 1.0 
+                    }
+                },
                 interaction: { hover: true }
             };
 
@@ -427,6 +458,19 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                 }
             });
         }
+
+        // Event Listeners for V1.2 Toggles
+        document.getElementById('physicsToggle').addEventListener('change', function(e) {
+            if (network) {
+                network.setOptions({ physics: { enabled: e.target.checked } });
+            }
+        });
+
+        document.getElementById('importanceToggle').addEventListener('change', function() {
+            if (rawLayersData) {
+                buildGraph(rawLayersData);
+            }
+        });
 
         function showInspector(svc) {
             if (!svc) return;
@@ -479,10 +523,10 @@ cat << 'EOF' > "$TEMPLATE_PATH"
 EOF
 
 # Create Systemd Service File for Permanent Operation
-echo "[*] Configuring systemd service for Homelab Topology..."
+echo "[*] Configuring systemd service for Homelab Topology V1.2..."
 sudo bash -c "cat << 'EOF' > $SERVICE_PATH
 [Unit]
-Description=Homelab Topology Visualizer & Management Console
+Description=Homelab Topology Visualizer & Management Console V1.2
 After=network.target
 
 [Service]
@@ -499,4 +543,4 @@ sudo systemctl daemon-reload
 sudo systemctl enable homelab-map.service
 sudo systemctl restart homelab-map.service
 
-echo "[+] Installation complete! Homelab Topology V1.1 running on http://<raspberry-pi-ip>:$PORT"
+echo "[+] Installation complete! Homelab Topology V1.2 running on http://<raspberry-pi-ip>:$PORT"
