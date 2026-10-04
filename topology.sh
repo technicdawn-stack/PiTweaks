@@ -3,7 +3,7 @@
 # Description: Homelab Topology Visualizer & Management Console
 # PERSISTENT: TRUE
 # Category: Webpages
-# Version: V1.2
+# Version: V1.3 (With Cinematic Search & Filter Spotlight)
 
 # Dynamically detect the real user even if run via sudo
 if [ -n "$SUDO_USER" ]; then
@@ -235,7 +235,7 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8085)
 EOF
 
-# Write Frontend HTML with V1.2 Features (Physics Toggle, Anti-Overlap, Exit Nodes, Importance Sizing)
+# Write Frontend HTML with Cinematic Spotlight Search Animation
 cat << 'EOF' > "$TEMPLATE_PATH"
 <!DOCTYPE html>
 <html lang="en">
@@ -282,7 +282,7 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                 </label>
             </div>
 
-            <input type="text" id="searchInput" placeholder="Search service..." class="bg-slate-950 border border-slate-700 px-3 py-1.5 rounded-lg text-xs outline-none focus:border-sky-400 text-slate-200">
+            <input type="text" id="searchInput" placeholder="Search service (lights out animation)..." class="bg-slate-950 border border-slate-700 px-3 py-2 rounded-lg text-xs outline-none focus:border-sky-400 text-slate-200 w-64 transition-all">
         </div>
     </header>
 
@@ -333,6 +333,9 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         let network = null;
         let allNodesData = {};
         let rawLayersData = null;
+        let nodesDataSet = null;
+        let edgesDataSet = null;
+        let originalNodeStyles = {};
 
         async function fetchTopology() {
             try {
@@ -360,8 +363,8 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             const nodes = [];
             const edges = [];
             allNodesData = {};
+            originalNodeStyles = {};
 
-            // Calculate connections count (degree) for importance sizing
             const degreeMap = {};
             layers.forEach(layer => {
                 if (layer.services) {
@@ -377,13 +380,12 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                 }
             });
 
-            // Color themes per layer (Exit nodes get a distinct vivid pink/rose theme)
             const layerColors = [
-                { background: '#1c1917', border: '#f43f5e', text: '#fb7185' }, // Exit & WAN Layer (Rose)
-                { background: '#0f172a', border: '#0284c7', text: '#38bdf8' }, // Edge
-                { background: '#0f172a', border: '#16a34a', text: '#4ade80' }, // Core
-                { background: '#0f172a', border: '#d97706', text: '#fbbf24' }, // Security
-                { background: '#0f172a', border: '#7c3aed', text: '#a78bfa' }  // Presentation
+                { background: '#1c1917', border: '#f43f5e', text: '#fb7185' }, 
+                { background: '#0f172a', border: '#0284c7', text: '#38bdf8' }, 
+                { background: '#0f172a', border: '#16a34a', text: '#4ade80' }, 
+                { background: '#0f172a', border: '#d97706', text: '#fbbf24' }, 
+                { background: '#0f172a', border: '#7c3aed', text: '#a78bfa' }  
             ];
 
             const useImportance = document.getElementById('importanceToggle').checked;
@@ -394,7 +396,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                     layer.services.forEach(svc => {
                         allNodesData[svc.id] = { ...svc, layerName: layer.name };
                         
-                        // Dynamic sizing based on degree if enabled
                         let marginVal = 12;
                         let fontSize = 13;
                         if (useImportance) {
@@ -402,6 +403,13 @@ cat << 'EOF' > "$TEMPLATE_PATH"
                             marginVal = 12 + (deg * 3);
                             fontSize = 13 + Math.min(deg * 2, 6);
                         }
+
+                        originalNodeStyles[svc.id] = {
+                            background: colorTheme.background,
+                            border: colorTheme.border,
+                            textColor: colorTheme.text,
+                            fontSize: fontSize
+                        };
 
                         nodes.push({
                             id: svc.id,
@@ -429,7 +437,9 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             });
 
             const container = document.getElementById('network-container');
-            const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
+            nodesDataSet = new vis.DataSet(nodes);
+            edgesDataSet = new vis.DataSet(edges);
+            const data = { nodes: nodesDataSet, edges: edgesDataSet };
             
             const physicsEnabled = document.getElementById('physicsToggle').checked;
             
@@ -459,7 +469,6 @@ cat << 'EOF' > "$TEMPLATE_PATH"
             });
         }
 
-        // Event Listeners for V1.2 Toggles
         document.getElementById('physicsToggle').addEventListener('change', function(e) {
             if (network) {
                 network.setOptions({ physics: { enabled: e.target.checked } });
@@ -505,12 +514,65 @@ cat << 'EOF' > "$TEMPLATE_PATH"
 
         document.getElementById('closePanel').addEventListener('click', hideInspector);
 
+        // Cinematic Search & Filter "Lights Out" Animation Handler
         document.getElementById('searchInput').addEventListener('input', function(e) {
-            const query = e.target.value.toLowerCase();
-            const matchedId = Object.keys(allNodesData).find(id => allNodesData[id].name.toLowerCase().includes(query));
-            if (matchedId) {
-                network.selectNodes([matchedId]);
-                showInspector(allNodesData[matchedId]);
+            const query = e.target.value.toLowerCase().trim();
+            const nodeIds = nodesDataSet.getIds();
+
+            if (!query) {
+                // Restore all node lighting/styles when query is empty
+                const updates = nodeIds.map(id => {
+                    const orig = originalNodeStyles[id];
+                    return {
+                        id: id,
+                        color: { background: orig.background, border: orig.border },
+                        font: { color: orig.textColor, size: orig.fontSize }
+                    };
+                });
+                nodesDataSet.update(updates);
+                return;
+            }
+
+            // Find matching nodes based on name or type
+            const matchedIds = nodeIds.filter(id => {
+                const svc = allNodesData[id];
+                return svc.name.toLowerCase().includes(query) || svc.type.toLowerCase().includes(query);
+            });
+
+            // Lights out effect on non-matching nodes, highlight matching ones
+            const updates = nodeIds.map(id => {
+                const isMatch = matchedIds.includes(id);
+                const orig = originalNodeStyles[id];
+                if (isMatch) {
+                    return {
+                        id: id,
+                        color: { background: '#0284c7', border: '#38bdf8' },
+                        font: { color: '#ffffff', size: orig.fontSize + 2 }
+                    };
+                } else {
+                    // Dim/fade unmatching nodes ("lights out")
+                    return {
+                        id: id,
+                        color: { background: '#030712', border: '#1e293b' },
+                        font: { color: '#334155', size: orig.fontSize }
+                    };
+                }
+            });
+            nodesDataSet.update(updates);
+
+            // If exactly ONE match remains: spotlight it, select it, open inspector, and smoothly zoom in!
+            if (matchedIds.length === 1) {
+                const singleMatchId = matchedIds[0];
+                network.selectNodes([singleMatchId]);
+                showInspector(allNodesData[singleMatchId]);
+                
+                network.focus(singleMatchId, {
+                    scale: 1.4,
+                    animation: {
+                        duration: 800,
+                        easingFunction: 'easeInOutQuad'
+                    }
+                });
             }
         });
 
@@ -543,4 +605,4 @@ sudo systemctl daemon-reload
 sudo systemctl enable homelab-map.service
 sudo systemctl restart homelab-map.service
 
-echo "[+] Installation complete! Homelab Topology V1.2 running on http://<raspberry-pi-ip>:$PORT"
+echo "[+] Installation complete! Homelab Topology V1.2 running with Cinematic Search & Spotlight."
