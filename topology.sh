@@ -3,6 +3,7 @@
 # Description: Homelab Topology Visualizer & Management Console
 # PERSISTENT: TRUE
 # Category: Webpages
+# Version: V1.1
 
 # Dynamically detect the real user even if run via sudo
 if [ -n "$SUDO_USER" ]; then
@@ -14,7 +15,7 @@ fi
 USER_HOME="$(eval echo ~$CURRENT_USER)"
 APP_DIR="$USER_HOME/homelab-map"
 PYTHON_APP_PATH="$APP_DIR/app.py"
-YAML_PATH="$APP_DIR/homelab_map.yaml"
+YAML_PATH="$APP_DIR/homelabmap.yaml"
 TEMPLATE_DIR="$APP_DIR/templates"
 TEMPLATE_PATH="$TEMPLATE_DIR/index.html"
 SERVICE_PATH="/etc/systemd/system/homelab-map.service"
@@ -44,13 +45,13 @@ CONFIG_APP_TITLE="Homelab Command Center"
 CONFIG_ADMIN_USER="admin"
 
 if [ -f "$YAML_PATH" ] && command -v whiptail &>/dev/null; then
-    if (whiptail --title "Existing Homelab Map Found" --yesno "An existing homelab_map.yaml was detected. Would you like to keep your previous topology map settings?" 10 60); then
+    if (whiptail --title "Existing Homelab Map Found" --yesno "An existing homelabmap.yaml was detected. Would you like to keep your previous topology map settings?" 10 60); then
         KEEP_OLD_YAML=true
     fi
 fi
 
 if [ "$KEEP_OLD_YAML" != "true" ]; then
-    echo "[*] Generating default homelab_map.yaml schema..."
+    echo "[*] Generating default homelabmap.yaml schema..."
     cat << 'EOF' > "$YAML_PATH"
 homelab_environment:
   system_info:
@@ -202,7 +203,7 @@ from flask import Flask, render_template, jsonify, request
 
 app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-YAML_PATH = os.path.join(BASE_DIR, 'homelab_map.yaml')
+YAML_PATH = os.path.join(BASE_DIR, 'homelabmap.yaml')
 
 def load_homelab_data():
     if not os.path.exists(YAML_PATH):
@@ -257,10 +258,10 @@ def update_service():
     return jsonify({'success': False, 'error': 'Service not found'}), 404
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=$PORT)
+    app.run(host='0.0.0.0', port=8085)
 EOF
 
-# Write Frontend HTML with Vis.js and Tailwind
+# Write Frontend HTML with Vis.js and Tailwind (Professional Rounded Boxes)
 cat << 'EOF' > "$TEMPLATE_PATH"
 <!DOCTYPE html>
 <html lang="en">
@@ -286,7 +287,7 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         <div class="flex items-center gap-3">
             <span class="text-xl">🗺️</span>
             <div>
-                <h1 class="font-bold text-lg text-sky-400">Homelab Topology</h1>
+                <h1 class="font-bold text-lg text-sky-400">Homelab Topology V1.1</h1>
                 <p class="text-xs text-slate-400">Raspberry Pi 3B Service Mesh & Dependencies</p>
             </div>
         </div>
@@ -347,53 +348,71 @@ cat << 'EOF' > "$TEMPLATE_PATH"
         let allNodesData = {};
 
         async function fetchTopology() {
-            const res = await fetch('/api/topology');
-            const data = await res.json();
-            buildGraph(data.homelab_environment.layers);
+            try {
+                const res = await fetch('/api/topology');
+                const data = await res.json();
+                if (data && data.homelab_environment && data.homelab_environment.layers) {
+                    buildGraph(data.homelab_environment.layers);
+                }
+            } catch (err) {
+                console.error("Failed to fetch topology:", err);
+            }
         }
 
         async function fetchStats() {
-            const res = await fetch('/api/stats');
-            const data = await res.json();
-            document.getElementById('cpu-stat').innerText = data.cpu + '%';
-            document.getElementById('ram-stat').innerText = data.ram_percent + '% (' + data.ram_used_mb + 'MB)';
+            try {
+                const res = await fetch('/api/stats');
+                const data = await res.json();
+                document.getElementById('cpu-stat').innerText = data.cpu + '%';
+                document.getElementById('ram-stat').innerText = data.ram_percent + '% (' + data.ram_used_mb + 'MB)';
+            } catch (e) {}
         }
 
         function buildGraph(layers) {
             const nodes = [];
             const edges = [];
 
-            const layerColors = {
-                0: { background: '#0284c7', border: '#38bdf8' }, // Edge
-                1: { background: '#16a34a', border: '#4ade80' }, // Core
-                2: { background: '#d97706', border: '#fbbf24' }, // Security
-                3: { background: '#7c3aed', border: '#a78bfa' }  // Presentation
-            };
+            const layerColors = [
+                { background: '#0f172a', border: '#0284c7', text: '#38bdf8' }, // Edge
+                { background: '#0f172a', border: '#16a34a', text: '#4ade80' }, // Core
+                { background: '#0f172a', border: '#d97706', text: '#fbbf24' }, // Security
+                { background: '#0f172a', border: '#7c3aed', text: '#a78bfa' }  // Presentation
+            ];
 
             layers.forEach((layer, layerIdx) => {
-                const color = layerColors[layerIdx % layerColors.length];
-                layer.services.forEach(svc => {
-                    allNodesData[svc.id] = { ...svc, layerName: layer.name };
-                    nodes.push({
-                        id: svc.id,
-                        label: svc.name,
-                        title: `${svc.name}\nType: ${svc.type}`,
-                        color: { background: color.background, border: color.border, highlight: { background: '#ffffff', border: '#38bdf8' } },
-                        font: { color: '#f8fafc', size: 14 }
-                    });
-
-                    if (svc.connects_to) {
-                        svc.connects_to.forEach(target => {
-                            edges.push({ from: svc.id, to: target, arrows: 'to', color: { color: '#475569', highlight: '#38bdf8' }, width: 2 });
+                const colorTheme = layerColors[layerIdx % layerColors.length];
+                if (layer.services) {
+                    layer.services.forEach(svc => {
+                        allNodesData[svc.id] = { ...svc, layerName: layer.name };
+                        nodes.push({
+                            id: svc.id,
+                            label: `  ${svc.name}  \n  [ ${svc.type} ]  `,
+                            shape: 'box',
+                            margin: 12,
+                            borderRadius: 8,
+                            title: `${svc.name}\nType: ${svc.type}`,
+                            color: {
+                                background: colorTheme.background,
+                                border: colorTheme.border,
+                                highlight: { background: '#1e293b', border: '#38bdf8' }
+                            },
+                            font: { color: '#f8fafc', size: 13, face: 'system-ui', multi: true, align: 'center' },
+                            shadow: { enabled: true, color: 'rgba(0,0,0,0.5)', size: 6, x: 2, y: 2 }
                         });
-                    }
-                });
+
+                        if (svc.connects_to) {
+                            svc.connects_to.forEach(target => {
+                                edges.push({ from: svc.id, to: target, arrows: 'to', color: { color: '#475569', highlight: '#38bdf8' }, width: 2 });
+                            });
+                        }
+                    });
+                }
             });
 
             const container = document.getElementById('network-container');
             const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
             const options = {
-                physics: { barnesHut: { gravitationalConstant: -3000, centralGravity: 0.3, springLength: 120 } },
+                physics: { barnesHut: { gravitationalConstant: -4000, centralGravity: 0.3, springLength: 150 } },
                 interaction: { hover: true }
             };
 
@@ -480,4 +499,4 @@ sudo systemctl daemon-reload
 sudo systemctl enable homelab-map.service
 sudo systemctl restart homelab-map.service
 
-echo "[+] Installation complete! Homelab Topology running on http://<raspberry-pi-ip>:$PORT"
+echo "[+] Installation complete! Homelab Topology V1.1 running on http://<raspberry-pi-ip>:$PORT"
