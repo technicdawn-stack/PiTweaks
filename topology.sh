@@ -2,7 +2,7 @@
 
 # Description: Homelab Topology Visualizer & Management Console
 # PERSISTENT: TRUE
-# Category: Management & Monitoring
+# Category: Webpages
 
 # Dynamically detect the real user even if run via sudo
 if [ -n "$SUDO_USER" ]; then
