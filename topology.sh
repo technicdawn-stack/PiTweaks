@@ -4,7 +4,7 @@
 # Homelab Topology Visualizer & Management Console
 # PERSISTENT: TRUE
 # Category: Webpages
-# Description: V1.4 (Enhanced with Spotlight, Live Status & Export)
+# Description: V1.5 (Enhanced with Spotlight, Live Status & Export)
 #
 # V1.4 Features:
 #   - Interactive topology visualization
@@ -360,7 +360,6 @@ def get_live_status():
         for svc in layer.get("services", []):
             sid = svc.get("id")
             ports = svc.get("ports", [])
-            # Quick local socket test if port is defined
             is_up = True
             if ports:
                 is_up = False
@@ -448,7 +447,6 @@ cat << 'HTMLEOF' > "$TEMPLATE_PATH"
             height: calc(100vh - 70px);
             background: #030712;
         }
-        /* Spotlight Laser Animation Effect */
         @keyframes spotlightPulse {
             0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.8), inset 0 0 15px rgba(56, 189, 248, 0.5); border-color: #38bdf8; }
             50% { box-shadow: 0 0 35px 15px rgba(56, 189, 248, 0.4), inset 0 0 30px rgba(56, 189, 248, 0.8); border-color: #7dd3fc; }
@@ -556,12 +554,12 @@ cat << 'HTMLEOF' > "$TEMPLATE_PATH"
     <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 w-full max-w-md shadow-2xl flex flex-col gap-4">
         <h3 class="text-base font-bold text-sky-400">Add New Topology Node</h3>
         <div class="flex flex-col gap-3 text-xs">
-            <input type="text" id="newNodeId" placeholder="Node ID (e.g., plex)" class="modal-input">
-            <input type="text" id="newNodeName" placeholder="Display Name (e.g., Plex Media Server)" class="modal-input">
-            <input type="text" id="newNodeType" placeholder="Service Type (e.g., Media Streaming)" class="modal-input">
-            <input type="text" id="newNodeLayer" placeholder="Target Layer Name (e.g., Core Services Layer)" class="modal-input">
-            <input type="text" id="newNodePorts" placeholder="Ports (comma-separated, e.g., 32400)" class="modal-input">
-            <input type="text" id="newNodeConnects" placeholder="Connects To IDs (comma-separated, e.g., internet,nas)" class="modal-input">
+            <input type="text" id="newNodeId" placeholder="Node ID (e.g., plex)" class="modal-input bg-slate-950 border border-slate-700 px-3 py-2 rounded text-slate-200 outline-none focus:border-sky-400">
+            <input type="text" id="newNodeName" placeholder="Display Name (e.g., Plex Media Server)" class="modal-input bg-slate-950 border border-slate-700 px-3 py-2 rounded text-slate-200 outline-none focus:border-sky-400">
+            <input type="text" id="newNodeType" placeholder="Service Type (e.g., Media Streaming)" class="modal-input bg-slate-950 border border-slate-700 px-3 py-2 rounded text-slate-200 outline-none focus:border-sky-400">
+            <input type="text" id="newNodeLayer" placeholder="Target Layer Name (e.g., Core Services Layer)" class="modal-input bg-slate-950 border border-slate-700 px-3 py-2 rounded text-slate-200 outline-none focus:border-sky-400">
+            <input type="text" id="newNodePorts" placeholder="Ports (comma-separated, e.g., 32400)" class="modal-input bg-slate-950 border border-slate-700 px-3 py-2 rounded text-slate-200 outline-none focus:border-sky-400">
+            <input type="text" id="newNodeConnects" placeholder="Connects To IDs (comma-separated, e.g., internet,nas)" class="modal-input bg-slate-950 border border-slate-700 px-3 py-2 rounded text-slate-200 outline-none focus:border-sky-400">
         </div>
         <div class="flex justify-end gap-2 mt-2">
             <button id="cancelAddNode" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2 rounded text-xs font-semibold cursor-pointer">Cancel</button>
@@ -575,15 +573,12 @@ cat << 'HTMLEOF' > "$TEMPLATE_PATH"
     let network = null;
     let nodesDataset = new vis.DataSet();
     let edgesDataset = new vis.DataSet();
-    let isAdminUnlocked = false;
-    let adminPassword = "";
     let liveStatuses = {};
 
     // DOM Elements
     const settingsBtn = document.getElementById('settingsBtn');
     const settingsDropdown = document.getElementById('settingsDropdown');
     const physicsToggle = document.getElementById('physicsToggle');
-    const importanceToggle = document.getElementById('importanceToggle');
     const unlockEditorBtn = document.getElementById('unlockEditorBtn');
     const lockEditorBtn = document.getElementById('lockEditorBtn');
     const authContainer = document.getElementById('authContainer');
@@ -601,6 +596,7 @@ cat << 'HTMLEOF' > "$TEMPLATE_PATH"
     const saveYamlBtn = document.getElementById('saveYamlBtn');
     const exportJsonBtn = document.getElementById('exportJsonBtn');
     const exportPngBtn = document.getElementById('exportPngBtn');
+    const editNodeActions = document.getElementById('editNodeActions');
 
     // Toggle dropdown
     settingsBtn.addEventListener('click', (e) => {
@@ -659,10 +655,6 @@ cat << 'HTMLEOF' > "$TEMPLATE_PATH"
             const services = layer.services || [];
 
             services.forEach(svc => {
-                const stat = liveStatuses[svc.id];
-                const isOnline = stat ? stat.online : true;
-                const statusColor = isOnline ? '#10b981' : '#f43f5e';
-
                 nodesDataset.add({
                     id: svc.id,
                     label: svc.name,
@@ -726,7 +718,6 @@ cat << 'HTMLEOF' > "$TEMPLATE_PATH"
         searchBulb.classList.add('text-amber-400', 'scale-125');
         searchInput.classList.add('spotlight-active');
 
-        // Find matching nodes
         const allNodes = nodesDataset.get();
         const matched = allNodes.find(n => n.id.toLowerCase().includes(query) || n.label.toLowerCase().includes(query));
 
@@ -738,7 +729,10 @@ cat << 'HTMLEOF' > "$TEMPLATE_PATH"
     });
 
     // Inspector Panel details
+    let selectedNodeId = null;
+
     function showNodeInspector(nodeId) {
+        selectedNodeId = nodeId;
         let foundSvc = null;
         let foundLayerName = "";
 
@@ -768,8 +762,8 @@ cat << 'HTMLEOF' > "$TEMPLATE_PATH"
 
         document.getElementById('panelUptime').innerText = foundSvc.uptime || 'N/A';
         document.getElementById('panelTraffic').innerText = `Out: ${foundSvc.traffic_out || '0 MB'} | In: ${foundSvc.traffic_in || '0 MB'}`;
-        document.getElementById('panelPorts').innerText = (foundSvc.ports && foundSvc.ports.length) ? foundSvc.ports.join(', ') : 'None / Internal';
-        document.getElementById('panelConfig').innerText = foundSvc.config_path || 'None';
+        document.getElementById('panelPorts').innerText = (foundSvc.ports || []).join(', ') || 'None';
+        document.getElementById('panelConfig').innerText = foundSvc.config_path || 'N/A';
 
         const scriptsUl = document.getElementById('panelScripts');
         scriptsUl.innerHTML = '';
@@ -781,70 +775,62 @@ cat << 'HTMLEOF' > "$TEMPLATE_PATH"
             });
         } else {
             const li = document.createElement('li');
-            li.innerText = 'No attached scripts';
+            li.innerText = 'No associated scripts';
             scriptsUl.appendChild(li);
         }
 
         inspectorPanel.classList.remove('translate-x-full');
-        if (isAdminUnlocked) {
-            document.getElementById('editNodeActions').classList.remove('hidden');
-        }
     }
 
     function closeInspector() {
         inspectorPanel.classList.add('translate-x-full');
+        selectedNodeId = null;
     }
+
     closePanel.addEventListener('click', closeInspector);
 
-    // Physics & Importance toggles
+    // Physics Toggle
     physicsToggle.addEventListener('change', (e) => {
-        network.setOptions({ physics: { enabled: e.target.checked } });
+        if (network) {
+            network.setOptions({ physics: { enabled: e.target.checked } });
+        }
     });
 
-    importanceToggle.addEventListener('change', (e) => {
-        const useImportance = e.target.checked;
-        nodesDataset.forEach(node => {
-            nodesDataset.update({ id: node.id, size: useImportance ? 35 : 25 });
-        });
-    });
-
-    // Authentication & Editor Mode
+    // Admin Authentication & Editor Controls
     unlockEditorBtn.addEventListener('click', async () => {
-        const pwd = adminPasswordInput.value;
+        const password = adminPasswordInput.value;
         try {
             const res = await fetch('/api/auth', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ password: pwd })
+                body: JSON.stringify({ password })
             });
             const data = await res.json();
             if (data.authenticated) {
-                isAdminUnlocked = true;
-                adminPassword = pwd;
+                adminPassword = password;
                 authContainer.classList.add('hidden');
                 editorControls.classList.remove('hidden');
                 editorControls.classList.add('flex');
-                adminPasswordInput.value = '';
-                alert('Editor unlocked successfully!');
+                editNodeActions.classList.remove('hidden');
             } else {
-                alert('Invalid admin password.');
+                alert('Invalid Admin Password');
             }
         } catch (e) {
-            alert('Authentication request failed.');
+            alert('Authentication failed');
         }
     });
 
     lockEditorBtn.addEventListener('click', () => {
-        isAdminUnlocked = false;
-        adminPassword = '';
+        adminPassword = "";
+        adminPasswordInput.value = "";
         editorControls.classList.add('hidden');
         editorControls.classList.remove('flex');
         authContainer.classList.remove('hidden');
-        document.getElementById('editNodeActions').classList.add('hidden');
-        alert('Editor locked.');
+        editNodeActions.classList.add('hidden');
+        closeInspector();
     });
 
-    // Add Node modal controls
+    // Modal Control
     openAddNodeModal.addEventListener('click', () => addNodeModal.classList.remove('hidden'));
     cancelAddNode.addEventListener('click', () => addNodeModal.classList.add('hidden'));
 
@@ -857,51 +843,49 @@ cat << 'HTMLEOF' > "$TEMPLATE_PATH"
         const connectsStr = document.getElementById('newNodeConnects').value.trim();
 
         if (!id || !name || !layerName) {
-            alert('Please fill out at least ID, Name, and Layer Name.');
+            alert('Please fill out ID, Name, and Target Layer Name.');
             return;
         }
 
         const ports = portsStr ? portsStr.split(',').map(p => parseInt(p.trim())).filter(p => !isNaN(p)) : [];
-        const connects_to = connectsStr ? connectsStr.split(',').map(c => c.trim()).filter(Boolean) : [];
+        const connects_to = connectsStr ? connectsStr.split(',').map(c => c.trim()).filter(c => c) : [];
 
-        let layers = topologyData.homelab_environment.layers;
+        let layers = topologyData?.homelab_environment?.layers || [];
         let targetLayer = layers.find(l => l.name.toLowerCase() === layerName.toLowerCase());
 
         if (!targetLayer) {
-            targetLayer = { name: layerName, description: "Dynamically added layer", services: [] };
+            targetLayer = { name: layerName, description: "Custom Layer", services: [] };
             layers.push(targetLayer);
         }
 
+        if (!targetLayer.services) targetLayer.services = [];
         targetLayer.services.push({
-            id, name, type: type || "Custom Service", ports, config_path: "/etc/" + id, connects_to, status: "Running", uptime: "Just added"
+            id, name, type, ports, config_path: "N/A", connects_to, scripts_associated: [], status: "Running"
         });
 
         buildGraph(topologyData);
         addNodeModal.classList.add('hidden');
-        alert('Node added locally! Remember to click "Save All to YAML" to persist.');
+        alert('Node added locally! Remember to click "Save All to YAML" to persist changes.');
     });
 
     // Delete Node
     deleteNodeBtn.addEventListener('click', () => {
-        const selectedIds = network.getSelectedNodes();
-        if (selectedIds.length === 0) return;
-        const nodeId = selectedIds[0];
+        if (!selectedNodeId) return;
+        if (!confirm(`Are you sure you want to delete node "${selectedNodeId}"?`)) return;
 
-        if (!confirm(`Are you sure you want to delete node "${nodeId}"?`)) return;
-
-        let layers = topologyData.homelab_environment.layers;
+        let layers = topologyData?.homelab_environment?.layers || [];
         layers.forEach(l => {
             if (l.services) {
-                l.services = l.services.filter(s => s.id !== nodeId);
+                l.services = l.services.filter(s => s.id !== selectedNodeId);
             }
         });
 
         buildGraph(topologyData);
         closeInspector();
-        alert('Node removed locally. Click "Save All to YAML" to save changes.');
+        alert('Node removed locally! Click "Save All to YAML" to persist changes.');
     });
 
-    // Save YAML Back
+    // Save YAML
     saveYamlBtn.addEventListener('click', async () => {
         try {
             const res = await fetch('/api/topology', {
@@ -912,53 +896,54 @@ cat << 'HTMLEOF' > "$TEMPLATE_PATH"
                 },
                 body: JSON.stringify(topologyData)
             });
-            const data = await res.json();
+            const result = await res.json();
             if (res.ok) {
-                alert('Success: ' + data.message);
+                alert(result.message || 'Topology successfully saved to YAML!');
             } else {
-                alert('Error saving: ' + data.error);
+                alert(result.error || 'Failed to save topology.');
             }
         } catch (e) {
-            alert('Failed to connect to backend server.');
+            alert('Error saving topology.');
         }
     });
 
-    // Export Options
+    // Export JSON
     exportJsonBtn.addEventListener('click', () => {
         const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(topologyData, null, 2));
         const downloadAnchor = document.createElement('a');
         downloadAnchor.setAttribute("href", dataStr);
-        downloadAnchor.setAttribute("download", "homelab_topology_backup.json");
+        downloadAnchor.setAttribute("download", "homelab_topology.json");
         document.body.appendChild(downloadAnchor);
         downloadAnchor.click();
         downloadAnchor.remove();
     });
 
+    // Export PNG Snapshot
     exportPngBtn.addEventListener('click', () => {
         const canvas = document.querySelector('#network-container canvas');
         if (!canvas) {
-            alert('Canvas not rendered yet.');
+            alert('Canvas not ready.');
             return;
         }
-        const imageURI = canvas.toDataURL('image/png');
+        const imageURL = canvas.toDataURL("image/png");
         const downloadAnchor = document.createElement('a');
-        downloadAnchor.setAttribute("href", imageURI);
-        downloadAnchor.setAttribute("download", "homelab_topology_snapshot.png");
+        downloadAnchor.href = imageURL;
+        downloadAnchor.download = "homelab_topology_snapshot.png";
         document.body.appendChild(downloadAnchor);
         downloadAnchor.click();
         downloadAnchor.remove();
     });
 
-    window.onload = initTopology;
+    // Initialize on load
+    initTopology();
 </script>
 </body>
 </html>
 HTMLEOF
 
-
-# ============================================================
-# SYSTEMD SERVICE SETUP
-# ============================================================
+# ------------------------------------------------------------
+# Systemd Service Configuration
+# ------------------------------------------------------------
 
 echo "[*] Configuring systemd service..."
 
@@ -983,14 +968,7 @@ sudo systemctl restart homelab-map.service
 
 echo
 echo "============================================================"
-echo " Installation Complete!"
+echo " [SUCCESS] Homelab Topology Visualizer V1.4 is now running!"
+echo " Access your dashboard at: http://<your-ip>:$PORT"
 echo "============================================================"
-echo "[+] Homelab Topology Visualizer V1.4 is running at:"
-echo "    http://<your-pi-ip>:$PORT"
 echo
-echo "[+] Features active:"
-echo "    - Cinematic Spotlight Search (with lightbulb glow animation)"
-echo "    - Live Socket & Port Health Status checks"
-echo "    - Direct Canvas Snapshots (PNG) & JSON Export options"
-echo "    - Secure Password-Protected Editor & YAML Persistence"
-echo "============================================================"
