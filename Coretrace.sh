@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Description: CoreTrace V1.3 All-in-One Self-Contained Deployment & Management Console
+# Description: CoreTrace V1.3.1 All-in-One Self-Contained Deployment & Management Console
 # PERSISTENT: FALSE
 # Category: Webpages
 
@@ -611,12 +611,172 @@ echo "[OK] CoreTrace uninstalled successfully."
 EOF
 chmod +x "$UNINSTALL_PATH"
 
-# ------------------------------ Documentation (README.md) ---------------------
-cat << 'EOF' > "$README_PATH"
-# CoreTrace V1.2
+------------------------------ Uninstaller (uninstall.sh) --------------------
 
-Lightweight, professional RAM-only system monitoring dashboard built for Raspberry Pi 3B and Linux environments.
+cat <<'UNINSTALL_EOF' > "$UNINSTALL_PATH"
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-## Quick Start
-```bash
+SERVICE_NAME="coretrace.service"
+CURRENT_USER="${SUDO_USER:-$(id -un)}"
+
+if [[ "$CURRENT_USER" == "root" ]]; then
+echo "[ERROR] Run the uninstaller as the installation user, not root."
+exit 1
+fi
+
+USER_HOME="$(getent passwd "$CURRENT_USER" | cut -d: -f6)"
+
+if [[ -z "$USER_HOME" || "$USER_HOME" == "/" ]]; then
+echo "[ERROR] Could not safely determine the user's home directory."
+exit 1
+fi
+
+INSTALL_DIR="$USER_HOME/coretrace"
+SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME"
+
+echo
+echo "============================================"
+echo "          CORETRACE UNINSTALLER"
+echo "============================================"
+echo "Installation: $INSTALL_DIR"
+echo "Service     : $SERVICE_NAME"
+echo
+read -r -p "Remove CoreTrace and its service? [y/N]: " CONFIRM
+
+if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+echo "[INFO] Uninstallation cancelled."
+exit 0
+fi
+
+echo "[*] Stopping CoreTrace service..."
+sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+
+echo "[*] Disabling CoreTrace service..."
+sudo systemctl disable "$SERVICE_NAME" 2>/dev/null || true
+
+echo "[*] Removing CoreTrace service definition..."
+sudo rm -f "$SERVICE_PATH"
+sudo systemctl daemon-reload
+sudo systemctl reset-failed "$SERVICE_NAME" 2>/dev/null || true
+
+if [[ -d "$INSTALL_DIR" && "$INSTALL_DIR" == "$USER_HOME/coretrace" ]]; then
+echo "[*] Removing installation directory..."
+rm -rf -- "$INSTALL_DIR"
+fi
+
+echo
+echo "[OK] CoreTrace files and service removed."
+echo "[INFO] Unrelated services and network configuration were left untouched."
+UNINSTALL_EOF
+
+chmod +x "$UNINSTALL_PATH"
+
+------------------------------ Documentation (README.md) ---------------------
+
+cat <<'README_EOF' > "$README_PATH"
+
+CoreTrace V1.2
+
+Lightweight system-monitoring dashboard for Raspberry Pi 3B and compatible Linux systems.
+
+Installation
+
+Run the installer:
+
 bash install.sh
+
+Access
+
+Open the following address in a browser on the same network:
+
+http://<PI_IP>:<PORT>
+
+Replace <PI_IP> with the Raspberry Pi's LAN IP address and <PORT> with the configured CoreTrace port.
+
+Service management
+
+Check status:
+
+sudo systemctl status coretrace.service
+
+Start:
+
+sudo systemctl start coretrace.service
+
+Stop:
+
+sudo systemctl stop coretrace.service
+
+Restart:
+
+sudo systemctl restart coretrace.service
+
+View recent service diagnostics:
+
+sudo journalctl -u coretrace.service -n 50 --no-pager
+
+Data retention
+
+Metric history is held in RAM and is lost when CoreTrace restarts or the Raspberry Pi reboots. Configuration may persist separately.
+
+Uninstallation
+
+Run:
+
+./uninstall.sh
+
+Confirm when prompted.
+README_EOF
+
+------------------------------ Systemd Service Registration ------------------
+
+echo "[*] Creating systemd service..."
+
+sudo tee "$SERVICE_PATH" > /dev/null <<SERVICE_EOF
+[Unit]
+Description=CoreTrace V1.2 System Monitor
+After=network.target
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+WorkingDirectory=$INSTALL_DIR
+Environment=CORETRACE_PORT=$PORT
+Environment=CORETRACE_INTERVAL=$INTERVAL
+Environment=CORETRACE_HISTORY_HOURS=$HISTORY_HOURS
+ExecStart=/usr/bin/python3 $PYTHON_APP_PATH
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+SERVICE_EOF
+
+echo "[*] Reloading systemd..."
+sudo systemctl daemon-reload
+
+echo "[*] Enabling CoreTrace at boot..."
+sudo systemctl enable "$SERVICE_NAME"
+
+echo "[*] Starting CoreTrace..."
+sudo systemctl restart "$SERVICE_NAME"
+
+if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
+echo
+echo "============================================"
+echo "  CoreTrace V1.2 installed successfully"
+echo "============================================"
+echo "Port    : $PORT"
+echo "Service : sudo systemctl status $SERVICE_NAME"
+echo "Access  : http://<PI_IP>:$PORT"
+echo
+echo "Find the Pi's IP using: hostname -I"
+else
+echo
+echo "[ERROR] CoreTrace failed to start."
+echo "Inspect the service with:"
+echo "  sudo systemctl status $SERVICE_NAME"
+echo "  sudo journalctl -u $SERVICE_NAME -n 50 --no-pager"
+exit 1
+fi
