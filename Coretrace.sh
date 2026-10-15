@@ -597,16 +597,6 @@ else
     CURRENT_USER="$(whoami)"
 fi
 USER_HOME="$(eval echo ~$CURRENT_USER)"
-cat << 'EOF' > "$UNINSTALL_PATH"
-#!/usr/bin/env bash
-set -Eeuo pipefail
-SERVICE_NAME="coretrace.service"
-if [ -n "${SUDO_USER:-}" ]; then
-    CURRENT_USER="$SUDO_USER"
-else
-    CURRENT_USER="$(whoami)"
-fi
-USER_HOME="$(eval echo ~$CURRENT_USER)"
 INSTALL_DIR="$USER_HOME/coretrace"
 
 echo "[*] Stopping and disabling CoreTrace service..."
@@ -623,7 +613,7 @@ chmod +x "$UNINSTALL_PATH"
 
 # ------------------------------ Documentation (README.md) ---------------------
 cat << 'EOF' > "$README_PATH"
-# CoreTrace V1.0
+# CoreTrace V1.2
 
 Lightweight, professional RAM-only system monitoring dashboard built for Raspberry Pi 3B and Linux environments.
 
