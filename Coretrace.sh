@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Description: CoreTrace V1.3.2 All-in-One Self-Contained Deployment & Management Console
+# Description: CoreTrace V1.3.3 All-in-One Self-Contained Deployment & Management Console
 # PERSISTENT: FALSE
 # Category: Webpages
 
@@ -672,7 +672,7 @@ UNINSTALL_EOF
 
 chmod +x "$UNINSTALL_PATH"
 
------------------------------- Documentation (README.md) ---------------------
+#------------------------------ Documentation (README.md) ---------------------
 
 cat <<'README_EOF' > "$README_PATH"
 
@@ -729,7 +729,7 @@ Run:
 Confirm when prompted.
 README_EOF
 
------------------------------- Systemd Service Registration ------------------
+#------------------------------ Systemd Service Registration ------------------
 
 echo "[*] Creating systemd service..."
 
