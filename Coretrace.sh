@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Description: CoreTrace V1.1 All-in-One Self-Contained Deployment & Management Console
+# Description: CoreTrace V1.2 All-in-One Self-Contained Deployment & Management Console
 # PERSISTENT: FALSE
 # Category: Webpages
 
@@ -587,6 +587,16 @@ document.addEventListener('DOMContentLoaded', () => {
 EOF
 
 # ------------------------------ Uninstaller (uninstall.sh) --------------------
+cat << 'EOF' > "$UNINSTALL_PATH"
+#!/usr/bin/env bash
+set -Eeuo pipefail
+SERVICE_NAME="coretrace.service"
+if [ -n "${SUDO_USER:-}" ]; then
+    CURRENT_USER="$SUDO_USER"
+else
+    CURRENT_USER="$(whoami)"
+fi
+USER_HOME="$(eval echo ~$CURRENT_USER)"
 cat << 'EOF' > "$UNINSTALL_PATH"
 #!/usr/bin/env bash
 set -Eeuo pipefail
