@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Description: CoreTrace V1.3.1 All-in-One Self-Contained Deployment & Management Console
+# Description: CoreTrace V1.3.2 All-in-One Self-Contained Deployment & Management Console
 # PERSISTENT: FALSE
 # Category: Webpages
 
@@ -611,7 +611,7 @@ echo "[OK] CoreTrace uninstalled successfully."
 EOF
 chmod +x "$UNINSTALL_PATH"
 
------------------------------- Uninstaller (uninstall.sh) --------------------
+#------------------------------ Uninstaller (uninstall.sh) --------------------
 
 cat <<'UNINSTALL_EOF' > "$UNINSTALL_PATH"
 #!/usr/bin/env bash
