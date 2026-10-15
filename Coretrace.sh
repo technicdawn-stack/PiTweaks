@@ -30,7 +30,7 @@ SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
 PORT="$DEFAULT_PORT"
 INTERVAL="$DEFAULT_INTERVAL"
 HISTORY_HOURS="$DEFAULT_HISTORY_HOURS"
-BIND_ADDRESS="127.0.0.1"
+BIND_ADDRESS="0.0.0.0"
 
 # ------------------------------ Dependency Detection --------------------------
 echo "[*] Checking Python3 and whiptail environment..."
