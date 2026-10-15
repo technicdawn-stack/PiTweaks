@@ -2,7 +2,7 @@
 # ==============================================================================
 # CoreTrace V1.0 All-in-One Self-Contained Deployment & Management Console
 # PERSISTENT: FALSE (Metrics history is RAM-only; service/app files on disk)
-# Category: System Monitoring
+# Category: Webpages
 # ==============================================================================
 set -Eeuo pipefail
 IFS=$'\n\t'
