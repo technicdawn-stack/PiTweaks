@@ -465,11 +465,21 @@ class Handler(BaseHTTPRequestHandler):
             self.send_bytes(b"Asset missing\n", "text/plain; charset=utf-8", 500)
 
 def main():
-    signal.signal(signal.SIGTERM, lambda *_: (save_cache(), stop_event.set()))
-    signal.signal(signal.SIGINT, lambda *_: (save_cache(), stop_event.set()))
-    threading.Thread(target=sampler, daemon=True, name="coretrace-sampler").start()
     server = ThreadingHTTPServer((BIND, PORT), Handler)
     server.daemon_threads = True
+
+    def handle_shutdown(signum, frame):
+        stop_event.set()
+        save_cache()
+        try:
+            server.shutdown()
+        except Exception:
+            pass
+
+    signal.signal(signal.SIGTERM, handle_shutdown)
+    signal.signal(signal.SIGINT, handle_shutdown)
+
+    threading.Thread(target=sampler, daemon=True, name="coretrace-sampler").start()
     try:
         server.serve_forever(poll_interval=0.5)
     finally:
