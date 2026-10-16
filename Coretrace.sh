@@ -1102,15 +1102,3 @@ echo "[INFO] Unrelated services and network configuration were left untouched."
 UNINSTALL_EOF
 chmod 755 "$UNINSTALL_PATH"
 
-# ------------------------------ Documentation ----------------------------------
-cat > "$README_PATH" <<'README_EOF'
-# CoreTrace V1.4
-
-Lightweight system-monitoring dashboard for Raspberry Pi 3B and compatible Linux systems.
-
-## Install or update
-
-Run the installer as your normal user:
-
-```bash
-bash install.sh
