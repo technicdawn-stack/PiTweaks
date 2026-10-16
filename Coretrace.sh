@@ -1171,7 +1171,7 @@ ExecStart=/usr/bin/python3 $PYTHON_APP_PATH
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
-PrivateTmp=true
+PrivateTmp=false
 ProtectSystem=full
 ProtectHome=read-only
 
