@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Description: CoreTrace V1.5.2 Self-Contained Deployment & Management Console
+# Description: CoreTrace Self-Contained Deployment & Management Console V1.6
 # PERSISTENT: FALSE
 # Category: Webpages
 
@@ -7,7 +7,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 APP_NAME="CoreTrace"
-APP_VERSION="V1.4"
+APP_VERSION="V1.6"
 SERVICE_NAME="coretrace.service"
 DEFAULT_PORT="8087"
 DEFAULT_INTERVAL="20"
@@ -21,7 +21,7 @@ fi
 
 if [[ "$CURRENT_USER" == "root" ]]; then
 echo "[ERROR] Run this installer as your normal user, not with sudo."
-echo "Example: bash install.sh"
+echo "Example: bash Coretrace.sh"
 exit 1
 fi
 
@@ -35,7 +35,6 @@ INSTALL_DIR="$USER_HOME/coretrace"
 WEB_DIR="$INSTALL_DIR/web"
 PYTHON_APP_PATH="$INSTALL_DIR/coretrace.py"
 UNINSTALL_PATH="$INSTALL_DIR/uninstall.sh"
-README_PATH="$INSTALL_DIR/README.md"
 ENV_PATH="$INSTALL_DIR/coretrace.env"
 SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
 
@@ -122,6 +121,7 @@ sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
 sudo systemctl disable "$SERVICE_NAME" 2>/dev/null || true
 sudo rm -f "$SERVICE_PATH"
 sudo systemctl daemon-reload
+rm -f /tmp/coretrace_cache.json
 if [[ "$INSTALL_DIR" == "$USER_HOME/coretrace" && -d "$INSTALL_DIR" ]]; then
 rm -rf -- "$INSTALL_DIR"
 fi
@@ -141,7 +141,7 @@ set -e
 (( rc == 0 )) || { echo "[INFO] Settings cancelled; existing values unchanged."; exit 0; }
 set +e
 INTERVAL_INPUT=$(whiptail --title "CoreTrace $APP_VERSION Settings" \
---inputbox "Sampling interval in seconds (5-300):" 10 58 "$INTERVAL_INPUT" 3>&1 1>&2 2>&3)
+--inputbox "Sampling interval in seconds (5-300):" 10 58 "$INTERVAL" 3>&1 1>&2 2>&3)
 rc=$?
 set -e
 (( rc == 0 )) || { echo "[INFO] Settings cancelled; existing values unchanged."; exit 0; }
@@ -197,9 +197,10 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 APP_NAME = "CoreTrace"
-APP_VERSION = "V1.4"
+APP_VERSION = "V1.5.2"
 ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
+CACHE_FILE = Path("/tmp/coretrace_cache.json")
 
 def env_int(name: str, default: int, minimum: int, maximum: int) -> int:
     try:
@@ -226,6 +227,25 @@ prev_proc_cpu = None
 prev_proc_time = None
 clk_tck = os.sysconf("SC_CLK_TCK")
 page_size = os.sysconf("SC_PAGE_SIZE")
+
+# Restore previous RAM cache if restarting service
+if CACHE_FILE.exists():
+    try:
+        cached_data = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+        if isinstance(cached_data, list):
+            for sample in cached_data:
+                history.append(sample)
+    except Exception:
+        pass
+
+def save_cache():
+    try:
+        with history_lock:
+            data = list(history)
+        CACHE_FILE.write_text(json.dumps(data), encoding="utf-8")
+        os.chmod(CACHE_FILE, 0o600)
+    except Exception:
+        pass
 
 def read_cpu_counters():
     global boot_time
@@ -371,11 +391,12 @@ def sampler():
             history.append(sample)
             while history and history[0]["timestamp"] < cutoff:
                 history.popleft()
+        save_cache()
         next_tick += INTERVAL
         stop_event.wait(max(0.1, next_tick - time.monotonic()))
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CoreTrace/1.4"
+    server_version = f"CoreTrace/{APP_VERSION}"
 
     def log_message(self, fmt, *args):
         return
@@ -404,6 +425,11 @@ class Handler(BaseHTTPRequestHandler):
                 count = len(history)
                 now = time.time()
                 uptime = max(0, int(now - boot_time)) if boot_time else int(now - started_at)
+                
+                # Get current process RAM usage for CoreTrace itself
+                _, current_rss = read_process_usage()
+                coretrace_mib = mib(current_rss) if current_rss is not None else 0.0
+
                 self.send_json({
                     "app": APP_NAME,
                     "version": APP_VERSION,
@@ -413,6 +439,7 @@ class Handler(BaseHTTPRequestHandler):
                     "sample_count": count,
                     "system_uptime_seconds": uptime,
                     "server_uptime_seconds": int(now - started_at),
+                    "coretrace_ram_mib": coretrace_mib,
                     "latest": latest,
                 })
             return
@@ -438,14 +465,15 @@ class Handler(BaseHTTPRequestHandler):
             self.send_bytes(b"Asset missing\n", "text/plain; charset=utf-8", 500)
 
 def main():
-    signal.signal(signal.SIGTERM, lambda *_: stop_event.set())
-    signal.signal(signal.SIGINT, lambda *_: stop_event.set())
+    signal.signal(signal.SIGTERM, lambda *_: (save_cache(), stop_event.set()))
+    signal.signal(signal.SIGINT, lambda *_: (save_cache(), stop_event.set()))
     threading.Thread(target=sampler, daemon=True, name="coretrace-sampler").start()
     server = ThreadingHTTPServer((BIND, PORT), Handler)
     server.daemon_threads = True
     try:
         server.serve_forever(poll_interval=0.5)
     finally:
+        save_cache()
         stop_event.set()
         server.server_close()
 
@@ -455,23 +483,23 @@ PYTHON_EOF
 chmod 755 "$PYTHON_APP_PATH"
 
 # ------------------------------ Frontend HTML ----------------------------------
-cat > "$WEB_DIR/index.html" <<'HTML_EOF'
+cat > "$WEB_DIR/index.html" <<HTML_EOF
 <!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>CoreTrace V1.4</title>
-<link rel="stylesheet" href="/style.css?v=1.4">
-<script src="/app.js?v=1.4" defer></script>
+<title>CoreTrace $APP_VERSION</title>
+<link rel="stylesheet" href="/style.css?v=1.5.2">
+<script src="/app.js?v=1.5.2" defer></script>
 </head>
 <body>
 <div class="shell">
 <header class="topbar">
 <div class="brand">
 <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
-<div><div class="brand-name">CoreTrace</div><div class="brand-sub">TELEMETRY <span>V1.4</span></div></div>
+<div><div class="brand-name">CoreTrace</div><div class="brand-sub">TELEMETRY <span>$APP_VERSION</span></div></div>
 </div>
 <div class="top-actions">
 <label class="search-wrap"><span class="sr-only">Search metrics</span><input id="search" type="search" placeholder="Search metrics..." autocomplete="off"></label>
@@ -497,6 +525,7 @@ cat > "$WEB_DIR/index.html" <<'HTML_EOF'
 <div class="collector-line"><span class="status-dot" id="collectorDot"></span><span id="collectorStatus">Starting…</span></div>
 <div class="tiny-label spaced">SAMPLE INTERVAL</div><div class="side-value" id="sampleInterval">—</div>
 <div class="tiny-label spaced">SAMPLES IN RAM</div><div class="side-value" id="sampleCount">—</div>
+<div class="tiny-label spaced">CORETRACE RAM</div><div class="side-value" id="coretraceRam">— MiB</div>
 <button id="sidebarToggle" class="collapse-button" aria-label="Collapse sidebar" title="Collapse sidebar">‹ Collapse</button>
 </div>
 </aside>
@@ -546,7 +575,7 @@ cat > "$WEB_DIR/index.html" <<'HTML_EOF'
 <div class="chart-box"><canvas id="tempCanvas" aria-label="Temperature history chart"></canvas><div class="chart-tooltip" id="tempTooltip" hidden></div></div>
 <div class="chart-footer"><span id="tempChartSummary">Waiting for samples…</span><button class="reset-zoom" data-reset-chart="tempCanvas">Reset zoom</button></div>
 </section>
-<footer class="app-footer"><span>CoreTrace V1.4</span><span>History is held in RAM and resets when the service restarts.</span></footer>
+<footer class="app-footer"><span>CoreTrace $APP_VERSION</span><span>History is held in RAM and persists across service updates.</span></footer>
 </main>
 </div>
 </div>
@@ -573,7 +602,17 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 .live-dot,.status-dot{width:8px;height:8px;border-radius:50%;background:var(--warning);display:inline-block;flex:none}.live-dot.online,.status-dot.online{background:var(--success)}.live-dot.offline,.status-dot.offline{background:var(--danger)}
 .layout{display:flex;flex:1;min-width:0}
 .sidebar{width:260px;flex:0 0 260px;background:var(--surface);border-right:1px solid var(--border);padding:20px;display:flex;flex-direction:column;gap:8px;transition:width .2s,flex-basis .2s,padding .2s;position:sticky;top:73px;height:calc(100vh - 73px);overflow-y:auto}
-.sidebar.collapsed{width:72px;flex-basis:72px;padding:20px 10px}.sidebar.collapsed .side-heading,.sidebar.collapsed .side-divider,.sidebar.collapsed .side-foot,.sidebar.collapsed .nav-item{font-size:0}.sidebar.collapsed .nav-item{height:42px;padding:8px}.sidebar.collapsed .nav-item::first-letter{font-size:0}.sidebar.collapsed .nav-item{overflow:hidden}.sidebar.collapsed .nav-item:before{font-size:0}.sidebar.collapsed .range-buttons{grid-template-columns:1fr}.sidebar.collapsed .range-buttons button:not(.selected){display:none}.sidebar.collapsed .range-buttons button{font-size:.65rem;padding:5px 0}.sidebar.collapsed .collapse-button{font-size:0}.sidebar.collapsed .collapse-button:after{content:"›";font-size:1rem}
+.sidebar.collapsed{width:70px;flex-basis:70px;padding:15px 8px;overflow:hidden}
+.sidebar.collapsed .side-heading,
+.sidebar.collapsed .side-divider,
+.sidebar.collapsed .side-foot .tiny-label,
+.sidebar.collapsed .side-value,
+.sidebar.collapsed .collector-line span:not(.status-dot),
+.sidebar.collapsed .nav-item{display:none !important}
+.sidebar.collapsed .nav-item{height:0;padding:0;margin:0;overflow:hidden}
+.sidebar.collapsed .range-buttons{display:none}
+.sidebar.collapsed .collapse-button{font-size:0;width:100%}
+.sidebar.collapsed .collapse-button:after{content:"›";font-size:1rem}
 .side-heading{font-size:.7rem;color:var(--muted);font-weight:700;margin-top:12px;letter-spacing:.05em}
 .nav-item{background:transparent;border:0;color:var(--text);padding:10px 14px;border-radius:8px;text-align:left;cursor:pointer;font-size:.9rem;font-weight:500;width:100%;white-space:nowrap}
 .nav-item:hover,.nav-item.active{background:var(--border);color:var(--accent)}
@@ -684,6 +723,7 @@ const status = state.status;
 if (!status) return;
 byId('sampleInterval').textContent = `${status.interval_seconds}s`;
 byId('sampleCount').textContent = `${status.sample_count} / RAM`;
+byId('coretraceRam').textContent = `${safeNumber(status.coretrace_ram_mib, 1)} MiB`;
 const latest = status.latest;
 if (!latest) return;
 
@@ -1066,7 +1106,7 @@ exit 1
 fi
 
 USER_HOME="$(getent passwd "$CURRENT_USER" | cut -d: -f6)"
-if [[ -z "$USER_HOME" || "$USER_HOME" == "/" ]]; then
+if [[ -z "$USER_HOME" \vert{}\vert{} "$USER_HOME" == "/" ]]; then
 echo "[ERROR] Could not safely determine the user's home directory."
 exit 1
 fi
@@ -1076,7 +1116,7 @@ SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME"
 
 echo
 echo "============================================"
-echo " CORETRACE V1.4 UNINSTALLER"
+echo " CORETRACE V1.5.2 UNINSTALLER"
 echo "============================================"
 echo "Installation: $INSTALL_DIR"
 echo "Service : $SERVICE_NAME"
@@ -1092,12 +1132,13 @@ sudo systemctl disable "$SERVICE_NAME" 2>/dev/null || true
 sudo rm -f "$SERVICE_PATH"
 sudo systemctl daemon-reload
 sudo systemctl reset-failed "$SERVICE_NAME" 2>/dev/null || true
+rm -f /tmp/coretrace_cache.json
 
 if [[ -d "$INSTALL_DIR" && "$INSTALL_DIR" == "$USER_HOME/coretrace" ]]; then
 rm -rf -- "$INSTALL_DIR"
 fi
 
-echo "[OK] CoreTrace V1.4 files and service removed."
+echo "[OK] CoreTrace V1.5.2 files and service removed."
 echo "[INFO] Unrelated services and network configuration were left untouched."
 UNINSTALL_EOF
 chmod 755 "$UNINSTALL_PATH"
@@ -1106,7 +1147,7 @@ chmod 755 "$UNINSTALL_PATH"
 echo "[*] Creating systemd service..."
 sudo tee "$SERVICE_PATH" >/dev/null <<SERVICE_EOF
 [Unit]
-Description=CoreTrace V1.4 System Monitor
+Description=CoreTrace V1.5.2 System Monitor
 After=network.target
 
 [Service]
