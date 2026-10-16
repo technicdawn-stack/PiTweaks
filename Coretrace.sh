@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Description: CoreTrace V1.5.1 Self-Contained Deployment & Management Console
+# Description: CoreTrace V1.5.2 Self-Contained Deployment & Management Console
 # PERSISTENT: FALSE
 # Category: Webpages
 
@@ -1066,7 +1066,7 @@ exit 1
 fi
 
 USER_HOME="$(getent passwd "$CURRENT_USER" | cut -d: -f6)"
-if [[ -z "$USER_HOME" \vert{}\vert{} "$USER_HOME" == "/" ]]; then
+if [[ -z "$USER_HOME" || "$USER_HOME" == "/" ]]; then
 echo "[ERROR] Could not safely determine the user's home directory."
 exit 1
 fi
@@ -1102,3 +1102,54 @@ echo "[INFO] Unrelated services and network configuration were left untouched."
 UNINSTALL_EOF
 chmod 755 "$UNINSTALL_PATH"
 
+# ------------------------------ Systemd service -------------------------------
+echo "[*] Creating systemd service..."
+sudo tee "$SERVICE_PATH" >/dev/null <<SERVICE_EOF
+[Unit]
+Description=CoreTrace V1.4 System Monitor
+After=network.target
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+WorkingDirectory=$INSTALL_DIR
+Environment=CORETRACE_PORT=$PORT
+Environment=CORETRACE_INTERVAL=$INTERVAL
+Environment=CORETRACE_HISTORY_HOURS=$HISTORY_HOURS
+ExecStart=/usr/bin/python3 $PYTHON_APP_PATH
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target
+SERVICE_EOF
+
+echo "[*] Reloading systemd and enabling service..."
+sudo systemctl daemon-reload
+sudo systemctl enable "$SERVICE_NAME"
+sudo systemctl restart "$SERVICE_NAME"
+
+if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
+echo
+echo "============================================"
+echo " CoreTrace $APP_VERSION installed/updated"
+echo "============================================"
+echo "Port : $PORT"
+echo "Interval : ${INTERVAL}s"
+echo "History : ${HISTORY_HOURS} hours"
+echo "Service : sudo systemctl status $SERVICE_NAME"
+echo "Access : http://<PI_IP>:$PORT"
+echo
+echo "Find the Pi's IP using: hostname -I"
+else
+echo
+echo "[ERROR] CoreTrace failed to start."
+echo "Inspect with:"
+echo " sudo systemctl status $SERVICE_NAME"
+echo " sudo journalctl -u $SERVICE_NAME -n 80 --no-pager"
+exit 1
+fi
