@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Description: CoreTrace Ex.V1.4 Self-Contained Deployment & Management Console
+# Description: CoreTrace V1.5 Self-Contained Deployment & Management Console
 # PERSISTENT: FALSE
 # Category: Webpages
-# Supports Raspberry Pi OS / Debian-based Linux.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -203,11 +202,11 @@ ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
 
 def env_int(name: str, default: int, minimum: int, maximum: int) -> int:
-try:
-value = int(os.environ.get(name, str(default)))
-return max(minimum, min(maximum, value))
-except (TypeError, ValueError):
-return default
+    try:
+        value = int(os.environ.get(name, str(default)))
+        return max(minimum, min(maximum, value))
+    except (TypeError, ValueError):
+        return default
 
 PORT = env_int("CORETRACE_PORT", 8087, 1024, 65535)
 INTERVAL = env_int("CORETRACE_INTERVAL", 20, 5, 300)
@@ -229,230 +228,229 @@ clk_tck = os.sysconf("SC_CLK_TCK")
 page_size = os.sysconf("SC_PAGE_SIZE")
 
 def read_cpu_counters():
-global boot_time
-try:
-total = None
-cores = {}
-with open("/proc/stat", "r", encoding="ascii") as stream:
-for line in stream:
-parts = line.split()
-if not parts:
-continue
-if parts[0] == "cpu":
-values = [int(x) for x in parts[1:]]
-idle = values[3] + (values[4] if len(values) > 4 else 0)
-total = (sum(values), idle)
-elif re.fullmatch(r"cpu\d+", parts[0]):
-values = [int(x) for x in parts[1:]]
-idle = values[3] + (values[4] if len(values) > 4 else 0)
-cores[parts[0]] = (sum(values), idle)
-elif parts[0] == "btime" and len(parts) > 1:
-boot_time = int(parts[1])
-return total, cores
-except (OSError, ValueError, IndexError):
-return None, {}
+    global boot_time
+    try:
+        total = None
+        cores = {}
+        with open("/proc/stat", "r", encoding="ascii") as stream:
+            for line in stream:
+                parts = line.split()
+                if not parts:
+                    continue
+                if parts[0] == "cpu":
+                    values = [int(x) for x in parts[1:]]
+                    idle = values[3] + (values[4] if len(values) > 4 else 0)
+                    total = (sum(values), idle)
+                elif re.fullmatch(r"cpu\d+", parts[0]):
+                    values = [int(x) for x in parts[1:]]
+                    idle = values[3] + (values[4] if len(values) > 4 else 0)
+                    cores[parts[0]] = (sum(values), idle)
+                elif parts[0] == "btime" and len(parts) > 1:
+                    boot_time = int(parts[1])
+        return total, cores
+    except (OSError, ValueError, IndexError):
+        return None, {}
 
 def cpu_percent(current, previous):
-if current is None or previous is None:
-return None
-total_delta = current[0] - previous[0]
-idle_delta = current[1] - previous[1]
-if total_delta <= 0:
-return None
-return round(max(0.0, min(100.0, 100.0 * (total_delta - idle_delta) / total_delta)), 2)
+    if current is None or previous is None:
+        return None
+    total_delta = current[0] - previous[0]
+    idle_delta = current[1] - previous[1]
+    if total_delta <= 0:
+        return None
+    return round(max(0.0, min(100.0, 100.0 * (total_delta - idle_delta) / total_delta)), 2)
 
 def read_memory():
-values = {}
-try:
-with open("/proc/meminfo", "r", encoding="ascii") as stream:
-for line in stream:
-parts = line.replace(":", "").split()
-if len(parts) >= 2:
-try:
-values[parts[0]] = int(parts[1]) * 1024
-except ValueError:
-pass
-except OSError:
-return {}
-total = values.get("MemTotal")
-available = values.get("MemAvailable", values.get("MemFree", 0))
-if not total or total <= 0:
-return {}
-used = max(0, total - available)
-return {
-"total_bytes": total,
-"used_bytes": used,
-"available_bytes": max(0, available),
-"used_percent": round(100 * used / total, 2),
-}
+    values = {}
+    try:
+        with open("/proc/meminfo", "r", encoding="ascii") as stream:
+            for line in stream:
+                parts = line.replace(":", "").split()
+                if len(parts) >= 2:
+                    try:
+                        values[parts[0]] = int(parts[1]) * 1024
+                    except ValueError:
+                        pass
+    except OSError:
+        return {}
+    total = values.get("MemTotal")
+    available = values.get("MemAvailable", values.get("MemFree", 0))
+    if not total or total <= 0:
+        return {}
+    used = max(0, total - available)
+    return {
+        "total_bytes": total,
+        "used_bytes": used,
+        "available_bytes": max(0, available),
+        "used_percent": round(100 * used / total, 2),
+    }
 
 def read_cpu_temperature():
-candidates = list(Path("/sys/class/thermal").glob("thermal_zone*/temp"))
-candidates.extend(Path("/sys/class/hwmon").glob("hwmon*/temp*_input"))
-for path in candidates:
-try:
-raw = path.read_text(encoding="ascii").strip()
-value = float(raw)
-if value > 200:
-value /= 1000.0
-if -20.0 <= value <= 150.0:
-return round(value, 1)
-except (OSError, ValueError):
-continue
-return None
+    candidates = list(Path("/sys/class/thermal").glob("thermal_zone*/temp"))
+    candidates.extend(Path("/sys/class/hwmon").glob("hwmon*/temp*_input"))
+    for path in candidates:
+        try:
+            raw = path.read_text(encoding="ascii").strip()
+            value = float(raw)
+            if value > 200:
+                value /= 1000.0
+            if -20.0 <= value <= 150.0:
+                return round(value, 1)
+        except (OSError, ValueError):
+            continue
+    return None
 
 def read_storage():
-try:
-stats = os.statvfs("/")
-total = stats.f_blocks * stats.f_frsize
-free = max(0, stats.f_bavail * stats.f_frsize)
-used = max(0, total - free)
-return {
-"total_bytes": total,
-"used_bytes": used,
-"free_bytes": free,
-"used_percent": round(100 * used / total, 2) if total else 0,
-}
-except OSError:
-return {}
+    try:
+        stats = os.statvfs("/")
+        total = stats.f_blocks * stats.f_frsize
+        free = max(0, stats.f_bavail * stats.f_frsize)
+        used = max(0, total - free)
+        return {
+            "total_bytes": total,
+            "used_bytes": used,
+            "free_bytes": free,
+            "used_percent": round(100 * used / total, 2) if total else 0,
+        }
+    except OSError:
+        return {}
 
 def read_process_usage():
-try:
-raw = Path("/proc/self/stat").read_text(encoding="ascii")
-tail = raw[raw.rfind(")") + 2:].split()
-cpu_ticks = int(tail[11]) + int(tail[12])
-rss_pages = max(0, int(tail[21]))
-return cpu_ticks, rss_pages * page_size
-except (OSError, ValueError, IndexError):
-return None, None
+    try:
+        raw = Path("/proc/self/stat").read_text(encoding="ascii")
+        tail = raw[raw.rfind(")") + 2:].split()
+        cpu_ticks = int(tail[11]) + int(tail[12])
+        rss_pages = max(0, int(tail[21]))
+        return cpu_ticks, rss_pages * page_size
+    except (OSError, ValueError, IndexError):
+        return None, None
 
 def mib(value):
-return round(value / (1024 * 1024), 2) if value is not None else None
+    return round(value / (1024 * 1024), 2) if value is not None else None
 
 def make_sample():
-global prev_cpu, prev_cores, prev_proc_cpu, prev_proc_time
-now = time.time()
-current_cpu, current_cores = read_cpu_counters()
-overall = cpu_percent(current_cpu, prev_cpu)
-core_values = {}
-for name in sorted(current_cores, key=lambda item: int(item[3:])):
-core_values[name] = cpu_percent(current_cores[name], (prev_cores or {}).get(name))
-prev_cpu = current_cpu
-prev_cores = current_cores
+    global prev_cpu, prev_cores, prev_proc_cpu, prev_proc_time
+    now = time.time()
+    current_cpu, current_cores = read_cpu_counters()
+    overall = cpu_percent(current_cpu, prev_cpu)
+    core_values = {}
+    for name in sorted(current_cores, key=lambda item: int(item[3:])):
+        core_values[name] = cpu_percent(current_cores[name], (prev_cores or {}).get(name))
+    prev_cpu = current_cpu
+    prev_cores = current_cores
 
-proc_ticks, proc_rss = read_process_usage()
-proc_cpu = None
-if proc_ticks is not None and prev_proc_cpu is not None and prev_proc_time is not None:
-elapsed = max(0.001, now - prev_proc_time)
-proc_cpu = round(max(0.0, (proc_ticks - prev_proc_cpu) * 100.0 / clk_tck / elapsed), 2)
-prev_proc_cpu = proc_ticks
-prev_proc_time = now
+    proc_ticks, proc_rss = read_process_usage()
+    proc_cpu = None
+    if proc_ticks is not None and prev_proc_cpu is not None and prev_proc_time is not None:
+        elapsed = max(0.001, now - prev_proc_time)
+        proc_cpu = round(max(0.0, (proc_ticks - prev_proc_cpu) * 100.0 / clk_tck / elapsed), 2)
+    prev_proc_cpu = proc_ticks
+    prev_proc_time = now
 
-return {
-"timestamp": round(now, 3),
-"iso_time": datetime.fromtimestamp(now, timezone.utc).isoformat(timespec="seconds"),
-"cpu_percent": overall,
-"cores": core_values,
-"memory": read_memory(),
-"temperature_c": read_cpu_temperature(),
-"storage": read_storage(),
-"process": {
-"cpu_percent": proc_cpu,
-"rss_bytes": proc_rss,
-"rss_mib": mib(proc_rss),
-},
-}
+    return {
+        "timestamp": round(now, 3),
+        "iso_time": datetime.fromtimestamp(now, timezone.utc).isoformat(timespec="seconds"),
+        "cpu_percent": overall,
+        "cores": core_values,
+        "memory": read_memory(),
+        "temperature_c": read_cpu_temperature(),
+        "storage": read_storage(),
+        "process": {
+            "cpu_percent": proc_cpu,
+            "rss_bytes": proc_rss,
+            "rss_mib": mib(proc_rss),
+        },
+    }
 
 def sampler():
-next_tick = time.monotonic()
-while not stop_event.is_set():
-sample = make_sample()
-cutoff = time.time() - HISTORY_SECONDS
-with history_lock:
-history.append(sample)
-while history and history[0]["timestamp"] < cutoff:
-history.popleft()
-next_tick += INTERVAL
-stop_event.wait(max(0.1, next_tick - time.monotonic()))
+    next_tick = time.monotonic()
+    while not stop_event.is_set():
+        sample = make_sample()
+        cutoff = time.time() - HISTORY_SECONDS
+        with history_lock:
+            history.append(sample)
+            while history and history[0]["timestamp"] < cutoff:
+                history.popleft()
+        next_tick += INTERVAL
+        stop_event.wait(max(0.1, next_tick - time.monotonic()))
 
 class Handler(BaseHTTPRequestHandler):
-server_version = "CoreTrace/1.4"
+    server_version = "CoreTrace/1.4"
 
-def log_message(self, fmt, *args):
-return
+    def log_message(self, fmt, *args):
+        return
 
-def send_bytes(self, body: bytes, content_type: str, status=200):
-self.send_response(status)
-self.send_header("Content-Type", content_type)
-self.send_header("Content-Length", str(len(body)))
-self.send_header("Cache-Control", "no-store")
-self.send_header("X-Content-Type-Options", "nosniff")
-self.end_headers()
-try:
-self.wfile.write(body)
-except (BrokenPipeError, ConnectionResetError):
-pass
+    def send_bytes(self, body: bytes, content_type: str, status=200):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
-def send_json(self, data, status=200):
-body = json.dumps(data, separators=(",", ":"), allow_nan=False).encode("utf-8")
-self.send_bytes(body, "application/json; charset=utf-8", status)
+    def send_json(self, data, status=200):
+        body = json.dumps(data, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        self.send_bytes(body, "application/json; charset=utf-8", status)
 
-def do_GET(self):
-path = urlparse(self.path).path
-if path == "/api/status":
-with history_lock:
-latest = history[-1] if history else None
-count = len(history)
-now = time.time()
-uptime = max(0, int(now - boot_time)) if boot_time else int(now - started_at)
-self.send_json({
-"app": APP_NAME,
-"version": APP_VERSION,
-"port": PORT,
-"interval_seconds": INTERVAL,
-"history_hours": HISTORY_HOURS,
-"sample_count": count,
-"system_uptime_seconds": uptime,
-"server_uptime_seconds": int(now - started_at),
-"latest": latest,
-})
-return
-if path == "/api/history":
-# Copy while holding the lock; serialize after releasing it.
-with history_lock:
-samples = list(history)
-self.send_json({"samples": samples})
-return
+    def do_GET(self):
+        path = urlparse(self.path).path
+        if path == "/api/status":
+            with history_lock:
+                latest = history[-1] if history else None
+                count = len(history)
+                now = time.time()
+                uptime = max(0, int(now - boot_time)) if boot_time else int(now - started_at)
+                self.send_json({
+                    "app": APP_NAME,
+                    "version": APP_VERSION,
+                    "port": PORT,
+                    "interval_seconds": INTERVAL,
+                    "history_hours": HISTORY_HOURS,
+                    "sample_count": count,
+                    "system_uptime_seconds": uptime,
+                    "server_uptime_seconds": int(now - started_at),
+                    "latest": latest,
+                })
+            return
+        if path == "/api/history":
+            with history_lock:
+                samples = list(history)
+                self.send_json({"samples": samples})
+            return
 
-files_map = {
-"/": ("index.html", "text/html; charset=utf-8"),
-"/index.html": ("index.html", "text/html; charset=utf-8"),
-"/style.css": ("style.css", "text/css; charset=utf-8"),
-"/app.js": ("app.js", "text/javascript; charset=utf-8"),
-}
-if path not in files_map:
-self.send_bytes(b"Not found\n", "text/plain; charset=utf-8", 404)
-return
-filename, content_type = files_map[path]
-try:
-self.send_bytes((WEB_DIR / filename).read_bytes(), content_type)
-except OSError:
-self.send_bytes(b"Asset missing\n", "text/plain; charset=utf-8", 500)
+        files_map = {
+            "/": ("index.html", "text/html; charset=utf-8"),
+            "/index.html": ("index.html", "text/html; charset=utf-8"),
+            "/style.css": ("style.css", "text/css; charset=utf-8"),
+            "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+        }
+        if path not in files_map:
+            self.send_bytes(b"Not found\n", "text/plain; charset=utf-8", 404)
+            return
+        filename, content_type = files_map[path]
+        try:
+            self.send_bytes((WEB_DIR / filename).read_bytes(), content_type)
+        except OSError:
+            self.send_bytes(b"Asset missing\n", "text/plain; charset=utf-8", 500)
 
 def main():
-signal.signal(signal.SIGTERM, lambda *_: stop_event.set())
-signal.signal(signal.SIGINT, lambda *_: stop_event.set())
-threading.Thread(target=sampler, daemon=True, name="coretrace-sampler").start()
-server = ThreadingHTTPServer((BIND, PORT), Handler)
-server.daemon_threads = True
-try:
-server.serve_forever(poll_interval=0.5)
-finally:
-stop_event.set()
-server.server_close()
+    signal.signal(signal.SIGTERM, lambda *_: stop_event.set())
+    signal.signal(signal.SIGINT, lambda *_: stop_event.set())
+    threading.Thread(target=sampler, daemon=True, name="coretrace-sampler").start()
+    server = ThreadingHTTPServer((BIND, PORT), Handler)
+    server.daemon_threads = True
+    try:
+        server.serve_forever(poll_interval=0.5)
+    finally:
+        stop_event.set()
+        server.server_close()
 
 if __name__ == "__main__":
-main()
+    main()
 PYTHON_EOF
 chmod 755 "$PYTHON_APP_PATH"
 
@@ -605,8 +603,7 @@ cat > "$WEB_DIR/app.js" <<'JS_EOF'
 (() => {
 'use strict';
 
-const $ = (selector, root = document) => root.querySelector(selector);
-const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+const $ = (selector, root = document) => root.querySelector(selector); const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 const state = {
 status: null,
 samples: [],
@@ -1009,41 +1006,21 @@ function bindControls() {
 $$('.range-buttons [data-range]').forEach(button => {
 button.addEventListener('click', () => {
 state.rangeHours = Number(button.dataset.range) || 72;
-$$('.range-buttons [data-range]').forEach(item => item.classList.toggle('selected', item === button));
-Object.values(state.charts).forEach(chart => { chart.zoom = 1; chart.pan = 0; chart.hoverIndex = null; });
-redrawCharts();
-});
-});
-
-$$('.inline-toggle [data-memory-mode]').forEach(button => {
+$$('.range-buttons [data-range]').forEach(item => item.classList.toggle('selected', item === button)); Object.values(state.charts).forEach(chart => { chart.zoom = 1; chart.pan = 0; chart.hoverIndex = null; }); redrawCharts(); }); });  $$
+('.inline-toggle [data-memory-mode]').forEach(button => {
 button.addEventListener('click', () => {
 state.memoryMode = button.dataset.memoryMode;
-$$('.inline-toggle [data-memory-mode]').forEach(item => item.classList.toggle('selected', item === button));
-updateMetrics();
-});
-});
-
-$$('[data-cpu-mode]').forEach(button => {
+$$('.inline-toggle [data-memory-mode]').forEach(item => item.classList.toggle('selected', item === button)); updateMetrics(); }); });  $$
+('[data-cpu-mode]').forEach(button => {
 button.addEventListener('click', () => {
 state.cpuMode = button.dataset.cpuMode;
-$$('[data-cpu-mode]').forEach(item => item.classList.toggle('selected', item === button));
-redrawCharts();
-});
-});
-
-$$('.nav-item[data-target]').forEach(button => {
+$$('[data-cpu-mode]').forEach(item => item.classList.toggle('selected', item === button)); redrawCharts(); }); });  $$
+('.nav-item[data-target]').forEach(button => {
 button.addEventListener('click', () => {
 const target = byId(button.dataset.target);
 if (!target) return;
-$$('.nav-item').forEach(item => item.classList.toggle('active', item === button));
-target.scrollIntoView({behavior: 'smooth', block: 'start'});
-});
-});
-
-const search = byId('search');
-if (search) search.addEventListener('input', () => {
-const query = search.value.trim().toLowerCase();
-$$('[data-search]').forEach(element => {
+$$('.nav-item').forEach(item => item.classList.toggle('active', item === button)); target.scrollIntoView({behavior: 'smooth', block: 'start'}); }); });  const search = byId('search'); if (search) search.addEventListener('input', () => { const query = search.value.trim().toLowerCase(); $$
+('[data-search]').forEach(element => {
 const text = `${element.dataset.search || ''} ${element.textContent || ''}`.toLowerCase();
 element.hidden = Boolean(query) && !text.includes(query);
 });
@@ -1089,7 +1066,7 @@ exit 1
 fi
 
 USER_HOME="$(getent passwd "$CURRENT_USER" | cut -d: -f6)"
-if [[ -z "$USER_HOME" || "$USER_HOME" == "/" ]]; then
+if [[ -z "$USER_HOME" \vert{}\vert{} "$USER_HOME" == "/" ]]; then
 echo "[ERROR] Could not safely determine the user's home directory."
 exit 1
 fi
@@ -1137,94 +1114,3 @@ Run the installer as your normal user:
 
 ```bash
 bash install.sh
-```
-
-The installer stores configuration in `~/coretrace/coretrace.env` and registers a systemd service.
-
-## Access
-
-Open `http://<PI_IP>:8087` (or the configured port) from a device on the same trusted network. Replace `<PI_IP>` with the Raspberry Pi's LAN address.
-
-## Service management
-
-```bash
-sudo systemctl status coretrace.service
-sudo systemctl restart coretrace.service
-sudo journalctl -u coretrace.service -n 50 --no-pager
-```
-
-## Dashboard controls
-
-- History window: 1 hour, 6 hours, 24 hours, or 3 days.
-- CPU chart: overall CPU or per-core CPU.
-- Hover over charts for timestamps and values.
-- Use the mouse wheel over a chart to zoom; drag horizontally to pan.
-- Use Reset zoom to return to the full visible range.
-- Sidebar navigation scrolls to the selected metric.
-- Search filters the metric cards.
-- Memory card toggles between percent and MiB.
-
-## Data retention
-
-Metric history is stored in RAM. It is lost when CoreTrace restarts or the Raspberry Pi reboots. The dashboard cannot show samples that have not yet been collected for a newly selected time window.
-
-## Uninstall
-
-```bash
-./uninstall.sh
-```
-
-Confirm when prompted.
-README_EOF
-
-# ------------------------------ Systemd service -------------------------------
-echo "[*] Creating systemd service..."
-sudo tee "$SERVICE_PATH" >/dev/null <<SERVICE_EOF
-[Unit]
-Description=CoreTrace V1.4 System Monitor
-After=network.target
-
-[Service]
-Type=simple
-User=$CURRENT_USER
-WorkingDirectory=$INSTALL_DIR
-Environment=CORETRACE_PORT=$PORT
-Environment=CORETRACE_INTERVAL=$INTERVAL
-Environment=CORETRACE_HISTORY_HOURS=$HISTORY_HOURS
-ExecStart=/usr/bin/python3 $PYTHON_APP_PATH
-Restart=on-failure
-RestartSec=3
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=full
-ProtectHome=read-only
-
-[Install]
-WantedBy=multi-user.target
-SERVICE_EOF
-
-echo "[*] Reloading systemd and enabling service..."
-sudo systemctl daemon-reload
-sudo systemctl enable "$SERVICE_NAME"
-sudo systemctl restart "$SERVICE_NAME"
-
-if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
-echo
-echo "============================================"
-echo " CoreTrace $APP_VERSION installed/updated"
-echo "============================================"
-echo "Port : $PORT"
-echo "Interval : ${INTERVAL}s"
-echo "History : ${HISTORY_HOURS} hours"
-echo "Service : sudo systemctl status $SERVICE_NAME"
-echo "Access : http://<PI_IP>:$PORT"
-echo
-echo "Find the Pi's IP using: hostname -I"
-else
-echo
-echo "[ERROR] CoreTrace failed to start."
-echo "Inspect with:"
-echo " sudo systemctl status $SERVICE_NAME"
-echo " sudo journalctl -u $SERVICE_NAME -n 80 --no-pager"
-exit 1
-fi
