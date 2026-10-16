@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Description: CoreTrace V1.5 Self-Contained Deployment & Management Console
+# Description: CoreTrace V1.5.1 Self-Contained Deployment & Management Console
 # PERSISTENT: FALSE
 # Category: Webpages
 
