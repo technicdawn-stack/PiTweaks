@@ -2,7 +2,7 @@
 
 # Description: NAS SNMP Poller Installer with Auto-Cron & Config Preservation V1
 # PERSISTENT: FALSE
-# Category: Monitoring
+# Category: Scripts
 
 set -euo pipefail
 
