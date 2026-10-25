@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# Description: NAS SNMP Poller Installer with Auto-Cron & Config Preservation V1
+# Description: NAS SNMP Poller Installer with Auto-Cron, Web Server, & Config Preservation V1.1
 # PERSISTENT: FALSE
 # Category: Scripts
 
 set -euo pipefail
 
 # ==============================================================================
-# PATH CONFIGURATION
+# PATH & USER CONFIGURATION
 # ==============================================================================
 
 if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
@@ -22,6 +22,8 @@ INSTALL_DIR="$REAL_HOME/PiTweaks/nas_monitor"
 SCRIPT_PATH="$INSTALL_DIR/nas_poller.py"
 CONFIG_FILE="$INSTALL_DIR/config.env"
 RAM_DIR="/run/nas-stats"
+SERVICE_NAME="nas-stats-server"
+SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME.service"
 
 mkdir -p "$INSTALL_DIR"
 chown "$CURRENT_USER:$CURRENT_USER" "$INSTALL_DIR"
@@ -175,6 +177,33 @@ PYEOF
 chown "$CURRENT_USER:$CURRENT_USER" "$SCRIPT_PATH"
 chmod +x "$SCRIPT_PATH"
 
+# Run once immediately to populate the initial JSON file for the web server
+python3 "$SCRIPT_PATH" || true
+
+# ==============================================================================
+# AUTO-SETUP SYSTEMD WEB SERVER SERVICE (Port 8088)
+# ==============================================================================
+
+echo "Configuring lightweight RAM web server service on port 8088..."
+
+sudo bash -c "cat > $SERVICE_PATH" <<EOF
+[Unit]
+Description=Lightweight RAM Stats HTTP Server for Dashy
+After=network.target
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+ExecStart=/usr/bin/python3 -m http.server 8088 --directory $RAM_DIR
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now "$SERVICE_NAME.service"
+
 # ==============================================================================
 # AUTO-SETUP CRON JOB
 # ==============================================================================
@@ -185,7 +214,6 @@ if whiptail --backtitle "PiTweaks | NAS Monitor" \
            --title "Automatic Cron Setup" \
            --yesno "Would you like to automatically configure a 1-minute cron job to run this poller in the background?\n\n(This will keep your Dashy status feed updated continuously without SD card wear)." 11 75; then
     
-    # Check if cron job already exists to avoid duplicates
     CURRENT_CRON=$(crontab -l 2>/dev/null || true)
     if echo "$CURRENT_CRON" | grep -Fq "$SCRIPT_PATH"; then
         echo "Cron job already exists. Skipping duplication."
@@ -199,6 +227,7 @@ fi
 
 echo
 echo "NAS Monitor setup complete!"
-echo "• Script: $SCRIPT_PATH"
-echo "• Config: $CONFIG_FILE"
-echo "• Feed:   $RAM_DIR/nas-status.json"
+echo "• Script:      $SCRIPT_PATH"
+echo "• Config:      $CONFIG_FILE"
+echo "• Web Feed:    http://<YOUR_PI_IP>:8088/nas-status.json"
+echo "• Web Service: $SERVICE_NAME.service (Port 8088)"
