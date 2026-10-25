@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: NAS SNMP Poller Installer with Auto-Cron, Web Server, & Config Preservation V1.1
+# Description: NAS SNMP Poller Installer with Auto-Cron, Web Server, & Config Preservation V1.2
 # PERSISTENT: FALSE
 # Category: Scripts
 
@@ -146,21 +146,72 @@ def run_snmp(oid):
             timeout=3,
             check=False
         )
-        return result.stdout.strip()
+        return result.stdout.strip().replace('"', '')
     except Exception:
         return "N/A"
 
 def collect_stats():
-    uptime_raw = run_snmp("1.3.6.1.2.1.1.3.0")
-    cpu_raw = run_snmp("1.3.6.1.4.1.2021.11.9.0")
+    # 1. System Uptime & Alerts / Temperature
+    uptime_raw = run_snmp("1.3.6.1.2.1.1.3.0").replace("Timeticks: ", "")
+    temp_raw = run_snmp("1.3.6.1.4.1.6574.1.2.0") # Synology System Temperature
+    sys_status_raw = run_snmp("1.3.6.1.4.1.6574.1.1.0") # 1 = Normal, 2 = Failed
+    
+    # 2. CPU & RAM Utilization via Synology MIB (.6574.1.7)
+    cpu_util = run_snmp("1.3.6.1.4.1.6574.1.7.1.0")
+    ram_util = run_snmp("1.3.6.1.4.1.6574.1.7.2.0")
+
+    # 3. Disk / Volume Space (Host Resources Storage MIB)
+    # Checking storage total and used units
+    storage_size = run_snmp("1.3.6.1.2.1.25.2.3.1.5.1") # Total units
+    storage_used = run_snmp("1.3.6.1.2.1.25.2.3.1.6.1") # Used units
+    
+    disk_pct = "N/A"
+    try:
+        if storage_size.isdigit() and storage_used.isdigit() and int(storage_size) > 0:
+            disk_pct = round((int(storage_used) / int(storage_size)) * 100, 1)
+    except Exception:
+        pass
+
+    # 4. Network Throughput (Interfaces bytes in/out)
+    net_in = run_snmp("1.3.6.1.2.1.2.2.1.10.1") # IfInOctets
+    net_out = run_snmp("1.3.6.1.2.1.2.2.1.16.1") # IfOutOctets
+
+    current_time = datetime.now().strftime("%H:%M:%S")
+    
+    # Build current metric snapshot
+    new_entry = {
+        "time": current_time,
+        "cpu": int(cpu_util) if cpu_util.isdigit() else 0,
+        "ram": int(ram_util) if ram_util.isdigit() else 0,
+        "net_in": int(net_in) if net_in.isdigit() else 0,
+        "net_out": int(net_out) if net_out.isdigit() else 0
+    }
+
+    # Load existing history from RAM to maintain sliding window (last 10 points ~ 10 mins)
+    history = []
+    if os.path.isfile(OUTPUT_FILE):
+        try:
+            with open(OUTPUT_FILE, "r", encoding="utf-8") as f:
+                old_data = json.load(f)
+                history = old_data.get("history", [])
+        except Exception:
+            pass
+
+    history.append(new_entry)
+    if len(history) > 10:
+        history.pop(0) # Keep sliding window fixed to prevent memory inflation
 
     data = {
-        "status": "online",
+        "status": "online" if sys_status_raw == "1" or sys_status_raw == "N/A" else "warning",
+        "system_alert": "Normal" if sys_status_raw == "1" else "Check Synology DSM Status",
         "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "uptime": uptime_raw.replace("Timeticks: ", ""),
-        "cpu_usage": cpu_raw,
-        "ram_usage": "Monitored via SNMP",
-        "backup_status": "Active (Restic)"
+        "uptime": uptime_raw,
+        "temperature": f"{temp_raw}°C" if temp_raw != "N/A" else "N/A",
+        "cpu_usage": f"{cpu_util}%" if cpu_util != "N/A" else "N/A",
+        "ram_usage": f"{ram_util}%" if ram_util != "N/A" else "N/A",
+        "disk_usage_percent": f"{disk_pct}%" if disk_pct != "N/A" else "N/A",
+        "backup_status": "Active (Restic)",
+        "history": history
     }
 
     output_dir = os.path.dirname(OUTPUT_FILE)
