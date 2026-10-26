@@ -359,9 +359,6 @@ def collect_stats():
     net_in_rate = max(0, net_in - old_in) / elapsed if net_in is not None and old_in is not None and net_in >= old_in else None
     net_out_rate = max(0, net_out - old_out) / elapsed if net_out is not None and old_out is not None and net_out >= old_out else None
 
-    def sample_num(value):
-        return value if value is not None else None
-
     entry = {
         "time": current_time,
         "timestamp": timestamp,
@@ -378,6 +375,8 @@ def collect_stats():
     }
 
     history.append(entry)
+    
+    # THIS is the line that prevents the infinite RAM expansion:
     history = history[-MAX_HISTORY:]
 
     if sys_status_raw == "1":
