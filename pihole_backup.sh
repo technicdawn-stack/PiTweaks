@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.5.2
+# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.5.3
 # PERSISTENT: FALSE
 # Category: Backup Managers
 
@@ -251,7 +251,6 @@ def enforce_retention_policy(backup_dir, config):
         return
     try:
         retention_max = int(config.get("retention_count", 10))
-        # Get list sorted OLDEST first (sort_newest_first=False)
         backups_oldest_first = get_backups_list(backup_dir, sort_newest_first=False)
         
         if len(backups_oldest_first) > retention_max:
@@ -331,8 +330,11 @@ def manage_backups_interface():
     while True:
         backups = get_backups_list(backup_dir, sort_newest_first=sort_newest)
         
+        if not backups:
+            run_whiptail(["--title", "No Backups", "--msgbox", f"No backup files found in:\n{backup_dir}", "9", "60"])
+            break
+
         menu_items = []
-        # Use the actual absolute path as the whiptail tag so there is zero index confusion!
         for b in backups:
             menu_items.extend([b["path"], f"[{b['size']}] {b['name']}"])
             
@@ -341,7 +343,6 @@ def manage_backups_interface():
                       f"Current Sort: {sort_text}\n"
                       f"Select a backup file to delete:")
                       
-        # Add a clean toggle option at the top
         full_menu = ["TOGGLE_SORT", f"--- [ SWITCH SORT ORDER: Currently {sort_text} ] ---"] + menu_items
 
         code, choice = run_whiptail([
@@ -351,7 +352,6 @@ def manage_backups_interface():
             "22", "80", "12"
         ] + full_menu)
         
-        # If user pressed Cancel or ESC
         if code != 0:
             break
             
@@ -359,10 +359,7 @@ def manage_backups_interface():
             sort_newest = not sort_newest
             continue
             
-        # Here, 'choice' is directly the absolute file path because we used b["path"] as the tag!
         target_path = choice
-        
-        # Find the matching backup name for display purposes
         file_name = os.path.basename(target_path)
         for b in backups:
             if b["path"] == target_path:
@@ -447,7 +444,7 @@ EOF
 # 4. Make Binary Executable and Launch Interactive Welcome Dashboard
 chmod +x "$TARGET_BIN"
 if [ -f "$TARGET_BIN" ]; then
-    whiptail --title "Deployer Success" --msgbox "Components successfully updated to V1.5.1!\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
+    whiptail --title "Deployer Success" --msgbox "Components successfully updated to V1.5.2!\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
     sudo pihole-backup-manager
 else
     echo "[-] System compilation exception: Could not install binary to disk."
