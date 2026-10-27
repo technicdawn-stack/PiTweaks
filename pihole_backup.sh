@@ -1,6 +1,6 @@
 #!/bin/bash
-# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager.
-# PERSISTENT: False
+# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.1
+# PERSISTENT: FALSE
 # Category: Backup Managers
 
 # 1. Root Privileges Check
@@ -13,7 +13,7 @@ fi
 echo "[+] Validating system runtime environments..."
 if ! command -v whiptail &> /dev/null || ! command -v python3 &> /dev/null; then
     echo "[+] Updating apt repositories and fetching dependencies..."
-    apt-get update -q && apt-get install -y whiptail python3 cron
+    apt-get update -q && apt-get install -y whiptail python3 cron cifs-utils nfs-common
 fi
 
 TARGET_BIN="/usr/local/bin/pihole-backup-manager"
@@ -95,23 +95,103 @@ def cron_schedule_worker(config):
         run_whiptail(["--title", "Cron Error", "--msgbox", f"Failed to update crontab:\n{str(e)}", "10", "60"])
         return False
 
+def browse_directories(start_dir="/mnt"):
+    current_dir = os.path.abspath(start_dir)
+    if not os.path.isdir(current_dir):
+        current_dir = "/"
+
+    while True:
+        try:
+            items = sorted(os.listdir(current_dir))
+        except Exception as e:
+            run_whiptail(["--title", "Access Error", "--msgbox", f"Cannot access directory:\n{str(e)}", "10", "60"])
+            current_dir = "/"
+            items = sorted(os.listdir(current_dir))
+
+        menu_items = []
+        # Navigation options
+        if current_dir != "/":
+            menu_items.extend(["..", "[ Parent Directory ]"])
+        menu_items.extend(["[SELECT_THIS_DIR]", f">> Use Current Directory ({current_dir}) <<"])
+
+        for item in items:
+            full_path = os.path.join(current_dir, item)
+            if os.path.isdir(full_path):
+                menu_items.extend([full_path, f"[DIR]  {item}"])
+
+        code, choice = run_whiptail([
+            "--title", "Interactive Directory Browser",
+            "--cancel-button", "Cancel",
+            "--menu", f"Current Path: {current_dir}\nSelect a folder to navigate or choose 'Use Current Directory':",
+            "20", "75", "10"
+        ] + menu_items)
+
+        if code != 0:
+            return None
+
+        if choice == "[SELECT_THIS_DIR]":
+            return current_dir
+        elif choice == "..":
+            current_dir = os.path.dirname(current_dir)
+        else:
+            current_dir = choice
+
+def detect_active_mounts():
+    mounts = []
+    search_bases = ["/mnt", "/media"]
+    for base in search_bases:
+        if os.path.isdir(base):
+            for entry in os.listdir(base):
+                full_path = os.path.join(base, entry)
+                if os.path.ismount(full_path):
+                    mounts.append(full_path)
+    return mounts
+
 def interactive_setup():
     config = load_config() or {}
     
-    code, target = run_whiptail(["--title", "Backup Directory Path", "--inputbox", 
-                                 "Enter the absolute path to store your Teleporter backups:\n(e.g., /var/backups/pihole or /mnt/backups)", 
-                                 "12", "70", config.get("backup_dir", "/var/backups/pihole")])
-    if code != 0 or not target: return
-    if not os.path.isdir(target):
-        code_dir = run_whiptail(["--title", "Path Directory Missing", "--yesno", 
-                                 f"The path '{target}' doesn't exist.\nDo you want to create this directory?", "10", "60"])
-        if code_dir == 0:
-            os.makedirs(target, exist_ok=True)
-        else:
+    # 1. Detect existing mounts / NAS
+    active_mounts = detect_active_mounts()
+    target_dir = None
+
+    if active_mounts:
+        mount_menu = []
+        for m in active_mounts:
+            mount_menu.extend([m, "Detected Storage Mount"])
+        mount_menu.extend(["BROWSE_CUSTOM", "Browse manually / Choose another folder"])
+        
+        code, choice = run_whiptail([
+            "--title", "Storage / NAS Detection",
+            "--menu", "Active storage mounts detected on your system. Would you like to use one of these?",
+            "14", "70", "4"
+        ] + mount_menu)
+
+        if code == 0 and choice != "BROWSE_CUSTOM":
+            target_dir = choice
+
+    if not target_dir:
+        # Prompt to mount network share or browse
+        code = run_whiptail([
+            "--title", "NAS / Storage Mount Helper",
+            "--yesno", "No active mounts were selected.\nDo you need help mounting a network NAS share (CIFS/NFS) before picking a backup directory?",
+            "10", "60"
+        ])
+        if code == 0:
+            run_whiptail([
+                "--title", "Mount Instructions",
+                "--msgbox", "Please mount your NAS share permanently via your system's /etc/fstab or mount utility (e.g., to /mnt/nas), then re-run this wizard.",
+                "12", "60"
+            ])
             return
 
-    config["backup_dir"] = target
+        # Open Interactive Folder Browser
+        target_dir = browse_directories("/mnt" if os.path.isdir("/mnt") else "/")
+        if not target_dir:
+            return
 
+    config["backup_dir"] = target_dir
+
+    # 2. Schedule Frequency
     code, freq = run_whiptail(["--title", "Backup Schedule Frequency", "--menu", "How often should a Teleporter backup occur?", "12", "60", "3",
                                "Daily", "Execute backup every day",
                                "Weekly", "Execute backup every Sunday",
@@ -119,6 +199,7 @@ def interactive_setup():
     if code != 0: return
     config["frequency"] = freq
 
+    # 3. Execution Time
     code, target_time = run_whiptail(["--title", "Backup Execution Time", "--inputbox", 
                                       "At what time should the backup fire off?\nFormat: HH:MM (24-hour style)", "12", "60", 
                                       f"{config.get('hour','02')}:{config.get('minute','00')}"])
@@ -131,6 +212,7 @@ def interactive_setup():
         config["hour"] = "02"
         config["minute"] = "00"
 
+    # 4. Storage Retention
     code = run_whiptail(["--title", "Storage Purge Feature", "--yesno", "Do you want to autoremove old backups to save disk space?", "10", "60"])
     if code == 0:
         config["purge_enabled"] = True
@@ -142,7 +224,7 @@ def interactive_setup():
         config["purge_enabled"] = False
 
     if save_config(config) and cron_schedule_worker(config):
-        run_whiptail(["--title", "Setup Complete", "--msgbox", "Configuration saved successfully and cron engine registered!", "10", "60"])
+        run_whiptail(["--title", "Setup Complete", "--msgbox", f"Configuration saved!\nDestination: {target_dir}\nCron engine registered successfully.", "11", "65"])
 
 def get_backups_list(directory, sort_newest_first=True):
     pattern = os.path.join(directory, "pi-hole-teleporter_*.tar.gz")
