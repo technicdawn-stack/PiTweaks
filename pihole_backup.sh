@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.6.1
+# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.6.2
 # PERSISTENT: FALSE
 # Category: Backup Managers
 
@@ -336,13 +336,12 @@ def manage_backups_interface():
             menu_items = []
             if backups:
                 for index, b in enumerate(backups):
-                    # Using clean short numeric tags ("0", "1", "2"...) to keep UI sizing perfect
                     menu_items.extend([str(index), f"[{b['size']}] {b['name']}"])
             else:
                 menu_items.extend(["INFO_EMPTY", "(No backup archive files found in folder)"])
                 
             sort_text = "Newest First" if sort_newest else "Oldest First"
-            msg_header = f"Folder: {backup_dir}\nOrder: {sort_text}\nSelect a file to delete:"
+            msg_header = f"Folder: {backup_dir}\nOrder: {sort_text}\nSelect a file to manage/delete:"
                           
             full_menu = ["TOGGLE_SORT", f"SWITCH SORT ORDER ({sort_text})"] + menu_items
 
@@ -373,18 +372,17 @@ def manage_backups_interface():
             target_path = selected_backup["path"]
             file_name = selected_backup["name"]
 
-            confirm_code = run_whiptail([
-                "--title", "Confirm Permanent Deletion", 
-                "--yesno", 
-                f"Are you sure you want to permanently delete this backup?\n\nFile: {file_name}", 
-                "10", "65"
+            # REPLACED THE YES/NO BOX WITH A MENU TO PREVENT ENTER-KEY ACCIDENTAL CANCELLATIONS
+            action_code, action_choice = run_whiptail([
+                "--title", "File Action Options",
+                "--menu", f"Selected File:\n{file_name}\n\nChoose an action:",
+                "15", "65", "2",
+                "DELETE", "Permanently delete this backup file",
+                "CANCEL", "Go back to file list"
             ])
-            
-            if confirm_code == 0:
+
+            if action_code == 0 and action_choice == "DELETE":
                 try:
-                    # DEBUG POPUP: Shows exact target path right before removal attempt
-                    run_whiptail(["--title", "Debug Removing", "--msgbox", f"Attempting to delete:\n{target_path}", "9", "70"])
-                    
                     if os.path.exists(target_path):
                         os.remove(target_path)
                         if not os.path.exists(target_path):
@@ -456,7 +454,7 @@ EOF
 # 4. Make Binary Executable and Launch Interactive Welcome Dashboard
 chmod +x "$TARGET_BIN"
 if [ -f "$TARGET_BIN" ]; then
-    whiptail --title "Deployer Success" --msgbox "Components successfully updated to V1.6.1!\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
+    whiptail --title "Deployer Success" --msgbox "Components successfully updated to V1.6.2!\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
     sudo pihole-backup-manager
 else
     echo "[-] System compilation exception: Could not install binary to disk."
