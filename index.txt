@@ -17,6 +17,7 @@ Scripts|log2ram.sh|Interactive installer for log2ram with whiptail configuration
 Scripts|nas_poller.sh|PiTweaks NAS Monitor Installer - SNMP, RAM JSON, Dashboard & History V2.0
 Tools|net_auditor.sh|Enhanced network utility featuring an interactive menu for Ookla Speed Tests, open port auditing, ping checks, DNS tests, and Wi-Fi diagnostics.
 Tools|overclock.sh|PiTweaks Overclock, Stress Test & Telemetry Manager (Pi 3B V1.1)
+Backup Managers|pihole_teleport_backup.sh|Self-contained deployment engine for Pi-hole Teleporter Backup Manager.
 Webpages|revpi.sh|V3.0 (High-End Virtual Cockpit, Fluid Morphing, Safe Tooltips & Glassmorphism)
 Scripts|security_module_upgrade.sh|PiTweaks Security Event Monitor & Network Watchdog V2.2
 Tools|stress_test.sh|PiTweaks All-in-One Continuous Stress Suite & Telemetry V2.0
