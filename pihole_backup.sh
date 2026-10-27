@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.5.1
+# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.5.2
 # PERSISTENT: FALSE
 # Category: Backup Managers
 
@@ -332,15 +332,17 @@ def manage_backups_interface():
         backups = get_backups_list(backup_dir, sort_newest_first=sort_newest)
         
         menu_items = []
-        for index, b in enumerate(backups):
-            menu_items.extend([str(index), f"[{b['size']}] {b['name']}"])
+        # Use the actual absolute path as the whiptail tag so there is zero index confusion!
+        for b in backups:
+            menu_items.extend([b["path"], f"[{b['size']}] {b['name']}"])
             
         sort_text = "Newest First" if sort_newest else "Oldest First"
         msg_header = (f"Storage Directory: {backup_dir}\n"
                       f"Current Sort: {sort_text}\n"
-                      f"Select a backup file to delete, or choose toggle option:")
+                      f"Select a backup file to delete:")
                       
-        full_menu = ["TOGGLE_SORT", f"==> Click here to switch sort order ({'Show Oldest First' if sort_newest else 'Show Newest First'}) ==="] + menu_items
+        # Add a clean toggle option at the top
+        full_menu = ["TOGGLE_SORT", f"--- [ SWITCH SORT ORDER: Currently {sort_text} ] ---"] + menu_items
 
         code, choice = run_whiptail([
             "--title", "Saved Teleporter Backups Management",
@@ -349,6 +351,7 @@ def manage_backups_interface():
             "22", "80", "12"
         ] + full_menu)
         
+        # If user pressed Cancel or ESC
         if code != 0:
             break
             
@@ -356,33 +359,35 @@ def manage_backups_interface():
             sort_newest = not sort_newest
             continue
             
-        try:
-            selected_index = int(choice)
-            selected_backup = backups[selected_index]
-        except Exception as e:
-            run_whiptail(["--title", "Error", "--msgbox", f"Selection parsing error: {str(e)}", "8", "50"])
-            continue
+        # Here, 'choice' is directly the absolute file path because we used b["path"] as the tag!
+        target_path = choice
+        
+        # Find the matching backup name for display purposes
+        file_name = os.path.basename(target_path)
+        for b in backups:
+            if b["path"] == target_path:
+                file_name = b["name"]
+                break
 
         confirm_code = run_whiptail([
             "--title", "Confirm Permanent Deletion", 
             "--yesno", 
-            f"Are you sure you want to permanently delete this backup?\n\nFile: {selected_backup['name']}\nPath: {selected_backup['path']}", 
-            "11", "70"
+            f"Are you sure you want to permanently delete this backup?\n\nFile: {file_name}", 
+            "10", "65"
         ])
         
         if confirm_code == 0:
-            target_path = selected_backup["path"]
             try:
                 if os.path.exists(target_path):
                     os.remove(target_path)
                     if not os.path.exists(target_path):
-                        run_whiptail(["--title", "Success", "--msgbox", f"Successfully deleted:\n{selected_backup['name']}", "9", "60"])
+                        run_whiptail(["--title", "Success", "--msgbox", f"Successfully deleted:\n{file_name}", "8", "50"])
                     else:
-                        run_whiptail(["--title", "Warning", "--msgbox", "Deletion command executed, but file still exists on disk.", "9", "60"])
+                        run_whiptail(["--title", "Warning", "--msgbox", "Delete command ran, but the file still exists on disk.", "8", "50"])
                 else:
-                    run_whiptail(["--title", "Error", "--msgbox", f"File not found at path:\n{target_path}", "9", "60"])
+                    run_whiptail(["--title", "Error", "--msgbox", f"File not found on disk:\n{target_path}", "9", "60"])
             except Exception as e:
-                run_whiptail(["--title", "Deletion Exception", "--msgbox", f"Python failed to remove file:\n{str(e)}", "10", "60"])
+                run_whiptail(["--title", "Deletion Exception", "--msgbox", f"Failed to remove file:\n{str(e)}", "10", "60"])
 
 def trigger_manual_backup():
     config = load_config()
