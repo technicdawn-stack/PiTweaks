@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.5.5
+# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.5.7
 # PERSISTENT: FALSE
 # Category: Backup Managers
 
@@ -321,78 +321,79 @@ def check_backup_timing():
     run_whiptail(["--title", "Backup Timing Information", "--msgbox", info_msg, "12", "70"])
 
 def manage_backups_interface():
-    config = load_config()
-    if not config or not os.path.isdir(config.get("backup_dir", "")):
-        run_whiptail(["--title", "Directory Missing", "--msgbox", "Backup destination mount path is invalid or unconfigured.", "10", "60"])
-        return
+    try:
+        config = load_config()
+        if not config or not os.path.isdir(config.get("backup_dir", "")):
+            run_whiptail(["--title", "Directory Missing", "--msgbox", "Backup destination mount path is invalid or unconfigured.", "10", "60"])
+            return
 
-    backup_dir = config["backup_dir"]
-    sort_newest = True
+        backup_dir = config["backup_dir"]
+        sort_newest = True
 
-    while True:
-        backups = get_backups_list(backup_dir, sort_newest_first=sort_newest)
-        
-        menu_items = []
-        if backups:
-            for index, b in enumerate(backups):
-                # Use clean short string indices ("0", "1", "2"...) as whiptail tags to prevent path-length crashes
-                menu_items.extend([str(index), f"[{b['size']}] {b['name']}"])
-        else:
-            menu_items.extend(["INFO_EMPTY", "(No backup archive files found in folder)"])
+        while True:
+            backups = get_backups_list(backup_dir, sort_newest_first=sort_newest)
             
-        sort_text = "Newest First" if sort_newest else "Oldest First"
-        msg_header = (f"Storage Directory: {backup_dir}\n"
-                      f"Current Sort: {sort_text}\n"
-                      f"Select a backup file to delete:")
-                      
-        full_menu = ["TOGGLE_SORT", f"--- [ SWITCH SORT ORDER: Currently {sort_text} ] ---"] + menu_items
+            menu_items = []
+            if backups:
+                for index, b in enumerate(backups):
+                    menu_items.extend([str(index), f"Size:{b['size']} | {b['name']}"])
+            else:
+                menu_items.extend(["INFO_EMPTY", "(No backup archive files found in folder)"])
+                
+            sort_text = "Newest First" if sort_newest else "Oldest First"
+            msg_header = (f"Storage: {backup_dir}\nSort: {sort_text}\nSelect file to delete:")
+                          
+            full_menu = ["TOGGLE_SORT", f"--- [ SWITCH SORT ORDER: {sort_text} ] ---"] + menu_items
 
-        code, choice = run_whiptail([
-            "--title", "Saved Teleporter Backups Management",
-            "--cancel-button", "Back",
-            "--menu", msg_header,
-            "22", "80", "12"
-        ] + full_menu)
-        
-        if code != 0:
-            break
+            # Using safe, robust dimensions to prevent whiptail clipping/exit errors
+            code, choice = run_whiptail([
+                "--title", "Saved Teleporter Backups Management",
+                "--cancel-button", "Back",
+                "--menu", msg_header,
+                "18", "75", "8"
+            ] + full_menu)
             
-        if choice == "TOGGLE_SORT":
-            sort_newest = not sort_newest
-            continue
-            
-        if choice == "INFO_EMPTY":
-            continue
-            
-        try:
-            selected_index = int(choice)
-            selected_backup = backups[selected_index]
-        except Exception as e:
-            run_whiptail(["--title", "Error", "--msgbox", f"Selection index parsing error:\n{str(e)}", "9", "60"])
-            continue
-
-        target_path = selected_backup["path"]
-        file_name = selected_backup["name"]
-
-        confirm_code = run_whiptail([
-            "--title", "Confirm Permanent Deletion", 
-            "--yesno", 
-            f"Are you sure you want to permanently delete this backup?\n\nFile: {file_name}", 
-            "10", "65"
-        ])
-        
-        if confirm_code == 0:
+            if code != 0:
+                break
+                
+            if choice == "TOGGLE_SORT":
+                sort_newest = not sort_newest
+                continue
+                
+            if choice == "INFO_EMPTY":
+                continue
+                
             try:
-                if os.path.exists(target_path):
-                    os.remove(target_path)
-                    if not os.path.exists(target_path):
-                        run_whiptail(["--title", "Success", "--msgbox", f"Successfully deleted:\n{file_name}", "8", "50"])
-                    else:
-                        run_whiptail(["--title", "Warning", "--msgbox", "Delete command ran, but the file still exists on disk.", "8", "50"])
-                else:
-                    run_whiptail(["--title", "Error", "--msgbox", f"File not found on disk:\n{target_path}", "9", "60"])
+                selected_index = int(choice)
+                selected_backup = backups[selected_index]
             except Exception as e:
-                run_whiptail(["--title", "Deletion Exception", "--msgbox", f"Failed to remove file:\n{str(e)}", "10", "60"])
+                run_whiptail(["--title", "Error", "--msgbox", f"Selection index parsing error:\n{str(e)}", "9", "60"])
+                continue
+
+            target_path = selected_backup["path"]
+            file_name = selected_backup["name"]
+
+            confirm_code = run_whiptail([
+                "--title", "Confirm Permanent Deletion", 
+                "--yesno", 
+                f"Are you sure you want to permanently delete this backup?\n\nFile: {file_name}", 
+                "10", "65"
+            ])
+            
+            if confirm_code == 0:
+                try:
+                    if os.path.exists(target_path):
+                        os.remove(target_path)
+                        if not os.path.exists(target_path):
+                            run_whiptail(["--title", "Success", "--msgbox", f"Successfully deleted:\n{file_name}", "8", "50"])
+                        else:
+                            run_whiptail(["--title", "Warning", "--msgbox", "Delete command ran, but the file still exists on disk.", "8", "50"])
+                    else:
+                        run_whiptail(["--title", "Error", "--msgbox", f"File not found on disk:\n{target_path}", "9", "60"])
+                except Exception as e:
+                    run_whiptail(["--title", "Deletion Exception", "--msgbox", f"Failed to remove file:\n{str(e)}", "10", "60"])
+    except Exception as e:
+        run_whiptail(["--title", "Critical Error", "--msgbox", f"Manager crashed with error:\n{str(e)}", "12", "70"])
 
 def trigger_manual_backup():
     config = load_config()
@@ -452,7 +453,7 @@ EOF
 # 4. Make Binary Executable and Launch Interactive Welcome Dashboard
 chmod +x "$TARGET_BIN"
 if [ -f "$TARGET_BIN" ]; then
-    whiptail --title "Deployer Success" --msgbox "Components successfully updated to V1.5.5!\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
+    whiptail --title "Deployer Success" --msgbox "Components successfully updated to V1.5.7!\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
     sudo pihole-backup-manager
 else
     echo "[-] System compilation exception: Could not install binary to disk."
