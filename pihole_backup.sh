@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.5.3
+# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.5.4
 # PERSISTENT: FALSE
 # Category: Backup Managers
 
@@ -225,11 +225,16 @@ def interactive_setup():
         run_whiptail(["--title", "Setup Complete", "--msgbox", f"Configuration saved!\nDestination: {target_dir}\nInterval: Every {config['interval_days']} day(s)\nCron engine registered successfully.", "12", "65"])
 
 def get_backups_list(directory, sort_newest_first=True):
-    pattern = os.path.join(directory, "pi-hole*_teleporter_*.zip")
-    files = glob.glob(pattern)
-    if not files:
-        pattern = os.path.join(directory, "pi-hole-teleporter_*.tar.gz")
-        files = glob.glob(pattern)
+    # Broadened glob pattern to safely catch pihole v6 teleporter archives (.zip or .tar.gz)
+    patterns = [
+        os.path.join(directory, "*teleporter*.zip"),
+        os.path.join(directory, "*teleporter*.tar.gz"),
+        os.path.join(directory, "*.zip")
+    ]
+    files = []
+    for p in patterns:
+        files.extend(glob.glob(p))
+    files = list(set(files)) # remove duplicates if any overlap
         
     file_data = []
     for f in files:
@@ -330,13 +335,12 @@ def manage_backups_interface():
     while True:
         backups = get_backups_list(backup_dir, sort_newest_first=sort_newest)
         
-        if not backups:
-            run_whiptail(["--title", "No Backups", "--msgbox", f"No backup files found in:\n{backup_dir}", "9", "60"])
-            break
-
         menu_items = []
-        for b in backups:
-            menu_items.extend([b["path"], f"[{b['size']}] {b['name']}"])
+        if backups:
+            for b in backups:
+                menu_items.extend([b["path"], f"[{b['size']}] {b['name']}"])
+        else:
+            menu_items.extend(["INFO_EMPTY", "(No backup archive files found in folder)"])
             
         sort_text = "Newest First" if sort_newest else "Oldest First"
         msg_header = (f"Storage Directory: {backup_dir}\n"
@@ -357,6 +361,9 @@ def manage_backups_interface():
             
         if choice == "TOGGLE_SORT":
             sort_newest = not sort_newest
+            continue
+            
+        if choice == "INFO_EMPTY":
             continue
             
         target_path = choice
@@ -444,7 +451,7 @@ EOF
 # 4. Make Binary Executable and Launch Interactive Welcome Dashboard
 chmod +x "$TARGET_BIN"
 if [ -f "$TARGET_BIN" ]; then
-    whiptail --title "Deployer Success" --msgbox "Components successfully updated to V1.5.2!\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
+    whiptail --title "Deployer Success" --msgbox "Components successfully updated to V1.5.3!\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
     sudo pihole-backup-manager
 else
     echo "[-] System compilation exception: Could not install binary to disk."
