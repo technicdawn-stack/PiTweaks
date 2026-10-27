@@ -210,18 +210,20 @@ def interactive_setup():
         config["minute"] = "00"
 
     # 4. Storage Retention
-    code = run_whiptail(["--title", "Storage Purge Feature", "--yesno", "Do you want to autoremove old backups to save disk space?", "10", "60"])
+    code, _ = run_whiptail(["--title", "Storage Purge Feature", "--yesno", "Do you want to autoremove old backups to save disk space?", "9", "55"])
     if code == 0:
         config["purge_enabled"] = True
-        code, count = run_whiptail(["--title", "Retention Pool Size", "--inputbox", "How many total historical backups do you want to keep stored?", "10", "60", str(config.get("retention_count", 10))])
-        if code == 0:
-            try: config["retention_count"] = max(1, int(count))
-            except: config["retention_count"] = 10
+        # Prompt for retention count
+        code_count, count = run_whiptail(["--title", "Retention Pool Size", "--inputbox", "How many total historical backups do you want to keep stored?", "9", "55", str(config.get("retention_count", 10))])
+        if code_count == 0 and count.strip():
+            try: 
+                config["retention_count"] = max(1, int(count.strip()))
+            except: 
+                config["retention_count"] = 10
+        else:
+            config["retention_count"] = 10
     else:
         config["purge_enabled"] = False
-
-    if save_config(config) and cron_schedule_worker(config):
-        run_whiptail(["--title", "Setup Complete", "--msgbox", f"Configuration saved!\nDestination: {target_dir}\nCron engine registered successfully.", "11", "65"])
 
 def get_backups_list(directory, sort_newest_first=True):
     pattern = os.path.join(directory, "pi-hole-teleporter_*.tar.gz")
