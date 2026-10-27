@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.1
+# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.2
 # PERSISTENT: FALSE
 # Category: Backup Managers
 
