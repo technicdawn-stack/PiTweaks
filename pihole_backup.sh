@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.5.7
+# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.5.8
 # PERSISTENT: FALSE
 # Category: Backup Managers
 
@@ -343,9 +343,9 @@ def manage_backups_interface():
             sort_text = "Newest First" if sort_newest else "Oldest First"
             msg_header = (f"Storage: {backup_dir}\nSort: {sort_text}\nSelect file to delete:")
                           
-            full_menu = ["TOGGLE_SORT", f"--- [ SWITCH SORT ORDER: {sort_text} ] ---"] + menu_items
+            # FIX: Removed leading dashes ('---') to prevent Whiptail from treating it as an option flag
+            full_menu = ["TOGGLE_SORT", f"[ SWITCH SORT ORDER: {sort_text} ]"] + menu_items
 
-            # Using safe, robust dimensions to prevent whiptail clipping/exit errors
             code, choice = run_whiptail([
                 "--title", "Saved Teleporter Backups Management",
                 "--cancel-button", "Back",
@@ -453,7 +453,7 @@ EOF
 # 4. Make Binary Executable and Launch Interactive Welcome Dashboard
 chmod +x "$TARGET_BIN"
 if [ -f "$TARGET_BIN" ]; then
-    whiptail --title "Deployer Success" --msgbox "Components successfully updated to V1.5.7!\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
+    whiptail --title "Deployer Success" --msgbox "Components successfully updated to V1.5.8!\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
     sudo pihole-backup-manager
 else
     echo "[-] System compilation exception: Could not install binary to disk."
