@@ -332,7 +332,7 @@ def manage_backups_interface():
         backups = get_backups_list(backup_dir, sort_newest_first=sort_newest)
         menu_items = []
         
-        toggle_label = "Switch Order: [Oldest -> Newest]" if sort_newest else "Switch Order: [Newest -> Oldest]"
+        toggle_label = "Switch Order: [Newest -> Oldest]" if sort_newest else "Switch Order: [Oldest -> Newest]"
         menu_items.extend(["TOGGLE_SORT", toggle_label])
         
         for index, b in enumerate(backups):
