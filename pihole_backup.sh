@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.5
+# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.5.1
 # PERSISTENT: FALSE
 # Category: Backup Managers
 
@@ -243,7 +243,6 @@ def get_backups_list(directory, sort_newest_first=True):
             })
         except Exception:
             pass
-    # sort_newest_first=True means newest first (descending mtime)
     file_data.sort(key=lambda x: x["mtime"], reverse=sort_newest_first)
     return file_data
 
@@ -257,7 +256,7 @@ def enforce_retention_policy(backup_dir, config):
         
         if len(backups_oldest_first) > retention_max:
             excess_count = len(backups_oldest_first) - retention_max
-            excess_files = backups_oldest_first[:excess_count] # Slice the oldest ones
+            excess_files = backups_oldest_first[:excess_count]
             for f in excess_files:
                 try:
                     if os.path.exists(f["path"]):
@@ -331,20 +330,24 @@ def manage_backups_interface():
 
     while True:
         backups = get_backups_list(backup_dir, sort_newest_first=sort_newest)
+        
         menu_items = []
-        
-        if sort_newest:
-            toggle_label = "Order: Newest First (Click to switch to Oldest First)"
-        else:
-            toggle_label = "Order: Oldest First (Click to switch to Newest First)"
-            
-        menu_items.extend(["TOGGLE_SORT", toggle_label])
-        
         for index, b in enumerate(backups):
             menu_items.extend([str(index), f"[{b['size']}] {b['name']}"])
             
-        msg_header = f"Storage Directory: {backup_dir}\nSelect an entry to view/delete it from storage:"
-        code, choice = run_whiptail(["--title", "Saved Teleporter Backups", "--cancel-button", "Back", "--menu", msg_header, "20", "80", "10"] + menu_items)
+        sort_text = "Newest First" if sort_newest else "Oldest First"
+        msg_header = (f"Storage Directory: {backup_dir}\n"
+                      f"Current Sort: {sort_text}\n"
+                      f"Select a backup file to delete, or choose toggle option:")
+                      
+        full_menu = ["TOGGLE_SORT", f"==> Click here to switch sort order ({'Show Oldest First' if sort_newest else 'Show Newest First'}) ==="] + menu_items
+
+        code, choice = run_whiptail([
+            "--title", "Saved Teleporter Backups Management",
+            "--cancel-button", "Back",
+            "--menu", msg_header,
+            "22", "80", "12"
+        ] + full_menu)
         
         if code != 0:
             break
@@ -357,20 +360,29 @@ def manage_backups_interface():
             selected_index = int(choice)
             selected_backup = backups[selected_index]
         except Exception as e:
-            run_whiptail(["--title", "Error", "--msgbox", f"Invalid selection index: {str(e)}", "8", "50"])
+            run_whiptail(["--title", "Error", "--msgbox", f"Selection parsing error: {str(e)}", "8", "50"])
             continue
 
-        confirm_code = run_whiptail(["--title", "Confirm Deletion", "--yesno", f"Are you sure you want to permanently delete:\n{selected_backup['name']}?", "10", "60"])
+        confirm_code = run_whiptail([
+            "--title", "Confirm Permanent Deletion", 
+            "--yesno", 
+            f"Are you sure you want to permanently delete this backup?\n\nFile: {selected_backup['name']}\nPath: {selected_backup['path']}", 
+            "11", "70"
+        ])
+        
         if confirm_code == 0:
             target_path = selected_backup["path"]
             try:
                 if os.path.exists(target_path):
                     os.remove(target_path)
-                    run_whiptail(["--title", "Success", "--msgbox", f"Successfully deleted:\n{selected_backup['name']}", "9", "60"])
+                    if not os.path.exists(target_path):
+                        run_whiptail(["--title", "Success", "--msgbox", f"Successfully deleted:\n{selected_backup['name']}", "9", "60"])
+                    else:
+                        run_whiptail(["--title", "Warning", "--msgbox", "Deletion command executed, but file still exists on disk.", "9", "60"])
                 else:
                     run_whiptail(["--title", "Error", "--msgbox", f"File not found at path:\n{target_path}", "9", "60"])
             except Exception as e:
-                run_whiptail(["--title", "Deletion Error", "--msgbox", f"Failed to delete file:\n{str(e)}", "10", "60"])
+                run_whiptail(["--title", "Deletion Exception", "--msgbox", f"Python failed to remove file:\n{str(e)}", "10", "60"])
 
 def trigger_manual_backup():
     config = load_config()
@@ -430,7 +442,7 @@ EOF
 # 4. Make Binary Executable and Launch Interactive Welcome Dashboard
 chmod +x "$TARGET_BIN"
 if [ -f "$TARGET_BIN" ]; then
-    whiptail --title "Deployer Success" --msgbox "Components successfully updated to V1.5!\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
+    whiptail --title "Deployer Success" --msgbox "Components successfully updated to V1.5.1!\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
     sudo pihole-backup-manager
 else
     echo "[-] System compilation exception: Could not install binary to disk."
