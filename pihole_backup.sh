@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.5.8
+# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.5.9
 # PERSISTENT: FALSE
 # Category: Backup Managers
 
@@ -336,21 +336,21 @@ def manage_backups_interface():
             menu_items = []
             if backups:
                 for index, b in enumerate(backups):
-                    menu_items.extend([str(index), f"Size:{b['size']} | {b['name']}"])
+                    menu_items.extend([str(index), f"[{b['size']}] {b['name']}"])
             else:
                 menu_items.extend(["INFO_EMPTY", "(No backup archive files found in folder)"])
                 
             sort_text = "Newest First" if sort_newest else "Oldest First"
-            msg_header = (f"Storage: {backup_dir}\nSort: {sort_text}\nSelect file to delete:")
+            msg_header = (f"Folder: {backup_dir}\nOrder: {sort_text}\nSelect a file to delete:")
                           
-            # FIX: Removed leading dashes ('---') to prevent Whiptail from treating it as an option flag
-            full_menu = ["TOGGLE_SORT", f"[ SWITCH SORT ORDER: {sort_text} ]"] + menu_items
+            full_menu = ["TOGGLE_SORT", f"SWITCH SORT ORDER ({sort_text})"] + menu_items
 
+            # Expanded dimensions (20x80) to prevent text clipping and overlap
             code, choice = run_whiptail([
                 "--title", "Saved Teleporter Backups Management",
                 "--cancel-button", "Back",
                 "--menu", msg_header,
-                "18", "75", "8"
+                "20", "80", "10"
             ] + full_menu)
             
             if code != 0:
@@ -453,7 +453,7 @@ EOF
 # 4. Make Binary Executable and Launch Interactive Welcome Dashboard
 chmod +x "$TARGET_BIN"
 if [ -f "$TARGET_BIN" ]; then
-    whiptail --title "Deployer Success" --msgbox "Components successfully updated to V1.5.8!\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
+    whiptail --title "Deployer Success" --msgbox "Components successfully updated to V1.5.9!\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
     sudo pihole-backup-manager
 else
     echo "[-] System compilation exception: Could not install binary to disk."
