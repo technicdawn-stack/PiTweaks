@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.5.4
+# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.5.5
 # PERSISTENT: FALSE
 # Category: Backup Managers
 
@@ -225,7 +225,6 @@ def interactive_setup():
         run_whiptail(["--title", "Setup Complete", "--msgbox", f"Configuration saved!\nDestination: {target_dir}\nInterval: Every {config['interval_days']} day(s)\nCron engine registered successfully.", "12", "65"])
 
 def get_backups_list(directory, sort_newest_first=True):
-    # Broadened glob pattern to safely catch pihole v6 teleporter archives (.zip or .tar.gz)
     patterns = [
         os.path.join(directory, "*teleporter*.zip"),
         os.path.join(directory, "*teleporter*.tar.gz"),
@@ -234,7 +233,7 @@ def get_backups_list(directory, sort_newest_first=True):
     files = []
     for p in patterns:
         files.extend(glob.glob(p))
-    files = list(set(files)) # remove duplicates if any overlap
+    files = list(set(files))
         
     file_data = []
     for f in files:
@@ -281,9 +280,7 @@ def run_backup_engine():
         
     os.chdir(backup_dir)
     
-    # Execute Pi-hole v6 native teleporter command
     result = subprocess.run(["pihole-FTL", "--teleporter"], capture_output=True, text=True)
-    
     if result.returncode != 0:
         result = subprocess.run(["pihole", "-a", "-t"], capture_output=True, text=True)
         
@@ -337,8 +334,9 @@ def manage_backups_interface():
         
         menu_items = []
         if backups:
-            for b in backups:
-                menu_items.extend([b["path"], f"[{b['size']}] {b['name']}"])
+            for index, b in enumerate(backups):
+                # Use clean short string indices ("0", "1", "2"...) as whiptail tags to prevent path-length crashes
+                menu_items.extend([str(index), f"[{b['size']}] {b['name']}"])
         else:
             menu_items.extend(["INFO_EMPTY", "(No backup archive files found in folder)"])
             
@@ -366,12 +364,15 @@ def manage_backups_interface():
         if choice == "INFO_EMPTY":
             continue
             
-        target_path = choice
-        file_name = os.path.basename(target_path)
-        for b in backups:
-            if b["path"] == target_path:
-                file_name = b["name"]
-                break
+        try:
+            selected_index = int(choice)
+            selected_backup = backups[selected_index]
+        except Exception as e:
+            run_whiptail(["--title", "Error", "--msgbox", f"Selection index parsing error:\n{str(e)}", "9", "60"])
+            continue
+
+        target_path = selected_backup["path"]
+        file_name = selected_backup["name"]
 
         confirm_code = run_whiptail([
             "--title", "Confirm Permanent Deletion", 
@@ -451,7 +452,7 @@ EOF
 # 4. Make Binary Executable and Launch Interactive Welcome Dashboard
 chmod +x "$TARGET_BIN"
 if [ -f "$TARGET_BIN" ]; then
-    whiptail --title "Deployer Success" --msgbox "Components successfully updated to V1.5.3!\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
+    whiptail --title "Deployer Success" --msgbox "Components successfully updated to V1.5.5!\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
     sudo pihole-backup-manager
 else
     echo "[-] System compilation exception: Could not install binary to disk."
