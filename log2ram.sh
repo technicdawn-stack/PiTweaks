@@ -1,6 +1,6 @@
 #!/bin/bash
 # Description: Interactive installer for log2ram with whiptail configuration.
-# PERSISTENT: TRUE
+# PERSISTENT: False
 # Category: Scripts
 
 # Ensure script is run as root
