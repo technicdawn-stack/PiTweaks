@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.3
+# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.3.1
 # PERSISTENT: FALSE
 # Category: Backup Managers
 
@@ -57,14 +57,16 @@ def save_config(config):
 
 def check_dependencies():
     missing = []
-    for cmd in ["pihole", "whiptail", "cron"]:
+    for cmd in ["pihole-FTL", "whiptail", "cron"]:
         if subprocess.run(["which", cmd], capture_output=True).returncode != 0:
             if cmd == "cron" and subprocess.run(["which", "crontab"], capture_output=True).returncode == 0:
+                continue
+            if cmd == "pihole-FTL" and subprocess.run(["which", "pihole"], capture_output=True).returncode == 0:
                 continue
             missing.append(cmd)
     if missing:
         run_whiptail(["--title", "Missing Dependencies", "--msgbox", 
-                      f"Required binaries missing: {', '.join(missing)}\nPlease install Pi-hole before proceeding.", "10", "60"])
+                      f"Required binaries missing: {', '.join(missing)}\nPlease ensure Pi-hole v6 is installed.", "10", "60"])
         sys.exit(1)
 
 def cron_schedule_worker(config):
@@ -112,7 +114,6 @@ def browse_directories(start_dir="/mnt"):
         if current_dir != "/":
             menu_items.extend(["..", "[ Parent Directory ]"])
         
-        # Option to create a new folder directly inside the current view
         menu_items.extend(["[CREATE_NEW_DIR] 📁", "[ Create New Folder Here ]"])
         menu_items.extend(["[SELECT_THIS_DIR] 🎯", f">> Use Current Directory ({current_dir}) <<"])
 
@@ -124,7 +125,7 @@ def browse_directories(start_dir="/mnt"):
         code, choice = run_whiptail([
             "--title", "Interactive Directory Browser",
             "--cancel-button", "Cancel",
-            "--menu", f"Current Path: {current_dir}\nNavigate into your NAS or select 'Use Current Directory':",
+            "--menu", f"Current Path: {current_dir}\nNavigate into your NAS folder or select 'Use Current Directory':",
             "20", "75", "10"
         ] + menu_items)
 
@@ -162,7 +163,6 @@ def detect_active_mounts():
 def interactive_setup():
     config = load_config() or {}
     
-    # 1. Detect existing mounts / NAS
     active_mounts = detect_active_mounts()
     starting_browse_dir = "/mnt"
 
@@ -170,7 +170,7 @@ def interactive_setup():
         mount_menu = []
         for m in active_mounts:
             mount_menu.extend([m, "Detected Storage Mount"])
-        mount_menu.extend(["BROWSE_CUSTOM", "Browse manually from root root/mnt"])
+        mount_menu.extend(["BROWSE_CUSTOM", "Browse manually from root /mnt"])
         
         code, choice = run_whiptail([
             "--title", "Storage / NAS Detection",
@@ -181,14 +181,12 @@ def interactive_setup():
         if code == 0 and choice != "BROWSE_CUSTOM":
             starting_browse_dir = choice
 
-    # Launch file browser so the user can choose the exact sub-folder on the NAS (or create one)
     target_dir = browse_directories(starting_browse_dir)
     if not target_dir:
         return
 
     config["backup_dir"] = target_dir
 
-    # 2. Schedule Frequency
     code, freq = run_whiptail(["--title", "Backup Schedule Frequency", "--menu", "How often should a Teleporter backup occur?", "12", "60", "3",
                                "Daily", "Execute backup every day",
                                "Weekly", "Execute backup every Sunday",
@@ -196,7 +194,6 @@ def interactive_setup():
     if code != 0: return
     config["frequency"] = freq
 
-    # 3. Execution Time
     code, target_time = run_whiptail(["--title", "Backup Execution Time", "--inputbox", 
                                       "At what time should the backup fire off?\nFormat: HH:MM (24-hour style)", "12", "60", 
                                       f"{config.get('hour','02')}:{config.get('minute','00')}"])
@@ -209,11 +206,9 @@ def interactive_setup():
         config["hour"] = "02"
         config["minute"] = "00"
 
-    # 4. Storage Retention
     code, _ = run_whiptail(["--title", "Storage Purge Feature", "--yesno", "Do you want to autoremove old backups to save disk space?", "9", "55"])
     if code == 0:
         config["purge_enabled"] = True
-        # Prompt for retention count
         code_count, count = run_whiptail(["--title", "Retention Pool Size", "--inputbox", "How many total historical backups do you want to keep stored?", "9", "55", str(config.get("retention_count", 10))])
         if code_count == 0 and count.strip():
             try: 
@@ -225,9 +220,16 @@ def interactive_setup():
     else:
         config["purge_enabled"] = False
 
+    if save_config(config) and cron_schedule_worker(config):
+        run_whiptail(["--title", "Setup Complete", "--msgbox", f"Configuration saved!\nDestination: {target_dir}\nCron engine registered successfully.", "11", "65"])
+
 def get_backups_list(directory, sort_newest_first=True):
-    pattern = os.path.join(directory, "pi-hole-teleporter_*.tar.gz")
+    pattern = os.path.join(directory, "pi-hole*_teleporter_*.zip")
     files = glob.glob(pattern)
+    if not files:
+        pattern = os.path.join(directory, "pi-hole-teleporter_*.tar.gz")
+        files = glob.glob(pattern)
+        
     file_data = []
     for f in files:
         stat = os.stat(f)
@@ -250,8 +252,14 @@ def run_backup_engine():
         sys.exit(f"Directory {backup_dir} unavailable.")
         
     os.chdir(backup_dir)
-    subprocess.run(["pihole", "-a", "-t"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
+    # Execute Pi-hole v6 native teleporter command
+    result = subprocess.run(["pihole-FTL", "--teleporter"], capture_output=True, text=True)
+    
+    if result.returncode != 0:
+        # Fallback check for older command syntax just in case
+        result = subprocess.run(["pihole", "-a", "-t"], capture_output=True, text=True)
+        
     if config.get("purge_enabled", False):
         retention_max = int(config.get("retention_count", 10))
         backups = get_backups_list(backup_dir, sort_newest_first=True)
@@ -354,7 +362,7 @@ def trigger_manual_backup():
     if not config:
         run_whiptail(["--title", "Error", "--msgbox", "Please configure the application before executing a backup.", "10", "60"])
         return
-    msg_proc = subprocess.Popen(["whiptail", "--title", "Backup In Progress", "--infobox", "\nProcessing Pi-hole Teleporter dump...\nPlease wait...", "10", "60"])
+    msg_proc = subprocess.Popen(["whiptail", "--title", "Backup In Progress", "--infobox", "\nProcessing Pi-hole v6 Teleporter dump...\nPlease wait...", "10", "60"])
     run_backup_engine()
     msg_proc.terminate()
     run_whiptail(["--title", "Success", "--msgbox", "Teleporter backup and file retention clean up complete.", "10", "60"])
