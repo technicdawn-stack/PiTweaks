@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.6.0
+# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.6.1
 # PERSISTENT: FALSE
 # Category: Backup Managers
 
@@ -335,14 +335,14 @@ def manage_backups_interface():
             
             menu_items = []
             if backups:
-                for b in backups:
-                    # DIRECT PATH TAGGING: Using the absolute path as the tag itself so choice IS the path!
-                    menu_items.extend([b["path"], f"[{b['size']}] {b['name']}"])
+                for index, b in enumerate(backups):
+                    # Using clean short numeric tags ("0", "1", "2"...) to keep UI sizing perfect
+                    menu_items.extend([str(index), f"[{b['size']}] {b['name']}"])
             else:
                 menu_items.extend(["INFO_EMPTY", "(No backup archive files found in folder)"])
                 
             sort_text = "Newest First" if sort_newest else "Oldest First"
-            msg_header = (f"Folder: {backup_dir}\nOrder: {sort_text}\nSelect a file to delete:")
+            msg_header = f"Folder: {backup_dir}\nOrder: {sort_text}\nSelect a file to delete:"
                           
             full_menu = ["TOGGLE_SORT", f"SWITCH SORT ORDER ({sort_text})"] + menu_items
 
@@ -363,9 +363,15 @@ def manage_backups_interface():
             if choice == "INFO_EMPTY":
                 continue
                 
-            # choice is now directly the absolute file path!
-            target_path = choice
-            file_name = os.path.basename(target_path)
+            try:
+                selected_index = int(choice)
+                selected_backup = backups[selected_index]
+            except Exception as e:
+                run_whiptail(["--title", "Error", "--msgbox", f"Selection index parsing error:\n{str(e)}", "9", "60"])
+                continue
+
+            target_path = selected_backup["path"]
+            file_name = selected_backup["name"]
 
             confirm_code = run_whiptail([
                 "--title", "Confirm Permanent Deletion", 
@@ -376,6 +382,9 @@ def manage_backups_interface():
             
             if confirm_code == 0:
                 try:
+                    # DEBUG POPUP: Shows exact target path right before removal attempt
+                    run_whiptail(["--title", "Debug Removing", "--msgbox", f"Attempting to delete:\n{target_path}", "9", "70"])
+                    
                     if os.path.exists(target_path):
                         os.remove(target_path)
                         if not os.path.exists(target_path):
@@ -447,7 +456,7 @@ EOF
 # 4. Make Binary Executable and Launch Interactive Welcome Dashboard
 chmod +x "$TARGET_BIN"
 if [ -f "$TARGET_BIN" ]; then
-    whiptail --title "Deployer Success" --msgbox "Components successfully updated to V1.6.0!\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
+    whiptail --title "Deployer Success" --msgbox "Components successfully updated to V1.6.1!\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
     sudo pihole-backup-manager
 else
     echo "[-] System compilation exception: Could not install binary to disk."
