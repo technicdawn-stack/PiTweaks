@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.2
+# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.3
 # PERSISTENT: FALSE
 # Category: Backup Managers
 
@@ -109,10 +109,12 @@ def browse_directories(start_dir="/mnt"):
             items = sorted(os.listdir(current_dir))
 
         menu_items = []
-        # Navigation options
         if current_dir != "/":
             menu_items.extend(["..", "[ Parent Directory ]"])
-        menu_items.extend(["[SELECT_THIS_DIR]", f">> Use Current Directory ({current_dir}) <<"])
+        
+        # Option to create a new folder directly inside the current view
+        menu_items.extend(["[CREATE_NEW_DIR] 📁", "[ Create New Folder Here ]"])
+        menu_items.extend(["[SELECT_THIS_DIR] 🎯", f">> Use Current Directory ({current_dir}) <<"])
 
         for item in items:
             full_path = os.path.join(current_dir, item)
@@ -122,15 +124,25 @@ def browse_directories(start_dir="/mnt"):
         code, choice = run_whiptail([
             "--title", "Interactive Directory Browser",
             "--cancel-button", "Cancel",
-            "--menu", f"Current Path: {current_dir}\nSelect a folder to navigate or choose 'Use Current Directory':",
+            "--menu", f"Current Path: {current_dir}\nNavigate into your NAS or select 'Use Current Directory':",
             "20", "75", "10"
         ] + menu_items)
 
         if code != 0:
             return None
 
-        if choice == "[SELECT_THIS_DIR]":
+        if choice == "[SELECT_THIS_DIR] 🎯":
             return current_dir
+        elif choice == "[CREATE_NEW_DIR] 📁":
+            code_in, new_name = run_whiptail(["--title", "Create Folder", "--inputbox", "Enter the name for the new backup folder:", "10", "50", "pihole_backups"])
+            if code_in == 0 and new_name.strip():
+                new_folder_path = os.path.join(current_dir, new_name.strip())
+                try:
+                    os.makedirs(new_folder_path, exist_ok=True)
+                    current_dir = new_folder_path
+                except Exception as e:
+                    run_whiptail(["--title", "Error", "--msgbox", f"Could not create directory:\n{str(e)}", "10", "60"])
+            continue
         elif choice == "..":
             current_dir = os.path.dirname(current_dir)
         else:
@@ -152,42 +164,27 @@ def interactive_setup():
     
     # 1. Detect existing mounts / NAS
     active_mounts = detect_active_mounts()
-    target_dir = None
+    starting_browse_dir = "/mnt"
 
     if active_mounts:
         mount_menu = []
         for m in active_mounts:
             mount_menu.extend([m, "Detected Storage Mount"])
-        mount_menu.extend(["BROWSE_CUSTOM", "Browse manually / Choose another folder"])
+        mount_menu.extend(["BROWSE_CUSTOM", "Browse manually from root root/mnt"])
         
         code, choice = run_whiptail([
             "--title", "Storage / NAS Detection",
-            "--menu", "Active storage mounts detected on your system. Would you like to use one of these?",
+            "--menu", "Storage mount detected! Select it to browse inside, or choose custom browse:",
             "14", "70", "4"
         ] + mount_menu)
 
         if code == 0 and choice != "BROWSE_CUSTOM":
-            target_dir = choice
+            starting_browse_dir = choice
 
+    # Launch file browser so the user can choose the exact sub-folder on the NAS (or create one)
+    target_dir = browse_directories(starting_browse_dir)
     if not target_dir:
-        # Prompt to mount network share or browse
-        code = run_whiptail([
-            "--title", "NAS / Storage Mount Helper",
-            "--yesno", "No active mounts were selected.\nDo you need help mounting a network NAS share (CIFS/NFS) before picking a backup directory?",
-            "10", "60"
-        ])
-        if code == 0:
-            run_whiptail([
-                "--title", "Mount Instructions",
-                "--msgbox", "Please mount your NAS share permanently via your system's /etc/fstab or mount utility (e.g., to /mnt/nas), then re-run this wizard.",
-                "12", "60"
-            ])
-            return
-
-        # Open Interactive Folder Browser
-        target_dir = browse_directories("/mnt" if os.path.isdir("/mnt") else "/")
-        if not target_dir:
-            return
+        return
 
     config["backup_dir"] = target_dir
 
