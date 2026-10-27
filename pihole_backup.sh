@@ -353,17 +353,24 @@ def manage_backups_interface():
             sort_newest = not sort_newest
             continue
             
-        selected_backup = backups[int(choice)]
+        try:
+            selected_index = int(choice)
+            selected_backup = backups[selected_index]
+        except Exception as e:
+            run_whiptail(["--title", "Error", "--msgbox", f"Invalid selection index: {str(e)}", "8", "50"])
+            continue
+
         confirm_code = run_whiptail(["--title", "Confirm Deletion", "--yesno", f"Are you sure you want to permanently delete:\n{selected_backup['name']}?", "10", "60"])
         if confirm_code == 0:
+            target_path = selected_backup["path"]
             try:
-                if os.path.exists(selected_backup["path"]):
-                    os.remove(selected_backup["path"])
-                    run_whiptail(["--title", "Success", "--msgbox", "File purged successfully.", "8", "50"])
+                if os.path.exists(target_path):
+                    os.remove(target_path)
+                    run_whiptail(["--title", "Success", "--msgbox", f"Successfully deleted:\n{selected_backup['name']}", "9", "60"])
                 else:
-                    run_whiptail(["--title", "Error", "--msgbox", "File does not exist on disk.", "8", "50"])
+                    run_whiptail(["--title", "Error", "--msgbox", f"File not found at path:\n{target_path}", "9", "60"])
             except Exception as e:
-                run_whiptail(["--title", "Error", "--msgbox", f"Failed to delete file:\n{str(e)}", "10", "60"])
+                run_whiptail(["--title", "Deletion Error", "--msgbox", f"Failed to delete file:\n{str(e)}", "10", "60"])
 
 def trigger_manual_backup():
     config = load_config()
