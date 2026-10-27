@@ -1,5 +1,5 @@
 #!/bin/bash
-# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.3.1
+# Description: Self-contained deployment engine for Pi-hole Teleporter Backup Manager. V1.5
 # PERSISTENT: FALSE
 # Category: Backup Managers
 
@@ -70,18 +70,11 @@ def check_dependencies():
         sys.exit(1)
 
 def cron_schedule_worker(config):
-    freq = config.get("frequency", "Weekly")
+    interval_days = int(config.get("interval_days", 7))
     hour = int(config.get("hour", "02"))
     minute = int(config.get("minute", "00"))
     
-    if freq == "Daily":
-        cron_time = f"{minute} {hour} * * *"
-    elif freq == "Weekly":
-        cron_time = f"{minute} {hour} * * 0"
-    elif freq == "Monthly":
-        cron_time = f"{minute} {hour} 1 * *"
-    else:
-        cron_time = f"{minute} {hour} * * 0"
+    cron_time = f"{minute} {hour} * * *"
 
     script_path = os.path.abspath(__file__)
     cron_job = f"{cron_time} {sys.executable} {script_path} --run-backup > /dev/null 2>&1"
@@ -187,16 +180,24 @@ def interactive_setup():
 
     config["backup_dir"] = target_dir
 
-    code, freq = run_whiptail(["--title", "Backup Schedule Frequency", "--menu", "How often should a Teleporter backup occur?", "12", "60", "3",
-                               "Daily", "Execute backup every day",
-                               "Weekly", "Execute backup every Sunday",
-                               "Monthly", "Execute backup on the 1st of every month"])
+    code, days_input = run_whiptail([
+        "--title", "Backup Interval Frequency", 
+        "--inputbox", "How often (in days) should backups run?\n(e.g., enter 1 for daily, 7 for weekly, 3 for every 3 days)", 
+        "11", "60", 
+        str(config.get("interval_days", 7))
+    ])
     if code != 0: return
-    config["frequency"] = freq
+    try:
+        config["interval_days"] = max(1, int(days_input.strip()))
+    except:
+        config["interval_days"] = 7
 
-    code, target_time = run_whiptail(["--title", "Backup Execution Time", "--inputbox", 
-                                      "At what time should the backup fire off?\nFormat: HH:MM (24-hour style)", "12", "60", 
-                                      f"{config.get('hour','02')}:{config.get('minute','00')}"])
+    code, target_time = run_whiptail([
+        "--title", "Backup Execution Time", 
+        "--inputbox", "At what time should backups fire off?\nFormat: HH:MM (24-hour style)", 
+        "12", "60", 
+        f"{config.get('hour','02')}:{config.get('minute','00')}"
+    ])
     if code != 0: return
     try:
         h, m = target_time.split(":")
@@ -221,7 +222,7 @@ def interactive_setup():
         config["purge_enabled"] = False
 
     if save_config(config) and cron_schedule_worker(config):
-        run_whiptail(["--title", "Setup Complete", "--msgbox", f"Configuration saved!\nDestination: {target_dir}\nCron engine registered successfully.", "11", "65"])
+        run_whiptail(["--title", "Setup Complete", "--msgbox", f"Configuration saved!\nDestination: {target_dir}\nInterval: Every {config['interval_days']} day(s)\nCron engine registered successfully.", "12", "65"])
 
 def get_backups_list(directory, sort_newest_first=True):
     pattern = os.path.join(directory, "pi-hole*_teleporter_*.zip")
@@ -232,15 +233,39 @@ def get_backups_list(directory, sort_newest_first=True):
         
     file_data = []
     for f in files:
-        stat = os.stat(f)
-        file_data.append({
-            "path": f,
-            "name": os.path.basename(f),
-            "mtime": stat.st_mtime,
-            "size": f"{stat.st_size / (1024*1024):.2f} MB"
-        })
+        try:
+            stat = os.stat(f)
+            file_data.append({
+                "path": os.path.abspath(f),
+                "name": os.path.basename(f),
+                "mtime": stat.st_mtime,
+                "size": f"{stat.st_size / (1024*1024):.2f} MB"
+            })
+        except Exception:
+            pass
+    # sort_newest_first=True means newest first (descending mtime)
     file_data.sort(key=lambda x: x["mtime"], reverse=sort_newest_first)
     return file_data
+
+def enforce_retention_policy(backup_dir, config):
+    if not config.get("purge_enabled", False):
+        return
+    try:
+        retention_max = int(config.get("retention_count", 10))
+        # Get list sorted OLDEST first (sort_newest_first=False)
+        backups_oldest_first = get_backups_list(backup_dir, sort_newest_first=False)
+        
+        if len(backups_oldest_first) > retention_max:
+            excess_count = len(backups_oldest_first) - retention_max
+            excess_files = backups_oldest_first[:excess_count] # Slice the oldest ones
+            for f in excess_files:
+                try:
+                    if os.path.exists(f["path"]):
+                        os.remove(f["path"])
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
 def run_backup_engine():
     config = load_config()
@@ -257,17 +282,9 @@ def run_backup_engine():
     result = subprocess.run(["pihole-FTL", "--teleporter"], capture_output=True, text=True)
     
     if result.returncode != 0:
-        # Fallback check for older command syntax just in case
         result = subprocess.run(["pihole", "-a", "-t"], capture_output=True, text=True)
         
-    if config.get("purge_enabled", False):
-        retention_max = int(config.get("retention_count", 10))
-        backups = get_backups_list(backup_dir, sort_newest_first=True)
-        if len(backups) > retention_max:
-            excess_files = backups[retention_max:]
-            for f in excess_files:
-                try: os.remove(f["path"])
-                except: pass
+    enforce_retention_policy(backup_dir, config)
 
 def check_backup_timing():
     config = load_config()
@@ -275,30 +292,14 @@ def check_backup_timing():
         run_whiptail(["--title", "Error", "--msgbox", "No active profile found. Please run the setup wizard first.", "10", "60"])
         return
 
-    freq = config.get("frequency", "Weekly")
+    interval_days = int(config.get("interval_days", 7))
     hour = int(config.get("hour", 2))
     minute = int(config.get("minute", 0))
 
     now = datetime.now()
     target_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-
-    if freq == "Daily":
-        if now >= target_time:
-            target_time += timedelta(days=1)
-    elif freq == "Weekly":
-        days_ahead = (6 - now.weekday()) % 7
-        if days_ahead == 0 and now >= target_time:
-            days_ahead = 7
-        target_time += timedelta(days=days_ahead)
-    elif freq == "Monthly":
-        if target_time.day != 1:
-            try: target_time = target_time.replace(day=1)
-            except: pass
-        if now >= target_time:
-            if target_time.month == 12:
-                target_time = target_time.replace(year=target_time.year + 1, month=1)
-            else:
-                target_time = target_time.replace(month=target_time.month + 1)
+    if now >= target_time:
+        target_time += timedelta(days=interval_days)
 
     delta = target_time - now
     days = delta.days
@@ -312,8 +313,8 @@ def check_backup_timing():
     else: countdown = f"[In {seconds} second{'s' if seconds > 1 else ''}]"
 
     formatted_time = target_time.strftime("%H:%M:%S %d-%m-%Y")
-    info_msg = (f"Active Schedule Profile: {freq}\n"
-                f"Configured Run Window:  {hour:02d}:{minute:02d}:00\n\n"
+    info_msg = (f"Active Schedule Interval: Every {interval_days} day(s)\n"
+                f"Configured Run Window:    {hour:02d}:{minute:02d}:00\n\n"
                 f"Next Planned Automated Execution:\n"
                 f"-> {formatted_time} {countdown}")
 
@@ -332,7 +333,11 @@ def manage_backups_interface():
         backups = get_backups_list(backup_dir, sort_newest_first=sort_newest)
         menu_items = []
         
-        toggle_label = "Switch Order: [Newest -> Oldest]" if sort_newest else "Switch Order: [Oldest -> Newest]"
+        if sort_newest:
+            toggle_label = "Order: Newest First (Click to switch to Oldest First)"
+        else:
+            toggle_label = "Order: Oldest First (Click to switch to Newest First)"
+            
         menu_items.extend(["TOGGLE_SORT", toggle_label])
         
         for index, b in enumerate(backups):
@@ -352,8 +357,11 @@ def manage_backups_interface():
         confirm_code = run_whiptail(["--title", "Confirm Deletion", "--yesno", f"Are you sure you want to permanently delete:\n{selected_backup['name']}?", "10", "60"])
         if confirm_code == 0:
             try:
-                os.remove(selected_backup["path"])
-                run_whiptail(["--title", "Success", "--msgbox", "File purged successfully.", "8", "50"])
+                if os.path.exists(selected_backup["path"]):
+                    os.remove(selected_backup["path"])
+                    run_whiptail(["--title", "Success", "--msgbox", "File purged successfully.", "8", "50"])
+                else:
+                    run_whiptail(["--title", "Error", "--msgbox", "File does not exist on disk.", "8", "50"])
             except Exception as e:
                 run_whiptail(["--title", "Error", "--msgbox", f"Failed to delete file:\n{str(e)}", "10", "60"])
 
@@ -415,7 +423,7 @@ EOF
 # 4. Make Binary Executable and Launch Interactive Welcome Dashboard
 chmod +x "$TARGET_BIN"
 if [ -f "$TARGET_BIN" ]; then
-    whiptail --title "Deployer Success" --msgbox "Components successfully installed to:\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
+    whiptail --title "Deployer Success" --msgbox "Components successfully updated to V1.5!\n$TARGET_BIN\n\nPress OK to drop into the setup wizard dashboard panel." 11 65
     sudo pihole-backup-manager
 else
     echo "[-] System compilation exception: Could not install binary to disk."
