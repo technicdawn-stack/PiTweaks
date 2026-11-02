@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Description: Pi benchmarking tool using Prime number calulations.
-# PERSISTENT: TRUE (Config only modified on explicit user action)
+# PERSISTENT: TRUE
 # Category: Tools
 
 echo "=========================================="
