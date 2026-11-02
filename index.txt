@@ -1,5 +1,5 @@
 1st_Set|A_Test.sh|Loops the install url for faster and easier refreshing. V1.1
-General|Benchmark.sh|No description provided
+Tools|Benchmark.sh|Pi benchmarking tool using Prime number calulations.
 Administration|Caddy_Editor.sh|Interactive Caddyfile Configuration Manager & Syntax Validator V1.7
 Webpages|Coretrace.sh|CoreTrace Self-Contained Deployment & Management Console V1.6.1
 Diagnostics|Healthscore.sh|Adaptive Raspberry Pi Health Scoring & Diagnostic Utility
