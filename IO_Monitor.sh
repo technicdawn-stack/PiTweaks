@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: Professional, emoji-free disk I/O telemetry with session-based process tracking.
+# Description: Disk I/O telemetry with session-based process tracking.
 # PERSISTENT: FALSE
 # Category: Tools
 
