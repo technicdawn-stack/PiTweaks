@@ -3,7 +3,7 @@ Tools|Benchmark.sh|Pi benchmarking tool using Prime number calulations.
 Administration|Caddy_Editor.sh|Interactive Caddyfile Configuration Manager & Syntax Validator V1.7
 Webpages|Coretrace.sh|CoreTrace Self-Contained Deployment & Management Console V1.6.1
 Diagnostics|Healthscore.sh|Adaptive Raspberry Pi Health Scoring & Diagnostic Utility
-Tools|IO_Monitor.sh|Professional, emoji-free disk I/O telemetry with session-based process tracking.
+Tools|IO_Monitor.sh|Disk I/O telemetry with session-based process tracking.
 Webpages|Ice_Cube.sh|CubeCooler v1.4.3 Management Console with Systemd Service Control
 Webpages|Ramdrop.sh|RAM Drop v1.3.7 All-in-One Self-Contained Deployment & Management Console
 Webpages|SSLguide.sh|Interactive Installer & Systemd Service Setup for SSL Guide Utility
